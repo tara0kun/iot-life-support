@@ -1,6 +1,6 @@
 # 認知症祖母IoTサポート プロジェクト 進捗記録
 
-最終更新: 2026-04-17
+最終更新: 2026-04-20
 
 ---
 
@@ -341,24 +341,67 @@
 - [x] 5分ごと自動リロード（データ鮮度維持）
 - [x] スタンプ: スマホでは4列×2行に折り返し（7列→4列レスポンシブ）
 
+### READMEスクリーンショット追加
+- [x] 実機スクリーンショット7枚を `doc/screenshots/` に整理・配置
+  - `tablet_clock_alerts.jpg` — 時計＋時間帯ガイド＋注意喚起
+  - `tablet_flower_stamps.jpg` — お花の成長＋スタンプカード
+  - `tablet_garden.jpg` — スタンプ全体＋わたしのおにわ
+  - `tablet_history.jpg` — きょうのできごと一覧
+  - `family_dashboard.jpg` — ダッシュボード＋かんたん記録ボタン
+  - `family_events.jpg` — イベント一覧テーブル
+  - `line_notifications.jpg` — LINE通知（食事検知・ロック・緊急・まとめ）
+- [x] `README.md` にスクリーンショットを `<img>` タグで埋め込み（幅300px）
+- [x] `.gitignore` に `doc/screenshots/` の例外追加（`doc/*` + `!doc/screenshots/`）
+
+### Git運用体制の構築
+- [x] GitHub CLI (`gh`) インストール・認証
+- [x] `master` → `main` にリネーム（GitHubデフォルトブランチも変更）
+- [x] 旧 `master` ブランチ削除
+- [x] ブランチ戦略を策定・作成:
+
+| ブランチ | 用途 | 運用ルール |
+|---------|------|-----------|
+| **main** | 安定版・本番 | 祖母宅ラズパイはこのブランチを使用。テスト済みのコードのみマージ |
+| **dev** | 開発中・テスト中 | 普段の開発作業はここで行う。安定したら `main` にマージ |
+| **future** | 新機能・今後の進展 | Phase 2以降の新機能開発。実装が安定したら `dev` にマージ |
+
+#### ブランチ運用フロー
+```
+future（新機能開発）
+  ↓ 実装完了・テスト通過
+dev（開発・テスト）
+  ↓ 安定動作確認
+main（本番・祖母宅）
+```
+
+#### 注意事項
+- **main に直接コミットしない** — 必ず `dev` 経由でマージ
+- **祖母宅ラズパイは `main` を `git pull`** して更新
+- **`future` は実験的なコードも許容** — 壊れても `dev`/`main` に影響しない
+- ブランチ切り替え: `git checkout dev`（開発時）、`git checkout main`（本番確認時）
+
 ---
 
 ## 📋 GW投入までの残タスク
 
-### 🔴 高優先度
+### 🔴 高優先度（GW前に必須）
 - [ ] **顔登録テスト** — カメラ前で `python scripts/register_face.py --person-id 1 --name テスト` 実行
 - [ ] **H100電源投入 → T110統合テスト**
 - [ ] **実際の炊飯器での電力しきい値確認**（自宅の電気ケトル等で代用テスト可）
+- [ ] **全センサー統合テスト** — monitor.py で全センサー同時起動 → DB → UI → LINE通知の一連確認
 
-### 🟡 中優先度
+### 🟡 中優先度（GW中に対応可）
 - [ ] **P110M 2台目のセットアップ**（IHはビルトインなので別用途検討）
 - [ ] **T110 残り2台 + T100 のH100ペアリング**
 - [ ] **祖母用タブレット端末の調達**
+- [ ] **祖母宅Wi-Fi接続テスト**（`scripts/setup_grandma_wifi.sh` 実行）
 
-### 🟢 低優先度（運用開始後でもOK）
-- [ ] SwitchBot Lock（冷蔵庫用）
+### 🟢 低優先度（運用開始後でもOK → `future` ブランチで開発）
+- [ ] SwitchBot Lock（冷蔵庫用物理ロック）
 - [ ] Tapo D230S1（訪問者問題、Phase 2）
 - [ ] カメラのPTZ制御（pytapo認証問題の解決）
+- [ ] トイレ記録の詳細化（大/小の区別）
+- [ ] 訪問販売・勧誘対応機能
 
 ---
 
@@ -379,7 +422,9 @@
 │   ├── iot-web.service      ← Webサーバ
 │   ├── iot-monitor.service  ← センサー監視
 │   └── install.sh           ← インストールスクリプト
-├── doc/                     ← 祖母宅キッチン写真（11枚）
+├── doc/
+│   ├── srs/                 ← 実機スクリーンショット原本（.gitignore対象）
+│   └── screenshots/         ← README用スクリーンショット（Git管理）
 ├── src/
 │   ├── __init__.py
 │   ├── db.py                ← DBスキーマ＋ヘルパー
@@ -518,6 +563,10 @@ python scripts/seed_mock_data.py --clear --scenario 4  # 充実した1日
 16. **crontab登録済み**: 定期通知(9,12,18,22時)、トンネル自動起動、DBバックアップ(3時)、ヘルスチェック(5分おき)
 17. **お風呂で祖母が意識喪失した過去あり** → T110+T100による浴室監視は安全面で重要
 18. **浴室ドアのT110エイリアスは「浴室ドア」にリネーム必須**（monitor.pyが名前で判別）
+19. **Gitブランチ**: main（本番）/ dev（開発）/ future（新機能）の3ブランチ運用。mainに直接コミット禁止
+20. **GitHub CLI**: `gh` インストール済み、HTTPS認証済み。リポジトリ: `tara0kun/iot-life-support`
+21. **GitHubデフォルトブランチ**: `main`（旧masterは削除済み）
+22. **doc/screenshots/ のみGit管理**（doc/の他ファイルは.gitignore対象）
 
 ---
 
@@ -528,6 +577,13 @@ python scripts/seed_mock_data.py --clear --scenario 4  # 充実した1日
 例：
 - 「顔登録をテストしたい」（カメラの前で実行）
 - 「H100のハブを復帰させたのでT110のテストをしたい」
-- 「ゲーミフィケーションを強化したい」
 - 「全体通しテストをしたい」（全センサー→DB→UI→通知の一連）
 - 「GW前の最終チェックをしたい」
+- 「futureブランチで新機能を開発したい」（Phase 2機能）
+
+### ブランチ切り替え
+```bash
+git checkout dev      # 開発作業
+git checkout main     # 本番確認
+git checkout future   # 新機能開発
+```
