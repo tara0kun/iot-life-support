@@ -152,15 +152,38 @@ bash scripts/start_tunnel.sh
 ## スクリーンショット
 
 ### タブレット画面（本人向け）
-- 大きな時計と時間帯ガイド
-- SVGによるお花の成長アニメーション
-- スタンプカードで1日の達成状況を視覚化
-- 「わたしのおにわ」で過去14日間の成長記録
+
+大きな時計と時間帯ガイド、やさしい注意喚起メッセージを表示。
+
+<img src="doc/screenshots/tablet_clock_alerts.jpg" width="300">
+
+SVGイラストによるお花の成長と、スタンプカードで1日の達成状況を視覚化。
+
+<img src="doc/screenshots/tablet_flower_stamps.jpg" width="300">
+
+スタンプカード全体と「わたしのおにわ」（過去14日間の成長記録）。
+
+<img src="doc/screenshots/tablet_garden.jpg" width="300">
+
+「きょうのできごと」で1日の活動履歴を色分けアイコンで表示。
+
+<img src="doc/screenshots/tablet_history.jpg" width="300">
 
 ### 家族管理画面
-- イベント一覧 + 人物フィルタ
-- 「かんたん記録」ボタン（証人として1タップ登録）
-- ロック状態表示 + 解除機能
+
+ダッシュボード（イベント数・食事回数）と「かんたん記録」ボタン（証人として1タップ登録）。
+
+<img src="doc/screenshots/family_dashboard.jpg" width="300">
+
+イベント一覧。人物フィルタ・ソース別色分け・人物変更ドロップダウン。
+
+<img src="doc/screenshots/family_events.jpg" width="300">
+
+### LINE通知
+
+食事検知アラート、炊飯器自動ロック、浴室緊急通知、1日のまとめ。
+
+<img src="doc/screenshots/line_notifications.jpg" width="300">
 
 ## ライセンス
 

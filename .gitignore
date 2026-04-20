@@ -29,5 +29,6 @@ Thumbs.db
 android/bin/
 android/.buildozer/
 
-# 個人写真
-doc/
+# 個人写真（doc/screenshots/ のみ許可）
+doc/*
+!doc/screenshots/
