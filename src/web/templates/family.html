@@ -130,6 +130,21 @@
   .person-select.changed { border-color: var(--success); background: #E8F8F0; }
   .save-msg { font-size: 10px; color: var(--success); display: none; margin-left: 4px; }
 
+  /* 時刻編集 */
+  .time-display { cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; }
+  .time-display:hover { border-color: var(--primary); background: #F0F4F8; }
+  .time-input {
+    width: 90px; padding: 4px 6px; border: 2px solid var(--primary); border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }
+
+  /* 削除ボタン */
+  .delete-btn {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    font-size: 16px; padding: 4px 8px; border-radius: 6px; transition: all 0.2s;
+  }
+  .delete-btn:hover { color: var(--danger); background: #FDEDEC; }
+
   @media (max-width: 600px) {
     .status-grid { grid-template-columns: repeat(2, 1fr); }
     .quick-btns { grid-template-columns: repeat(3, 1fr); }
@@ -215,17 +230,19 @@
   <!-- イベント一覧 -->
   <table class="event-table" id="event-table">
     <thead>
-      <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th></tr>
+      <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th><th></th></tr>
     </thead>
     <tbody>
       {% for e in events %}
       <tr data-person="{{ e.person_id or '' }}" data-event-id="{{ e.id }}">
         <td>
+          {% set time_str = "" %}
           {% if e.started_at is string %}
-            {{ e.started_at.split("T")[1][:8] if "T" in e.started_at else e.started_at }}
+            {% set time_str = e.started_at.split("T")[1][:5] if "T" in e.started_at else e.started_at[:5] %}
           {% elif e.started_at %}
-            {{ e.started_at.strftime("%H:%M:%S") }}
+            {% set time_str = e.started_at.strftime("%H:%M") %}
           {% endif %}
+          <span class="time-display" onclick="startEditTime(this, {{ e.id }}, '{{ time_str }}')">{{ time_str }}</span>
         </td>
         <td>
           <select class="person-select" onchange="editPerson({{ e.id }}, this.value, this)">
@@ -239,6 +256,7 @@
         <td><span class="source-badge source-{{ e.source }}">{{ e.source }}</span></td>
         <td>{{ e.event_type }}</td>
         <td>{{ "%.1f" | format(e.value) if e.value else "-" }}</td>
+        <td><button class="delete-btn" onclick="deleteEvent({{ e.id }}, '{{ e.event_type }}')" title="削除">&#x2715;</button></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -296,6 +314,61 @@ async function editPerson(eventId, newPersonId, selectEl) {
       setTimeout(() => { msg.style.display = 'none'; }, 2000);
       selectEl.closest('tr').dataset.person = newPersonId || '';
     } else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+function startEditTime(span, eventId, currentTime) {
+  const input = document.createElement('input');
+  input.type = 'time';
+  input.className = 'time-input';
+  input.value = currentTime;
+  span.replaceWith(input);
+  input.focus();
+
+  async function saveTime() {
+    const newTime = input.value;
+    if (!newTime || newTime === currentTime) {
+      const newSpan = document.createElement('span');
+      newSpan.className = 'time-display';
+      newSpan.textContent = currentTime;
+      newSpan.onclick = () => startEditTime(newSpan, eventId, currentTime);
+      input.replaceWith(newSpan);
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/events/${eventId}/edit`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+        body: JSON.stringify({ started_at: newTime })
+      });
+      if (resp.ok) {
+        const newSpan = document.createElement('span');
+        newSpan.className = 'time-display';
+        newSpan.textContent = newTime;
+        newSpan.style.borderColor = 'var(--success)';
+        newSpan.style.background = '#E8F8F0';
+        newSpan.onclick = () => startEditTime(newSpan, eventId, newTime);
+        input.replaceWith(newSpan);
+      } else { alert('時刻の保存に失敗しました'); }
+    } catch(e) { alert('通信エラー: ' + e.message); }
+  }
+
+  input.addEventListener('change', saveTime);
+  input.addEventListener('blur', saveTime);
+}
+
+async function deleteEvent(eventId, eventType) {
+  if (!confirm(`「${eventType}」の記録を削除しますか？\nこの操作は元に戻せません。`)) return;
+  try {
+    const resp = await fetch(`/api/events/${eventId}`, {
+      method: 'DELETE', credentials: 'same-origin'
+    });
+    if (resp.ok) {
+      const row = document.querySelector(`tr[data-event-id="${eventId}"]`);
+      if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+    } else {
+      const d = await resp.json();
+      alert('削除失敗: ' + (d.detail || '不明'));
+    }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 

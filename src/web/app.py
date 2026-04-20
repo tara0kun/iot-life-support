@@ -457,25 +457,81 @@ async def api_edit_event(request: Request, event_id: int):
     try:
         body = await request.json()
         new_person_id = body.get("person_id")
+        new_time = body.get("started_at")  # "HH:MM" or "HH:MM:SS" 形式
         now_str = datetime.now().isoformat()
         with transaction() as conn:
-            old = conn.execute("SELECT person_id FROM events WHERE id = ?", (event_id,)).fetchone()
+            old = conn.execute("SELECT person_id, started_at FROM events WHERE id = ?", (event_id,)).fetchone()
             if not old:
                 raise HTTPException(status_code=404)
             old_pid = old["person_id"]
+            old_started = old["started_at"]
+
+            before = {"person_id": old_pid}
+            after = {}
+
+            # 人物の変更
+            if new_person_id is not None:
+                conn.execute(
+                    """UPDATE events
+                       SET person_id = ?, edited_by = 1, edited_at = ?,
+                           original_person_id = COALESCE(original_person_id, ?)
+                       WHERE id = ?""",
+                    (new_person_id, now_str, old_pid, event_id),
+                )
+                after["person_id"] = new_person_id
+
+            # 時刻の変更
+            if new_time is not None:
+                # 既存の日付部分を保持して時刻だけ更新
+                if isinstance(old_started, str):
+                    date_part = old_started.split("T")[0] if "T" in old_started else old_started.split(" ")[0]
+                else:
+                    date_part = old_started.strftime("%Y-%m-%d")
+                updated_at = f"{date_part}T{new_time}" if len(new_time) == 5 else f"{date_part}T{new_time}"
+                conn.execute(
+                    "UPDATE events SET started_at = ?, edited_by = 1, edited_at = ? WHERE id = ?",
+                    (updated_at, now_str, event_id),
+                )
+                before["started_at"] = str(old_started)
+                after["started_at"] = updated_at
+
             conn.execute(
-                """UPDATE events
-                   SET person_id = ?, edited_by = 1, edited_at = ?,
-                       original_person_id = COALESCE(original_person_id, ?)
-                   WHERE id = ?""",
-                (new_person_id, now_str, old_pid, event_id),
+                """INSERT INTO edit_log(edited_by, target_table, target_id, before_json, after_json)
+                   VALUES(1, 'events', ?, ?, ?)""",
+                (event_id, json.dumps(before), json.dumps(after)),
             )
+        return {"ok": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/events/{event_id}")
+async def api_delete_event(request: Request, event_id: int):
+    """イベントを削除する（監査ログに記録）。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    try:
+        with transaction() as conn:
+            old = conn.execute("SELECT * FROM events WHERE id = ?", (event_id,)).fetchone()
+            if not old:
+                raise HTTPException(status_code=404)
+            conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            # 関連するmeal_sessionsも削除（family_reportの場合）
+            if old["source"] == "family_report":
+                conn.execute(
+                    "DELETE FROM meal_sessions WHERE person_id = ? AND label = ? AND started_at = ?",
+                    (old["person_id"], old["event_type"], old["started_at"]),
+                )
             conn.execute(
                 """INSERT INTO edit_log(edited_by, target_table, target_id, before_json, after_json)
                    VALUES(1, 'events', ?, ?, ?)""",
                 (event_id,
-                 json.dumps({"person_id": old_pid}),
-                 json.dumps({"person_id": new_person_id})),
+                 json.dumps(dict(old), default=str),
+                 json.dumps({"action": "deleted"})),
             )
         return {"ok": True}
     except HTTPException:
