@@ -259,6 +259,7 @@ async function unlockDevice() {
 }
 
 async function quickRecord(activity, btn) {
+  if (!confirm(`「${activity}」を記録しますか？`)) return;
   const status = btn.querySelector('.qb-status');
   try {
     const resp = await fetch('/api/quick-record', {
