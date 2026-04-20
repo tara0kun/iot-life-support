@@ -353,6 +353,10 @@
 - [x] `README.md` にスクリーンショットを `<img>` タグで埋め込み（幅300px）
 - [x] `.gitignore` に `doc/screenshots/` の例外追加（`doc/*` + `!doc/screenshots/`）
 
+### 家族UI改善（誤タップ防止）
+- [x] 「かんたん記録」ボタンに確認ダイアログ追加（`confirm()` で「〇〇を記録しますか？」）
+- 誤タップによる意図しない記録を防止
+
 ### Git運用体制の構築
 - [x] GitHub CLI (`gh`) インストール・認証
 - [x] `master` → `main` にリネーム（GitHubデフォルトブランチも変更）
