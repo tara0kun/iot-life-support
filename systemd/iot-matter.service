@@ -1,0 +1,15 @@
+[Unit]
+Description=IoT Matter Server (P110M接続用)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tara0
+WorkingDirectory=/home/tara0/IoT
+ExecStart=/home/tara0/IoT/venv/bin/matter-server --storage-path /home/tara0/IoT/data/matter --port 5580 --bluetooth-adapter 0
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

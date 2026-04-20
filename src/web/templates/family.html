@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家族管理画面</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap');
+
+  :root {
+    --primary: #2C3E50;
+    --primary-light: #34495E;
+    --accent: #E67E22;
+    --danger: #E74C3C;
+    --success: #27AE60;
+    --bg: #F0F2F5;
+    --card: #FFFFFF;
+    --text: #2C3E50;
+    --text-light: #7F8C8D;
+    --text-muted: #BDC3C7;
+    --shadow: 0 2px 12px rgba(0,0,0,0.06);
+    --radius: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Noto Sans JP', sans-serif; background: var(--bg); color: var(--text); }
+
+  /* ヘッダー */
+  .header {
+    background: linear-gradient(135deg, var(--primary), var(--primary-light));
+    color: white; padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  }
+  .header h1 { font-size: 18px; font-weight: 700; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .header .time { font-size: 13px; opacity: 0.7; }
+  .logout-btn {
+    background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.3);
+    padding: 6px 14px; border-radius: 8px; font-size: 12px; cursor: pointer; text-decoration: none; font-family: inherit;
+  }
+  .logout-btn:hover { background: rgba(255,255,255,0.25); }
+
+  .container { max-width: 960px; margin: 0 auto; padding: 20px; }
+
+  /* アラートバナー */
+  .alert-banner {
+    border-radius: var(--radius); padding: 16px 20px; margin-bottom: 16px;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .alert-banner.danger { background: #FDEDEC; border: 2px solid #F1948A; }
+  .alert-banner.warning { background: #FEF9E7; border: 2px solid #F9E79F; }
+  .alert-banner .alert-info { flex: 1; }
+  .alert-banner .alert-title { font-size: 15px; font-weight: 700; }
+  .alert-banner .alert-desc { font-size: 12px; color: var(--text-light); margin-top: 2px; }
+  .alert-banner button {
+    background: var(--danger); color: white; border: none; padding: 10px 20px;
+    border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; font-family: inherit; white-space: nowrap;
+  }
+  .alert-banner button:hover { opacity: 0.9; }
+
+  /* ステータスカード */
+  .status-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+  .stat-card {
+    background: var(--card); border-radius: var(--radius); padding: 18px; text-align: center;
+    box-shadow: var(--shadow);
+  }
+  .stat-card .number { font-size: 32px; font-weight: 700; color: var(--primary); }
+  .stat-card .label { font-size: 11px; color: var(--text-light); margin-top: 4px; font-weight: 500; letter-spacing: 0.5px; }
+  .stat-card.warning .number { color: var(--danger); }
+
+  /* かんたん記録 */
+  .section-card {
+    background: var(--card); border-radius: var(--radius); padding: 20px; margin-bottom: 16px;
+    box-shadow: var(--shadow);
+  }
+  .section-title { font-size: 15px; font-weight: 700; color: var(--primary); margin-bottom: 4px; }
+  .section-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 14px; }
+  .quick-btns {
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+  }
+  .quick-btn {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    padding: 14px 4px; border: 2px solid #E8E8E8; border-radius: 12px;
+    background: #FAFAFA; cursor: pointer; transition: all 0.2s; font-family: inherit;
+  }
+  .quick-btn:hover { border-color: var(--primary); background: #F0F4F8; }
+  .quick-btn:active { transform: scale(0.95); }
+  .quick-btn.recording { border-color: var(--success); background: #E8F8F0; pointer-events: none; }
+  .quick-btn .qb-icon { font-size: 24px; }
+  .quick-btn .qb-label { font-size: 11px; font-weight: 700; color: var(--text); }
+  .quick-btn .qb-status { font-size: 10px; color: var(--success); font-weight: 500; min-height: 14px; }
+
+  /* フィルタ */
+  .filters { display: flex; gap: 8px; margin-bottom: 16px; }
+  .filter-btn {
+    padding: 8px 16px; border: 2px solid #E0E0E0; border-radius: 8px;
+    background: white; color: var(--text); font-size: 13px; cursor: pointer; font-family: inherit; font-weight: 500;
+  }
+  .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+  /* テーブル */
+  .event-table {
+    width: 100%; border-collapse: collapse; background: var(--card);
+    border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
+  }
+  .event-table th {
+    background: var(--primary); color: white; padding: 12px 16px; text-align: left;
+    font-size: 12px; font-weight: 500; letter-spacing: 0.5px;
+  }
+  .event-table td { padding: 10px 16px; border-bottom: 1px solid #F0F0F0; font-size: 13px; }
+  .event-table tr:hover { background: #F8F9FA; }
+  .event-table tr:last-child td { border-bottom: none; }
+
+  .source-badge {
+    display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700;
+  }
+  .source-rice_cooker { background: #FFF3E0; color: #E65100; }
+  .source-ih { background: #FCE4EC; color: #C62828; }
+  .source-camera { background: #F3E5F5; color: #6A1B9A; }
+  .source-contact_sensor { background: #E8F5E9; color: #2E7D32; }
+  .source-bath_door { background: #E1F5FE; color: #0277BD; }
+  .source-bath_motion { background: #E0F7FA; color: #00838F; }
+  .source-family_report { background: #FFF8E1; color: #F57F17; }
+  .source-family_override { background: #FFEBEE; color: #C62828; }
+  .source-toilet { background: #EFEBE9; color: #5D4037; }
+
+  .person-select {
+    padding: 4px 8px; border: 1px solid #E0E0E0; border-radius: 6px; font-size: 12px;
+    background: white; font-family: inherit;
+  }
+  .person-select.changed { border-color: var(--success); background: #E8F8F0; }
+  .save-msg { font-size: 10px; color: var(--success); display: none; margin-left: 4px; }
+
+  @media (max-width: 600px) {
+    .status-grid { grid-template-columns: repeat(2, 1fr); }
+    .quick-btns { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>家族管理画面</h1>
+  <div class="header-right">
+    <div class="time">{{ now.strftime("%Y/%m/%d %H:%M") }}</div>
+    <a href="/family/logout" class="logout-btn">ログアウト</a>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ロック状態アラート -->
+  {% if is_locked %}
+  <div class="alert-banner danger">
+    <div class="alert-info">
+      <div class="alert-title">炊飯器がロック中</div>
+      <div class="alert-desc">食事検知により自動ロックされました</div>
+    </div>
+    <button onclick="unlockDevice()">ロック解除</button>
+  </div>
+  {% endif %}
+
+  <!-- ステータスカード -->
+  <div class="status-grid">
+    <div class="stat-card">
+      <div class="number">{{ events | length }}</div>
+      <div class="label">今日のイベント</div>
+    </div>
+    <div class="stat-card">
+      <div class="number">{{ persons | length }}</div>
+      <div class="label">登録人数</div>
+    </div>
+    <div class="stat-card" id="power-card">
+      <div class="number" id="live-power">-</div>
+      <div class="label">消費電力 (W)</div>
+    </div>
+    <div class="stat-card {{ 'warning' if grandma_meal_count >= 3 else '' }}">
+      <div class="number">{{ grandma_meal_count }}</div>
+      <div class="label">祖母の食事回数</div>
+    </div>
+  </div>
+
+  <!-- かんたん記録 -->
+  <div class="section-card">
+    <div class="section-title">かんたん記録</div>
+    <div class="section-desc">おばあちゃんから報告を受けたら、ボタンを押して記録</div>
+    <div class="quick-btns">
+      <button class="quick-btn" onclick="quickRecord('起床', this)">
+        <span class="qb-icon">🌅</span><span class="qb-label">起床</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('お薬', this)">
+        <span class="qb-icon">💊</span><span class="qb-label">お薬</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('お風呂', this)">
+        <span class="qb-icon">🛁</span><span class="qb-label">お風呂</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('トイレ', this)">
+        <span class="qb-icon">🚽</span><span class="qb-label">トイレ</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('おやつ', this)">
+        <span class="qb-icon">🍪</span><span class="qb-label">おやつ</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('就寝', this)">
+        <span class="qb-icon">🌙</span><span class="qb-label">就寝</span><span class="qb-status"></span>
+      </button>
+    </div>
+  </div>
+
+  <!-- フィルタ -->
+  <div class="filters">
+    <button class="filter-btn active" onclick="filterEvents('all')">全員</button>
+    {% for p in persons %}
+    <button class="filter-btn" onclick="filterEvents('{{ p.id }}')">{{ p.name }}</button>
+    {% endfor %}
+  </div>
+
+  <!-- イベント一覧 -->
+  <table class="event-table" id="event-table">
+    <thead>
+      <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th></tr>
+    </thead>
+    <tbody>
+      {% for e in events %}
+      <tr data-person="{{ e.person_id or '' }}" data-event-id="{{ e.id }}">
+        <td>
+          {% if e.started_at is string %}
+            {{ e.started_at.split("T")[1][:8] if "T" in e.started_at else e.started_at }}
+          {% elif e.started_at %}
+            {{ e.started_at.strftime("%H:%M:%S") }}
+          {% endif %}
+        </td>
+        <td>
+          <select class="person-select" onchange="editPerson({{ e.id }}, this.value, this)">
+            <option value="" {{ 'selected' if not e.person_id else '' }}>不明</option>
+            {% for p in persons %}
+            <option value="{{ p.id }}" {{ 'selected' if e.person_id == p.id else '' }}>{{ p.name }}</option>
+            {% endfor %}
+          </select>
+          <span class="save-msg" id="msg-{{ e.id }}">&#10003;</span>
+        </td>
+        <td><span class="source-badge source-{{ e.source }}">{{ e.source }}</span></td>
+        <td>{{ e.event_type }}</td>
+        <td>{{ "%.1f" | format(e.value) if e.value else "-" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<script>
+async function unlockDevice() {
+  if (!confirm('炊飯器のロックを解除しますか？')) return;
+  try {
+    const resp = await fetch('/api/unlock', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ device: 'rice_cooker', reason: '家族による手動解除' })
+    });
+    if (resp.ok) { alert('ロックを解除しました'); location.reload(); }
+    else { const d = await resp.json(); alert('解除失敗: ' + (d.detail || '不明')); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function quickRecord(activity, btn) {
+  const status = btn.querySelector('.qb-status');
+  try {
+    const resp = await fetch('/api/quick-record', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ activity, person_id: 1, witness: '家族' })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      btn.classList.add('recording');
+      status.textContent = data.time + ' 記録済';
+      setTimeout(() => location.reload(), 1500);
+    } else { status.textContent = '失敗'; status.style.color = '#C62828'; }
+  } catch(e) { status.textContent = 'エラー'; status.style.color = '#C62828'; }
+}
+
+function filterEvents(personId) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  document.querySelectorAll('#event-table tbody tr').forEach(row => {
+    row.style.display = (personId === 'all' || row.dataset.person === personId) ? '' : 'none';
+  });
+}
+
+async function editPerson(eventId, newPersonId, selectEl) {
+  try {
+    const resp = await fetch(`/api/events/${eventId}/edit`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({person_id: newPersonId ? parseInt(newPersonId) : null})
+    });
+    if (resp.ok) {
+      selectEl.classList.add('changed');
+      const msg = document.getElementById(`msg-${eventId}`);
+      msg.style.display = 'inline';
+      setTimeout(() => { msg.style.display = 'none'; }, 2000);
+      selectEl.closest('tr').dataset.person = newPersonId || '';
+    } else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+const ws = new WebSocket(`${wsProto}//${location.host}/ws/events`);
+ws.onmessage = (e) => {
+  const data = JSON.parse(e.data);
+  if (data.source && data.event_type === 'power_reading') {
+    document.getElementById('live-power').textContent = data.value ? data.value.toFixed(1) : '0';
+  } else { setTimeout(() => location.reload(), 1000); }
+};
+</script>
+</body>
+</html>

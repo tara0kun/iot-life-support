@@ -1,0 +1,247 @@
+"""モックデータをDBに投入して、システムの試運転を行う。
+
+実際のセンサーを使わず、1日分の「祖母の典型的な1日」をシミュレートする。
+タブレットUI・家族UIの表示確認、セッション集約、LINE通知テストに使える。
+
+使い方:
+    python scripts/seed_mock_data.py              # 今日のデータを生成
+    python scripts/seed_mock_data.py --clear       # 既存データを消してから生成
+    python scripts/seed_mock_data.py --scenario 2  # シナリオ2（食べ過ぎの日）
+"""
+import argparse
+import sys
+from datetime import datetime, timedelta, time
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.db import get_conn, init_db, transaction
+from src.sessions import aggregate_sessions
+
+
+def clear_today():
+    today_start = datetime.combine(datetime.now().date(), time.min)
+    with transaction() as conn:
+        conn.execute("DELETE FROM session_events WHERE session_id IN (SELECT id FROM meal_sessions WHERE started_at >= ?)", (today_start,))
+        conn.execute("DELETE FROM meal_sessions WHERE started_at >= ?", (today_start,))
+        conn.execute("DELETE FROM events WHERE started_at >= ?", (today_start,))
+    print("今日のデータを削除しました")
+
+
+def t(hour, minute=0):
+    """今日の指定時刻のdatetimeを返す"""
+    return datetime.combine(datetime.now().date(), time(hour, minute))
+
+
+def insert_event(conn, person_id, source, event_type, at, value=None):
+    conn.execute(
+        """INSERT INTO events(person_id, source, event_type, started_at, value, confidence)
+           VALUES(?, ?, ?, ?, ?, 1.0)""",
+        (person_id, source, event_type, at, value),
+    )
+
+
+def scenario_normal(conn):
+    """シナリオ1: 普通の1日（朝食・昼食・夕食、各1回ずつ）"""
+    print("シナリオ1: 普通の1日")
+    G = 1  # 祖母
+    M = 2  # 母
+
+    # === 朝 7:00〜7:30 祖母が朝食 ===
+    insert_event(conn, G, "camera", "person_detected", t(6, 55), 1.0)
+    insert_event(conn, G, "rice_cooker", "power_on", t(7, 0), 650.0)
+    insert_event(conn, G, "contact_sensor", "open", t(7, 2))   # 冷蔵庫
+    insert_event(conn, G, "contact_sensor", "close", t(7, 3))
+    insert_event(conn, G, "rice_cooker", "power_off", t(7, 25), 2.0)
+    insert_event(conn, G, "camera", "person_detected", t(7, 30), 1.0)
+
+    # === 朝 7:40 母がキッチンを使う（祖母UIに出ない） ===
+    insert_event(conn, M, "contact_sensor", "open", t(7, 40))
+    insert_event(conn, M, "contact_sensor", "close", t(7, 41))
+    insert_event(conn, M, "camera", "person_detected", t(7, 40), 1.0)
+
+    # === 昼 12:00〜12:20 祖母が昼食 ===
+    insert_event(conn, G, "camera", "person_detected", t(12, 0), 1.0)
+    insert_event(conn, G, "contact_sensor", "open", t(12, 2))
+    insert_event(conn, G, "contact_sensor", "close", t(12, 3))
+    insert_event(conn, G, "ih", "power_on", t(12, 5), 800.0)
+    insert_event(conn, G, "ih", "power_off", t(12, 15), 3.0)
+    insert_event(conn, G, "contact_sensor", "open", t(12, 18))
+    insert_event(conn, G, "contact_sensor", "close", t(12, 19))
+
+    # === 夕 18:00〜18:30 祖母が夕食 ===
+    now = datetime.now()
+    if t(18, 0) < now:
+        insert_event(conn, G, "camera", "person_detected", t(18, 0), 1.0)
+        insert_event(conn, G, "rice_cooker", "power_on", t(18, 5), 620.0)
+        insert_event(conn, G, "contact_sensor", "open", t(18, 8))
+        insert_event(conn, G, "contact_sensor", "close", t(18, 9))
+        insert_event(conn, G, "rice_cooker", "power_off", t(18, 28), 1.5)
+
+    print(f"  朝食(7:00) + 昼食(12:00) + {'夕食(18:00)' if t(18,0) < now else '夕食は時間前'}")
+
+
+def scenario_overeating(conn):
+    """シナリオ2: 食べ過ぎの日（朝食後30分で再度食事行動）"""
+    print("シナリオ2: 食べ過ぎの日（2回目の食事行動あり）")
+    G = 1
+
+    # === 朝食 7:00 ===
+    insert_event(conn, G, "camera", "person_detected", t(7, 0), 1.0)
+    insert_event(conn, G, "rice_cooker", "power_on", t(7, 0), 650.0)
+    insert_event(conn, G, "contact_sensor", "open", t(7, 2))
+    insert_event(conn, G, "contact_sensor", "close", t(7, 3))
+    insert_event(conn, G, "rice_cooker", "power_off", t(7, 25), 2.0)
+
+    # === 朝食後30分で再度冷蔵庫を開ける（問題行動） ===
+    insert_event(conn, G, "camera", "person_detected", t(7, 55), 1.0)
+    insert_event(conn, G, "contact_sensor", "open", t(7, 56))
+    insert_event(conn, G, "contact_sensor", "close", t(7, 57))
+    insert_event(conn, G, "contact_sensor", "open", t(7, 58))
+    insert_event(conn, G, "contact_sensor", "close", t(7, 59))
+    insert_event(conn, G, "rice_cooker", "power_on", t(8, 0), 640.0)
+    insert_event(conn, G, "rice_cooker", "power_off", t(8, 20), 1.8)
+
+    # === 昼食 12:00 ===
+    insert_event(conn, G, "camera", "person_detected", t(12, 0), 1.0)
+    insert_event(conn, G, "contact_sensor", "open", t(12, 5))
+    insert_event(conn, G, "contact_sensor", "close", t(12, 6))
+    insert_event(conn, G, "ih", "power_on", t(12, 8), 750.0)
+    insert_event(conn, G, "ih", "power_off", t(12, 18), 2.0)
+
+    # === 昼食後1時間でまた ===
+    insert_event(conn, G, "camera", "person_detected", t(13, 10), 1.0)
+    insert_event(conn, G, "contact_sensor", "open", t(13, 12))
+    insert_event(conn, G, "contact_sensor", "close", t(13, 13))
+
+    print("  朝食(7:00) + 2回目(7:55) + 昼食(12:00) + 間食試行(13:10)")
+
+
+def scenario_with_toilet(conn):
+    """シナリオ3: トイレ・入浴も含めた1日"""
+    print("シナリオ3: 食事＋トイレ＋入浴の1日")
+    G = 1
+
+    # 起床
+    insert_event(conn, G, "camera", "person_detected", t(6, 45), 1.0)
+
+    # トイレ（朝）
+    insert_event(conn, G, "toilet", "open", t(6, 50))
+    insert_event(conn, G, "toilet", "close", t(6, 55))
+
+    # 朝食
+    insert_event(conn, G, "rice_cooker", "power_on", t(7, 5), 650.0)
+    insert_event(conn, G, "contact_sensor", "open", t(7, 8))
+    insert_event(conn, G, "contact_sensor", "close", t(7, 9))
+    insert_event(conn, G, "rice_cooker", "power_off", t(7, 30), 2.0)
+
+    # トイレ（午前）
+    insert_event(conn, G, "toilet", "open", t(9, 30))
+    insert_event(conn, G, "toilet", "close", t(9, 35))
+
+    # 昼食
+    insert_event(conn, G, "contact_sensor", "open", t(12, 0))
+    insert_event(conn, G, "contact_sensor", "close", t(12, 1))
+    insert_event(conn, G, "ih", "power_on", t(12, 5), 800.0)
+    insert_event(conn, G, "ih", "power_off", t(12, 15), 2.5)
+
+    # トイレ（午後）
+    insert_event(conn, G, "toilet", "open", t(14, 0))
+    insert_event(conn, G, "toilet", "close", t(14, 8))
+
+    # 入浴
+    now = datetime.now()
+    if t(16, 0) < now:
+        insert_event(conn, G, "bath_door", "close", t(16, 0))
+        insert_event(conn, G, "bath_motion", "motion", t(16, 5))
+        insert_event(conn, G, "bath_motion", "motion", t(16, 15))
+        insert_event(conn, G, "bath_door", "open", t(16, 25))
+        insert_event(conn, G, "bath_door", "bath_end", t(16, 25), 25.0)
+
+    print(f"  朝食 + 昼食 + トイレ3回 + {'入浴あり' if t(16,0) < now else '入浴は時間前'}")
+
+
+def scenario_full_day(conn):
+    """シナリオ4: お花満開を目指す充実した1日（朝食+昼食+お風呂+夕食）"""
+    print("シナリオ4: 充実した1日（お花の成長を確認）")
+    G = 1
+
+    # 起床 6:30
+    insert_event(conn, G, "camera", "person_detected", t(6, 30), 1.0)
+
+    # 朝食 7:00
+    insert_event(conn, G, "rice_cooker", "power_on", t(7, 0), 650.0)
+    insert_event(conn, G, "contact_sensor", "open", t(7, 3))
+    insert_event(conn, G, "contact_sensor", "close", t(7, 4))
+    insert_event(conn, G, "rice_cooker", "power_off", t(7, 25), 2.0)
+
+    # 昼食 12:00
+    insert_event(conn, G, "contact_sensor", "open", t(12, 0))
+    insert_event(conn, G, "contact_sensor", "close", t(12, 1))
+    insert_event(conn, G, "ih", "power_on", t(12, 5), 800.0)
+    insert_event(conn, G, "ih", "power_off", t(12, 15), 2.5)
+
+    # お風呂 16:00
+    now = datetime.now()
+    if t(16, 0) < now:
+        insert_event(conn, G, "bath_door", "close", t(16, 0))
+        insert_event(conn, G, "bath_motion", "motion", t(16, 10))
+        insert_event(conn, G, "bath_motion", "motion", t(16, 20))
+        insert_event(conn, G, "bath_door", "open", t(16, 30))
+        insert_event(conn, G, "bath_door", "bath_end", t(16, 30), 30.0)
+
+    # 夕食 18:00
+    if t(18, 0) < now:
+        insert_event(conn, G, "rice_cooker", "power_on", t(18, 0), 620.0)
+        insert_event(conn, G, "contact_sensor", "open", t(18, 5))
+        insert_event(conn, G, "contact_sensor", "close", t(18, 6))
+        insert_event(conn, G, "rice_cooker", "power_off", t(18, 25), 1.5)
+
+    done = "朝食 + 昼食"
+    if t(16, 0) < now:
+        done += " + お風呂"
+    if t(18, 0) < now:
+        done += " + 夕食"
+    print(f"  {done}")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="モックデータ投入")
+    parser.add_argument("--clear", action="store_true", help="今日のデータを消してから投入")
+    parser.add_argument("--scenario", type=int, default=1, choices=[1, 2, 3, 4],
+                        help="1:普通の1日, 2:食べ過ぎ, 3:トイレ+入浴, 4:充実した1日")
+    args = parser.parse_args()
+
+    init_db()
+
+    if args.clear:
+        clear_today()
+
+    with transaction() as conn:
+        if args.scenario == 1:
+            scenario_normal(conn)
+        elif args.scenario == 2:
+            scenario_overeating(conn)
+        elif args.scenario == 3:
+            scenario_with_toilet(conn)
+        elif args.scenario == 4:
+            scenario_full_day(conn)
+
+    # セッション集約を実行
+    created = aggregate_sessions()
+    print(f"セッション集約: {created}件作成")
+
+    # 結果表示
+    conn = get_conn()
+    events = conn.execute("SELECT COUNT(*) FROM events WHERE started_at >= ?",
+                          (datetime.combine(datetime.now().date(), time.min),)).fetchone()[0]
+    sessions = conn.execute("SELECT COUNT(*) FROM meal_sessions WHERE started_at >= ?",
+                            (datetime.combine(datetime.now().date(), time.min),)).fetchone()[0]
+    conn.close()
+    print(f"\n結果: イベント{events}件, 食事セッション{sessions}件")
+    print(f"タブレット確認: http://localhost:8000/tablet")
+    print(f"家族画面確認:   http://localhost:8000/family")
+
+
+if __name__ == "__main__":
+    main()

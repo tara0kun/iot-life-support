@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>花の成長段階プレビュー</title>
+<style>
+  body { font-family: sans-serif; background: #F5F1EB; padding: 20px; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; max-width: 900px; margin: 0 auto; }
+  .cell { background: white; border-radius: 16px; padding: 20px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.08); }
+  .cell h3 { margin-bottom: 8px; color: #2C3E50; }
+  .cell p { font-size: 13px; color: #888; }
+  svg { max-width: 140px; }
+  @keyframes sway { 0%,100% { transform: rotate(-2deg); } 50% { transform: rotate(2deg); } }
+  .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
+</style>
+</head>
+<body>
+<h1 style="text-align:center;color:#2C3E50;">花の成長段階（0〜7）</h1>
+<div class="grid">
+
+<div class="cell"><h3>Stage 0: たね</h3><p>達成 0/7</p>
+<svg viewBox="0 0 160 200">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <ellipse cx="80" cy="145" rx="8" ry="6" fill="#5D4037"/>
+  <path d="M80 139 Q85 132 82 128" stroke="#7CB342" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</svg></div>
+
+<div class="cell"><h3>Stage 1: め</h3><p>達成 1/7</p>
+<svg viewBox="0 0 160 200">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="108" stroke="#66BB6A" stroke-width="4" stroke-linecap="round"/>
+  <path d="M80 108 Q72 95 80 88 Q88 95 80 108Z" fill="#66BB6A"/>
+  <path d="M80 108 Q68 98 72 88" fill="#81C784" opacity="0.8"/>
+</svg></div>
+
+<div class="cell"><h3>Stage 2: くき</h3><p>達成 2/7</p>
+<svg viewBox="0 0 160 200">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="85" stroke="#4CAF50" stroke-width="4" stroke-linecap="round"/>
+  <path d="M80 120 Q95 108 105 115" fill="#66BB6A" stroke="#4CAF50" stroke-width="1"/>
+  <path d="M80 85 Q72 70 80 62 Q88 70 80 85Z" fill="#66BB6A"/>
+  <path d="M80 85 Q68 75 72 65" fill="#81C784" opacity="0.8"/>
+</svg></div>
+
+<div class="cell"><h3>Stage 3: つぼみ</h3><p>達成 3/7</p>
+<svg viewBox="0 0 160 200">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="70" stroke="#4CAF50" stroke-width="4" stroke-linecap="round"/>
+  <path d="M80 115 Q95 105 108 110" fill="#66BB6A" stroke="#4CAF50" stroke-width="1"/>
+  <path d="M80 100 Q65 90 55 96" fill="#66BB6A" stroke="#4CAF50" stroke-width="1"/>
+  <ellipse cx="80" cy="60" rx="10" ry="16" fill="#E91E63" opacity="0.6"/>
+  <path d="M72 62 Q80 45 88 62Z" fill="#EC407A" opacity="0.8"/>
+  <path d="M75 68 Q80 55 85 68Z" fill="#F48FB1" opacity="0.6"/>
+</svg></div>
+
+<div class="cell"><h3>Stage 4: おはな</h3><p>達成 4/7</p>
+<svg viewBox="0 0 160 200" class="flower-sway">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="68" stroke="#4CAF50" stroke-width="4" stroke-linecap="round"/>
+  <path d="M80 115 Q98 103 110 110" fill="#66BB6A" stroke="#4CAF50" stroke-width="1"/>
+  <path d="M80 100 Q62 88 52 95" fill="#66BB6A" stroke="#4CAF50" stroke-width="1"/>
+  <g transform="translate(80,52)">
+    <ellipse cx="0" cy="-14" rx="8" ry="14" fill="#F8BBD0" opacity="0.9"/>
+    <ellipse cx="13" cy="-4" rx="8" ry="14" fill="#F48FB1" opacity="0.9" transform="rotate(72)"/>
+    <ellipse cx="8" cy="11" rx="8" ry="14" fill="#F8BBD0" opacity="0.9" transform="rotate(144)"/>
+    <ellipse cx="-8" cy="11" rx="8" ry="14" fill="#F48FB1" opacity="0.9" transform="rotate(216)"/>
+    <ellipse cx="-13" cy="-4" rx="8" ry="14" fill="#F8BBD0" opacity="0.9" transform="rotate(288)"/>
+    <circle cx="0" cy="0" r="7" fill="#FFE082"/>
+    <circle cx="-2" cy="-2" r="2" fill="#FFD54F"/>
+    <circle cx="3" cy="1" r="1.5" fill="#FFD54F"/>
+  </g>
+</svg></div>
+
+<div class="cell"><h3>Stage 5: きれいなはな</h3><p>達成 5/7</p>
+<svg viewBox="0 0 160 200" class="flower-sway">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="62" stroke="#388E3C" stroke-width="5" stroke-linecap="round"/>
+  <path d="M80 115 Q100 100 115 108" fill="#4CAF50" stroke="#388E3C" stroke-width="1"/>
+  <path d="M80 98 Q60 85 48 93" fill="#4CAF50" stroke="#388E3C" stroke-width="1"/>
+  <g transform="translate(80,45)">
+    <ellipse cx="0" cy="-18" rx="10" ry="18" fill="#E91E63" opacity="0.85"/>
+    <ellipse cx="17" cy="-6" rx="10" ry="18" fill="#EC407A" opacity="0.85" transform="rotate(72)"/>
+    <ellipse cx="10" cy="15" rx="10" ry="18" fill="#E91E63" opacity="0.85" transform="rotate(144)"/>
+    <ellipse cx="-10" cy="15" rx="10" ry="18" fill="#EC407A" opacity="0.85" transform="rotate(216)"/>
+    <ellipse cx="-17" cy="-6" rx="10" ry="18" fill="#E91E63" opacity="0.85" transform="rotate(288)"/>
+    <circle cx="0" cy="0" r="9" fill="#FFF176"/>
+    <circle cx="-3" cy="-3" r="2.5" fill="#FFD54F"/>
+    <circle cx="3" cy="1" r="2" fill="#FFD54F"/>
+    <circle cx="0" cy="4" r="1.5" fill="#FFCA28"/>
+  </g>
+</svg></div>
+
+<div class="cell"><h3>Stage 6: おおきなはな</h3><p>達成 6/7</p>
+<svg viewBox="0 0 160 200" class="flower-sway">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="58" stroke="#2E7D32" stroke-width="6" stroke-linecap="round"/>
+  <path d="M80 118 Q105 100 118 110" fill="#43A047" stroke="#2E7D32" stroke-width="1.5"/>
+  <path d="M80 98 Q55 80 42 92" fill="#43A047" stroke="#2E7D32" stroke-width="1.5"/>
+  <path d="M80 130 Q100 120 108 128" fill="#66BB6A" stroke="#388E3C" stroke-width="1"/>
+  <g transform="translate(80,38)">
+    <ellipse cx="0" cy="-22" rx="12" ry="22" fill="#FF9800" opacity="0.9"/>
+    <ellipse cx="21" cy="-7" rx="12" ry="22" fill="#FFA726" opacity="0.9" transform="rotate(60)"/>
+    <ellipse cx="21" cy="7" rx="12" ry="22" fill="#FF9800" opacity="0.9" transform="rotate(120)"/>
+    <ellipse cx="0" cy="22" rx="12" ry="22" fill="#FFA726" opacity="0.9" transform="rotate(180)"/>
+    <ellipse cx="-21" cy="7" rx="12" ry="22" fill="#FF9800" opacity="0.9" transform="rotate(240)"/>
+    <ellipse cx="-21" cy="-7" rx="12" ry="22" fill="#FFA726" opacity="0.9" transform="rotate(300)"/>
+    <circle cx="0" cy="0" r="12" fill="#5D4037"/>
+    <circle cx="-3" cy="-4" r="2" fill="#4E342E"/><circle cx="4" cy="-2" r="1.5" fill="#4E342E"/>
+    <circle cx="0" cy="4" r="2" fill="#4E342E"/><circle cx="-5" cy="2" r="1" fill="#4E342E"/><circle cx="5" cy="3" r="1.5" fill="#4E342E"/>
+  </g>
+</svg></div>
+
+<div class="cell"><h3>Stage 7: まんかい</h3><p>達成 7/7</p>
+<svg viewBox="0 0 160 200" class="flower-sway">
+  <ellipse cx="80" cy="185" rx="45" ry="10" fill="#D7CCC8" opacity="0.4"/>
+  <path d="M55 160 L65 140 Q80 130 95 140 L105 160 Q100 175 80 178 Q60 175 55 160Z" fill="#A1887F"/>
+  <path d="M63 155 L68 142 Q80 136 92 142 L97 155 Q93 165 80 167 Q67 165 63 155Z" fill="#8D6E63"/>
+  <line x1="80" y1="138" x2="80" y2="50" stroke="#2E7D32" stroke-width="6" stroke-linecap="round"/>
+  <line x1="80" y1="100" x2="55" y2="75" stroke="#388E3C" stroke-width="3" stroke-linecap="round"/>
+  <line x1="80" y1="120" x2="108" y2="100" stroke="#388E3C" stroke-width="3" stroke-linecap="round"/>
+  <path d="M80 118 Q105 100 118 110" fill="#43A047"/>
+  <path d="M80 98 Q55 80 42 92" fill="#43A047"/>
+  <path d="M80 130 Q100 120 108 128" fill="#66BB6A"/>
+  <g transform="translate(80,32)">
+    <ellipse cx="0" cy="-20" rx="12" ry="20" fill="#E91E63" opacity="0.9"/>
+    <ellipse cx="19" cy="-6" rx="12" ry="20" fill="#EC407A" opacity="0.9" transform="rotate(60)"/>
+    <ellipse cx="19" cy="6" rx="12" ry="20" fill="#E91E63" opacity="0.9" transform="rotate(120)"/>
+    <ellipse cx="0" cy="20" rx="12" ry="20" fill="#EC407A" opacity="0.9" transform="rotate(180)"/>
+    <ellipse cx="-19" cy="6" rx="12" ry="20" fill="#E91E63" opacity="0.9" transform="rotate(240)"/>
+    <ellipse cx="-19" cy="-6" rx="12" ry="20" fill="#EC407A" opacity="0.9" transform="rotate(300)"/>
+    <circle cx="0" cy="0" r="10" fill="#FFF176"/>
+    <circle cx="-2" cy="-3" r="2" fill="#FFD54F"/><circle cx="3" cy="1" r="2" fill="#FFD54F"/><circle cx="-1" cy="4" r="1.5" fill="#FFCA28"/>
+  </g>
+  <g transform="translate(55,72) scale(0.5)">
+    <ellipse cx="0" cy="-16" rx="10" ry="16" fill="#AB47BC" opacity="0.8"/>
+    <ellipse cx="15" cy="-5" rx="10" ry="16" fill="#BA68C8" opacity="0.8" transform="rotate(72)"/>
+    <ellipse cx="9" cy="13" rx="10" ry="16" fill="#AB47BC" opacity="0.8" transform="rotate(144)"/>
+    <ellipse cx="-9" cy="13" rx="10" ry="16" fill="#BA68C8" opacity="0.8" transform="rotate(216)"/>
+    <ellipse cx="-15" cy="-5" rx="10" ry="16" fill="#AB47BC" opacity="0.8" transform="rotate(288)"/>
+    <circle cx="0" cy="0" r="6" fill="#FFF9C4"/>
+  </g>
+  <g transform="translate(108,98) scale(0.45)">
+    <ellipse cx="0" cy="-16" rx="10" ry="16" fill="#FF7043" opacity="0.8"/>
+    <ellipse cx="15" cy="-5" rx="10" ry="16" fill="#FF8A65" opacity="0.8" transform="rotate(72)"/>
+    <ellipse cx="9" cy="13" rx="10" ry="16" fill="#FF7043" opacity="0.8" transform="rotate(144)"/>
+    <ellipse cx="-9" cy="13" rx="10" ry="16" fill="#FF8A65" opacity="0.8" transform="rotate(216)"/>
+    <ellipse cx="-15" cy="-5" rx="10" ry="16" fill="#FF7043" opacity="0.8" transform="rotate(288)"/>
+    <circle cx="0" cy="0" r="6" fill="#FFF9C4"/>
+  </g>
+</svg></div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,33 @@
+venv/
+__pycache__/
+*.pyc
+
+# 機密情報
+.env
+.local/
+
+# バイナリドキュメント（個人情報含有）
+*.pptx
+*.docx
+
+# データベース・ランタイムデータ
+data/
+logs/
+
+# Cloudflare
+cloudflared
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# ビルド
+android/bin/
+android/.buildozer/
+
+# 個人写真
+doc/

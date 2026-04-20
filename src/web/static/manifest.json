@@ -1,0 +1,22 @@
+{
+  "name": "きょうの記録",
+  "short_name": "記録帳",
+  "description": "毎日の生活記録スタンプカード",
+  "start_url": "/tablet",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFF8F0",
+  "theme_color": "#1F3A5F",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

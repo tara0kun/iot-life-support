@@ -1,0 +1,16 @@
+[Unit]
+Description=IoT Web Server (タブレット/家族UI)
+After=network-online.target iot-matter.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tara0
+WorkingDirectory=/home/tara0/IoT
+ExecStart=/home/tara0/IoT/venv/bin/uvicorn src.web.app:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5
+
+[Install]
+WantedBy=multi-user.target

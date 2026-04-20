@@ -1,0 +1,15 @@
+[Unit]
+Description=IoT Sensor Monitor (全センサー統合監視)
+After=network-online.target iot-matter.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=tara0
+WorkingDirectory=/home/tara0/IoT
+ExecStart=/home/tara0/IoT/venv/bin/python -m src.monitor
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
