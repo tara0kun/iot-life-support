@@ -652,12 +652,14 @@ async def api_send_prompt(request: Request):
         raise HTTPException(status_code=400, detail="メッセージを入力してください")
     now = datetime.now()
     expires = now + timedelta(minutes=int(minutes))
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    expires_str = expires.strftime("%Y-%m-%d %H:%M:%S")
     with transaction() as conn:
         conn.execute(
             "INSERT INTO family_prompts(message, sent_by, created_at, expires_at) VALUES(?, ?, ?, ?)",
-            (message, "家族", now, expires),
+            (message, "家族", now_str, expires_str),
         )
-    return {"ok": True, "message": message, "expires_at": expires.isoformat()}
+    return {"ok": True, "message": message, "expires_at": expires_str}
 
 
 @app.post("/api/dismiss-prompt/{prompt_id}")
@@ -672,7 +674,7 @@ def _get_active_prompts() -> list[dict]:
     """有効な家族メッセージを取得。"""
     conn = get_conn()
     try:
-        now = datetime.now().isoformat()
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
             """SELECT id, message, sent_by, created_at FROM family_prompts
                WHERE dismissed = 0 AND expires_at > ?
