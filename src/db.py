@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS device_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS rice_guide (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    meal TEXT NOT NULL UNIQUE,              -- 朝食/昼食/夕食
+    amount TEXT NOT NULL,                   -- 例: "1合", "2合"
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS daily_scores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     person_id INTEGER NOT NULL REFERENCES persons(id),

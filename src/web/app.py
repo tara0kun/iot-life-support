@@ -237,27 +237,14 @@ def _greeting(now: datetime) -> str:
     return "こんばんは"
 
 
-# 食事ごとの炊飯量ガイド（.envで上書き可能）
-RICE_GUIDE = {
-    "朝食": "1合",
-    "昼食": "1合",
-    "夕食": "2合",
-}
-
-
 def _load_rice_guide() -> dict:
-    """炊飯量ガイドを.envから読み込み。未設定ならデフォルト値を使う。"""
-    env_path = BASE.parent.parent / ".env"
-    guide = dict(RICE_GUIDE)
-    if env_path.exists():
-        for line in env_path.read_text().splitlines():
-            if line.startswith("RICE_GUIDE_"):
-                # RICE_GUIDE_朝食=1合 のような形式
-                key = line.split("=", 1)[0].replace("RICE_GUIDE_", "")
-                val = line.split("=", 1)[1].strip()
-                if key and val:
-                    guide[key] = val
-    return guide
+    """炊飯量ガイドをDBから読み込み。未登録なら空dictを返す。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT meal, amount FROM rice_guide").fetchall()
+        return {r["meal"]: r["amount"] for r in rows}
+    finally:
+        conn.close()
 
 
 def _guess_next_meal(now: datetime, sessions: list) -> dict | None:
@@ -497,6 +484,45 @@ async def api_quick_record(request: Request):
     return {"ok": True, "activity": activity, "time": now.strftime("%H:%M")}
 
 
+@app.get("/api/rice-guide")
+async def api_get_rice_guide(request: Request):
+    """炊飯量ガイドを取得。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    return _load_rice_guide()
+
+
+@app.post("/api/rice-guide")
+async def api_set_rice_guide(request: Request):
+    """炊飯量ガイドを登録・更新。body: {"meal": "朝食", "amount": "1合"}"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    meal = body.get("meal", "")
+    amount = body.get("amount", "")
+    if meal not in {"朝食", "昼食", "夕食"}:
+        raise HTTPException(status_code=400, detail=f"無効な食事: {meal}")
+    if not amount:
+        raise HTTPException(status_code=400, detail="量を入力してください")
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO rice_guide(meal, amount, updated_at) VALUES(?, ?, ?)
+               ON CONFLICT(meal) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at""",
+            (meal, amount, datetime.now()),
+        )
+    return {"ok": True, "meal": meal, "amount": amount}
+
+
+@app.delete("/api/rice-guide/{meal}")
+async def api_delete_rice_guide(request: Request, meal: str):
+    """炊飯量ガイドを削除。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    with transaction() as conn:
+        conn.execute("DELETE FROM rice_guide WHERE meal = ?", (meal,))
+    return {"ok": True}
+
+
 @app.post("/api/events/{event_id}/edit")
 async def api_edit_event(request: Request, event_id: int):
     if not _is_family_authenticated(request):
@@ -626,6 +652,7 @@ async def family_view(request: Request):
         "is_locked": is_locked,
         "selected_date": selected_date,
         "is_today": is_today,
+        "rice_guide": _load_rice_guide(),
     })
 
 

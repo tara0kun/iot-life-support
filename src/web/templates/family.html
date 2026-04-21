@@ -89,6 +89,29 @@
   .quick-btn .qb-label { font-size: 11px; font-weight: 700; color: var(--text); }
   .quick-btn .qb-status { font-size: 10px; color: var(--success); font-weight: 500; min-height: 14px; }
 
+  /* 炊飯量設定 */
+  .rice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .rice-item {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 14px; border: 2px solid #E8E8E8; border-radius: 12px; background: #FAFAFA;
+  }
+  .rice-item.set { border-color: var(--success); background: #E8F8F0; }
+  .rice-meal { font-size: 13px; font-weight: 700; color: var(--text); }
+  .rice-amount { font-size: 18px; font-weight: 700; color: var(--primary); min-height: 24px; }
+  .rice-input {
+    width: 80px; padding: 6px 8px; border: 2px solid #E0E0E0; border-radius: 8px;
+    font-size: 13px; font-family: inherit; text-align: center;
+  }
+  .rice-input:focus { border-color: var(--primary); outline: none; }
+  .rice-btn-group { display: flex; gap: 4px; }
+  .rice-save-btn {
+    padding: 4px 12px; border: none; border-radius: 6px; font-size: 11px;
+    font-family: inherit; cursor: pointer; font-weight: 700;
+  }
+  .rice-save-btn.save { background: var(--success); color: white; }
+  .rice-save-btn.delete { background: #EEE; color: var(--text-light); }
+  .rice-save-btn:hover { opacity: 0.85; }
+
   /* 日付ナビ */
   .date-nav {
     display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
@@ -233,6 +256,27 @@
       <button class="quick-btn" onclick="quickRecord('就寝', this)">
         <span class="qb-icon">🌙</span><span class="qb-label">就寝</span><span class="qb-status"></span>
       </button>
+    </div>
+  </div>
+
+  <!-- 炊飯量設定 -->
+  <div class="section-card">
+    <div class="section-title">炊飯量ガイド</div>
+    <div class="section-desc">タブレットに「ご飯は○合」と表示されます。未設定の食事には表示されません。</div>
+    <div class="rice-grid">
+      {% for meal in ["朝食", "昼食", "夕食"] %}
+      <div class="rice-item {{ 'set' if rice_guide.get(meal) else '' }}" id="rice-{{ meal }}">
+        <div class="rice-meal">{{ meal }}</div>
+        <div class="rice-amount">{{ rice_guide.get(meal, "未設定") }}</div>
+        <input class="rice-input" type="text" placeholder="例: 1合" value="{{ rice_guide.get(meal, '') }}" id="rice-input-{{ meal }}">
+        <div class="rice-btn-group">
+          <button class="rice-save-btn save" onclick="saveRice('{{ meal }}')">保存</button>
+          {% if rice_guide.get(meal) %}
+          <button class="rice-save-btn delete" onclick="deleteRice('{{ meal }}')">削除</button>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
     </div>
   </div>
 
@@ -398,6 +442,31 @@ async function deleteEvent(eventId, eventType) {
       const d = await resp.json();
       alert('削除失敗: ' + (d.detail || '不明'));
     }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function saveRice(meal) {
+  const input = document.getElementById(`rice-input-${meal}`);
+  const amount = input.value.trim();
+  if (!amount) { alert('量を入力してください'); return; }
+  try {
+    const resp = await fetch('/api/rice-guide', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ meal, amount })
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function deleteRice(meal) {
+  if (!confirm(`${meal}の炊飯量設定を削除しますか？`)) return;
+  try {
+    const resp = await fetch(`/api/rice-guide/${encodeURIComponent(meal)}`, {
+      method: 'DELETE', credentials: 'same-origin'
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('削除に失敗しました'); }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
