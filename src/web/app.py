@@ -297,12 +297,12 @@ def _greeting(now: datetime) -> str:
     return "こんばんは"
 
 
-def _load_rice_guide() -> dict:
-    """炊飯量ガイドをDBから読み込み。未登録なら空dictを返す。"""
+def _load_rice_guide() -> str:
+    """現在の炊飯量設定を返す。未設定なら空文字。"""
     conn = get_conn()
     try:
-        rows = conn.execute("SELECT meal, amount FROM rice_guide").fetchall()
-        return {r["meal"]: r["amount"] for r in rows}
+        row = conn.execute("SELECT amount FROM rice_guide WHERE meal = 'next' LIMIT 1").fetchone()
+        return row["amount"] if row else ""
     finally:
         conn.close()
 
@@ -319,23 +319,18 @@ def _load_medicine_schedule() -> list[dict]:
         conn.close()
 
 
-def _get_rice_info(now: datetime, sessions: list) -> str:
-    """現在の未済の食事に対応する炊飯量を返す。"""
-    rice_guide = _load_rice_guide()
-    if not rice_guide:
+def _get_rice_info() -> str:
+    """現在設定されている炊飯量を返す。"""
+    amount = _load_rice_guide()
+    if not amount:
         return ""
-    done_labels = {s.get("label", "") for s in sessions}
-    # まだ食べていない食事で、炊飯量が設定されているものを返す
-    for meal in ["朝食", "昼食", "夕食"]:
-        if meal not in done_labels and meal in rice_guide:
-            return f"（次のご飯は {rice_guide[meal]}）"
-    return ""
+    return f"ご飯は {amount} 炊いてね"
 
 
 def _current_activity(now: datetime, sessions: list) -> dict:
     """時間帯に応じた挨拶を返す（活動の指定はしない）。"""
     h = now.hour
-    rice_info = _get_rice_info(now, sessions)
+    rice_info = _get_rice_info()
 
     if 5 <= h < 10:
         return {"text": "おはようございます 🌅", "rice": rice_info}
@@ -725,42 +720,32 @@ async def api_delete_medicine_schedule(request: Request, timing: str):
     return {"ok": True}
 
 
-@app.get("/api/rice-guide")
-async def api_get_rice_guide(request: Request):
-    """炊飯量ガイドを取得。"""
-    if not _is_family_authenticated(request):
-        raise HTTPException(status_code=401)
-    return _load_rice_guide()
-
-
 @app.post("/api/rice-guide")
 async def api_set_rice_guide(request: Request):
-    """炊飯量ガイドを登録・更新。body: {"meal": "朝食", "amount": "1合"}"""
+    """炊飯量を設定。body: {"amount": "2合"}"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     body = await request.json()
-    meal = body.get("meal", "")
-    amount = body.get("amount", "")
-    if meal not in {"朝食", "昼食", "夕食"}:
-        raise HTTPException(status_code=400, detail=f"無効な食事: {meal}")
+    amount = body.get("amount", "").strip()
     if not amount:
         raise HTTPException(status_code=400, detail="量を入力してください")
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with transaction() as conn:
+        conn.execute("DELETE FROM rice_guide")
         conn.execute(
-            """INSERT INTO rice_guide(meal, amount, updated_at) VALUES(?, ?, ?)
-               ON CONFLICT(meal) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at""",
-            (meal, amount, datetime.now()),
+            "INSERT INTO rice_guide(meal, amount, updated_at) VALUES('next', ?, ?)",
+            (amount, now_str),
         )
-    return {"ok": True, "meal": meal, "amount": amount}
+    return {"ok": True, "amount": amount}
 
 
-@app.delete("/api/rice-guide/{meal}")
-async def api_delete_rice_guide(request: Request, meal: str):
-    """炊飯量ガイドを削除。"""
+@app.delete("/api/rice-guide")
+async def api_clear_rice_guide(request: Request):
+    """炊飯量設定をクリア。"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     with transaction() as conn:
-        conn.execute("DELETE FROM rice_guide WHERE meal = ?", (meal,))
+        conn.execute("DELETE FROM rice_guide")
     return {"ok": True}
 
 
@@ -893,7 +878,7 @@ async def family_view(request: Request):
         "is_locked": is_locked,
         "selected_date": selected_date,
         "is_today": is_today,
-        "rice_guide": _load_rice_guide(),
+        "rice_amount": _load_rice_guide(),
         "medicine_schedule": {m["timing"]: m["hour"] for m in _load_medicine_schedule()},
     })
 
