@@ -486,7 +486,6 @@ SENSOR_VERIFY = {
     "起床": {"sources": ["camera"], "event_types": ["person_detected"], "window_minutes": 60},
     "お薬": None,  # センサーなし → 常に家族確認
     "お風呂": {"sources": ["bath_door", "bath_motion"], "event_types": ["close", "open", "motion", "bath_end"], "window_minutes": 120},
-    "トイレ": {"sources": ["toilet"], "event_types": ["open", "close"], "window_minutes": 60},
     "就寝": None,  # センサーなし → 常に家族確認
 }
 
@@ -560,7 +559,7 @@ async def api_tablet_record(request: Request):
     activity = body.get("activity", "")
     person_id = body.get("person_id", 1)
 
-    valid = {"起床", "お薬", "お風呂", "トイレ", "就寝"}
+    valid = {"起床", "お薬", "お風呂", "就寝"}
     if activity not in valid:
         raise HTTPException(status_code=400, detail=f"無効な活動: {activity}")
 
