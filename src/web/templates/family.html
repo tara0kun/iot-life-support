@@ -137,6 +137,20 @@
   }
   .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
 
+  /* 週間サマリー */
+  .weekly-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+  .weekly-cell {
+    text-align: center; padding: 10px 4px; border-radius: 10px; background: #F8F9FA;
+  }
+  .weekly-cell.today { background: #E3F2FD; border: 2px solid #42A5F5; }
+  .weekly-day { font-size: 11px; color: var(--text-light); font-weight: 500; }
+  .weekly-date { font-size: 13px; font-weight: 700; color: var(--text); }
+  .weekly-meals { font-size: 18px; font-weight: 700; margin: 4px 0; }
+  .weekly-meals.warn { color: var(--danger); }
+  .weekly-score { font-size: 10px; color: var(--text-muted); }
+  .weekly-bar { height: 4px; border-radius: 2px; background: #E0E0E0; margin-top: 4px; }
+  .weekly-bar-fill { height: 100%; border-radius: 2px; background: var(--success); }
+
   /* テーブル */
   .event-table {
     width: 100%; border-collapse: collapse; background: var(--card);
@@ -232,6 +246,13 @@
       <div class="number">{{ grandma_meal_count }}</div>
       <div class="label">祖母の食事回数</div>
     </div>
+  </div>
+
+  <!-- 週間サマリー -->
+  <div class="section-card" id="weekly-section">
+    <div class="section-title">週間サマリー</div>
+    <div class="section-desc">過去7日間の食事回数とスタンプ達成率</div>
+    <div class="weekly-grid" id="weekly-grid"></div>
   </div>
 
   <!-- かんたん記録 -->
@@ -485,6 +506,28 @@ function changeDate(delta) {
 
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const ws = new WebSocket(`${wsProto}//${location.host}/ws/events`);
+// 週間サマリー読み込み
+(async function() {
+  try {
+    const resp = await fetch('/api/weekly-summary', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const days = await resp.json();
+    const grid = document.getElementById('weekly-grid');
+    const todayStr = new Date().toISOString().split('T')[0];
+    grid.innerHTML = days.map(d => {
+      const isToday = d.date === todayStr;
+      const pct = d.total_count > 0 ? Math.round(d.done_count / d.total_count * 100) : 0;
+      return `<div class="weekly-cell ${isToday ? 'today' : ''}">
+        <div class="weekly-day">${d.weekday}</div>
+        <div class="weekly-date">${d.day}日</div>
+        <div class="weekly-meals ${d.meal_count >= 4 ? 'warn' : ''}">${d.meal_count}</div>
+        <div class="weekly-score">${d.done_count}/${d.total_count}</div>
+        <div class="weekly-bar"><div class="weekly-bar-fill" style="width:${pct}%"></div></div>
+      </div>`;
+    }).join('');
+  } catch(e) {}
+})();
+
 const isToday = {{ 'true' if is_today else 'false' }};
 ws.onmessage = (e) => {
   const data = JSON.parse(e.data);

@@ -648,6 +648,40 @@ async def api_quick_record(request: Request):
     return {"ok": True, "activity": activity, "time": now.strftime("%H:%M")}
 
 
+@app.get("/api/weekly-summary")
+async def api_weekly_summary(request: Request):
+    """過去7日間のサマリーを取得。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    conn = get_conn()
+    try:
+        days = []
+        for i in range(6, -1, -1):
+            d = (datetime.now() - timedelta(days=i)).date()
+            date_str = d.isoformat()
+            meal_count = conn.execute(
+                """SELECT COUNT(*) as cnt FROM meal_sessions
+                   WHERE person_id = 1 AND date(started_at) = ?
+                   AND label IN ('朝食','昼食','夕食','間食')""",
+                (date_str,),
+            ).fetchone()["cnt"]
+            score = conn.execute(
+                "SELECT done_count, total_count FROM daily_scores WHERE person_id = 1 AND date = ?",
+                (date_str,),
+            ).fetchone()
+            days.append({
+                "date": date_str,
+                "day": d.day,
+                "weekday": ["月","火","水","木","金","土","日"][d.weekday()],
+                "meal_count": meal_count,
+                "done_count": score["done_count"] if score else 0,
+                "total_count": score["total_count"] if score else 7,
+            })
+        return days
+    finally:
+        conn.close()
+
+
 @app.get("/api/rice-guide")
 async def api_get_rice_guide(request: Request):
     """炊飯量ガイドを取得。"""
