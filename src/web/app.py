@@ -156,6 +156,7 @@ async def tablet_view(request: Request):
         "alerts": alerts,
         "today_flower_color": today_flower_color,
         "done_count": done_count,
+        "family_prompts": _get_active_prompts(),
     })
 
 
@@ -637,6 +638,50 @@ async def api_quick_record(request: Request):
             )
 
     return {"ok": True, "activity": activity, "time": now.strftime("%H:%M")}
+
+
+@app.post("/api/family-prompt")
+async def api_send_prompt(request: Request):
+    """家族から祖母タブレットにメッセージを送る。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    message = body.get("message", "").strip()
+    minutes = body.get("minutes", 60)  # 表示時間（デフォルト60分）
+    if not message:
+        raise HTTPException(status_code=400, detail="メッセージを入力してください")
+    now = datetime.now()
+    expires = now + timedelta(minutes=int(minutes))
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO family_prompts(message, sent_by, created_at, expires_at) VALUES(?, ?, ?, ?)",
+            (message, "家族", now, expires),
+        )
+    return {"ok": True, "message": message, "expires_at": expires.isoformat()}
+
+
+@app.post("/api/dismiss-prompt/{prompt_id}")
+async def api_dismiss_prompt(request: Request, prompt_id: int):
+    """祖母がメッセージを確認済みにする。"""
+    with transaction() as conn:
+        conn.execute("UPDATE family_prompts SET dismissed = 1 WHERE id = ?", (prompt_id,))
+    return {"ok": True}
+
+
+def _get_active_prompts() -> list[dict]:
+    """有効な家族メッセージを取得。"""
+    conn = get_conn()
+    try:
+        now = datetime.now().isoformat()
+        rows = conn.execute(
+            """SELECT id, message, sent_by, created_at FROM family_prompts
+               WHERE dismissed = 0 AND expires_at > ?
+               ORDER BY created_at DESC""",
+            (now,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
 
 
 @app.get("/api/medicine-schedule")

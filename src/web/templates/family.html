@@ -260,6 +260,30 @@
     </div>
   </div>
 
+  <!-- タブレットに伝える -->
+  <div class="section-card">
+    <div class="section-title">タブレットに伝える</div>
+    <div class="section-desc">祖母のタブレット画面にメッセージを表示します</div>
+    <div class="quick-btns" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
+      <button class="quick-btn" onclick="sendPrompt('お薬 飲んでね')">
+        <span class="qb-icon">💊</span><span class="qb-label">お薬</span>
+      </button>
+      <button class="quick-btn" onclick="sendPrompt('お風呂 入ってね')">
+        <span class="qb-icon">🛁</span><span class="qb-label">お風呂</span>
+      </button>
+      <button class="quick-btn" onclick="sendPrompt('ご飯 食べてね')">
+        <span class="qb-icon">🍚</span><span class="qb-label">ご飯</span>
+      </button>
+      <button class="quick-btn" onclick="sendPrompt('電話してね')">
+        <span class="qb-icon">📞</span><span class="qb-label">電話</span>
+      </button>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <input type="text" id="custom-prompt" placeholder="自由にメッセージを入力" style="flex:1; padding:10px 14px; border:2px solid #E0E0E0; border-radius:8px; font-size:14px; font-family:inherit;">
+      <button onclick="sendPrompt(document.getElementById('custom-prompt').value)" style="padding:10px 20px; background:var(--primary); color:white; border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">送信</button>
+    </div>
+  </div>
+
   <!-- 炊飯量設定 -->
   <div class="section-card">
     <div class="section-title">炊飯量ガイド</div>
@@ -465,6 +489,21 @@ async function deleteEvent(eventId, eventType) {
       const d = await resp.json();
       alert('削除失敗: ' + (d.detail || '不明'));
     }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function sendPrompt(message) {
+  if (!message || !message.trim()) { alert('メッセージを入力してください'); return; }
+  if (!confirm(`「${message}」をタブレットに表示しますか？`)) return;
+  try {
+    const resp = await fetch('/api/family-prompt', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ message: message.trim(), minutes: 60 })
+    });
+    if (resp.ok) {
+      alert('タブレットに送信しました');
+      document.getElementById('custom-prompt').value = '';
+    } else { alert('送信に失敗しました'); }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 

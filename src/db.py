@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS device_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS family_prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message TEXT NOT NULL,
+    sent_by TEXT DEFAULT '家族',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,              -- 表示期限
+    dismissed INTEGER NOT NULL DEFAULT 0        -- 祖母が確認済みか
+);
+
 CREATE TABLE IF NOT EXISTS medicine_schedule (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timing TEXT NOT NULL UNIQUE,                -- 朝/昼/夜

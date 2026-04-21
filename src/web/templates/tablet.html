@@ -228,6 +228,20 @@
     {% if current_activity.rice %}<div class="sub">{{ current_activity.rice }}</div>{% endif %}
   </div>
 
+  <!-- 家族からのメッセージ -->
+  {% for fp in family_prompts %}
+  <div class="alert-card remind" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
+    <div class="alert-icon">
+      <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#42A5F5" opacity="0.15"/><path d="M12 16 h24 v16 q0 4 -4 4 H16 q-4 0 -4-4Z" fill="#42A5F5" opacity="0.3"/><path d="M12 16 L24 26 L36 16" fill="none" stroke="#1565C0" stroke-width="2.5"/></svg>
+    </div>
+    <div class="alert-text">
+      <div class="alert-message" style="color: #1565C0">{{ fp.message }}</div>
+      <div class="alert-sub" style="color: #5D4037; font-size: 11px;">家族より</div>
+    </div>
+    <button onclick="dismissPrompt({{ fp.id }}, this)" style="background:none;border:2px solid #90CAF9;color:#1565C0;border-radius:8px;padding:6px 14px;font-size:12px;cursor:pointer;font-family:inherit;font-weight:700;">わかった</button>
+  </div>
+  {% endfor %}
+
   <!-- 注意喚起 -->
   {% for a in alerts %}
   <div class="alert-card {{ a.level }}">
@@ -592,6 +606,16 @@ document.querySelectorAll('.garden-flower').forEach(el => {
   }
   el.innerHTML = svg;
 });
+
+// 家族メッセージ確認
+async function dismissPrompt(id, btn) {
+  try {
+    await fetch(`/api/dismiss-prompt/${id}`, { method: 'POST' });
+    btn.closest('.alert-card').style.transition = 'opacity 0.3s';
+    btn.closest('.alert-card').style.opacity = '0';
+    setTimeout(() => btn.closest('.alert-card').remove(), 300);
+  } catch(e) {}
+}
 
 // 祖母「できた」ボタン処理
 async function tabletRecord(activity, btn) {
