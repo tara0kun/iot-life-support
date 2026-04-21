@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.db import init_db
+from src.db import init_db, get_conn
 from src.sessions import sessions_today
 from src.notifier import send_line_message
 from src.garden import save_daily_score, FLOWER_TYPES
@@ -103,6 +103,27 @@ def daily_summary():
 
     if meal_count >= 3:
         msg += "⚠️ 食事が多めでした\n"
+
+    # 祖母ボタンの検証状況
+    conn = get_conn()
+    try:
+        today_start = datetime.combine(now.date(), time.min)
+        tablet_events = conn.execute(
+            """SELECT event_type, confidence, raw_meta FROM events
+               WHERE source = 'tablet_report' AND person_id = ? AND started_at >= ?""",
+            (GRANDMA_ID, today_start),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if tablet_events:
+        verified = [e for e in tablet_events if e["confidence"] == 1.0]
+        unverified = [e for e in tablet_events if e["confidence"] == 0.0]
+        msg += f"\n📱 祖母ボタン: {len(tablet_events)}回押下\n"
+        if verified:
+            msg += "　✅ 確認済み: " + "、".join(e["event_type"] for e in verified) + "\n"
+        if unverified:
+            msg += "　❌ 未確認: " + "、".join(e["event_type"].replace("_unverified", "") for e in unverified) + "\n"
 
     send_line_message(msg)
     print("1日のまとめ送信")
