@@ -225,6 +225,37 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
             "color": "#29B6F6",
         })
 
+    # センサー反応あり + ボタン未押下のチェック
+    sensor_activity_map = {
+        "お風呂": {"sources": {"bath_door", "bath_motion"}, "event_types": {"close", "open", "motion", "bath_end"}},
+        "トイレ": {"sources": {"toilet"}, "event_types": {"open", "close"}},
+    }
+    conn = get_conn()
+    try:
+        today_start = datetime.combine(now.date(), datetime.min.time())
+        for activity, rule in sensor_activity_map.items():
+            if activity in done_labels:
+                continue  # 既にスタンプ完了
+            src_ph = ",".join(f"'{s}'" for s in rule["sources"])
+            evt_ph = ",".join(f"'{e}'" for e in rule["event_types"])
+            sensor_count = conn.execute(
+                f"""SELECT COUNT(*) as cnt FROM events
+                    WHERE started_at >= ?
+                    AND source IN ({src_ph})
+                    AND event_type IN ({evt_ph})""",
+                (today_start,),
+            ).fetchone()["cnt"]
+            if sensor_count > 0:
+                alerts.append({
+                    "type": f"sensor_no_button_{activity}",
+                    "level": "remind",
+                    "message": f"{activity} しましたか？",
+                    "sub": "センサーが反応しています。「できた」ボタンを押してください。",
+                    "color": "#FF9800",
+                })
+    finally:
+        conn.close()
+
     return alerts
 
 
@@ -448,6 +479,112 @@ async def api_unlock(request: Request):
         return {"ok": True, "message": "解除しました"}
     else:
         raise HTTPException(status_code=500, detail="Matter通信に失敗しました")
+
+
+# センサー照合マッピング: ボタン→どのセンサーを確認するか
+SENSOR_VERIFY = {
+    "起床": {"sources": ["camera"], "event_types": ["person_detected"], "window_minutes": 60},
+    "お薬": None,  # センサーなし → 常に家族確認
+    "お風呂": {"sources": ["bath_door", "bath_motion"], "event_types": ["close", "open", "motion", "bath_end"], "window_minutes": 120},
+    "トイレ": {"sources": ["toilet"], "event_types": ["open", "close"], "window_minutes": 60},
+    "就寝": None,  # センサーなし → 常に家族確認
+}
+
+
+def _verify_sensor(activity: str, person_id: int) -> dict:
+    """ボタン押下時にセンサー記録を照合する。"""
+    rule = SENSOR_VERIFY.get(activity)
+    if rule is None:
+        return {"verified": False, "reason": "no_sensor", "message": "センサーがない項目です。家族に確認してもらってください。"}
+
+    window = timedelta(minutes=rule["window_minutes"])
+    now = datetime.now()
+    since = now - window
+
+    conn = get_conn()
+    try:
+        placeholders_src = ",".join("?" for _ in rule["sources"])
+        placeholders_evt = ",".join("?" for _ in rule["event_types"])
+        params = [person_id, since] + rule["sources"] + rule["event_types"]
+        row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM events
+                WHERE person_id = ? AND started_at >= ?
+                AND source IN ({placeholders_src})
+                AND event_type IN ({placeholders_evt})""",
+            params,
+        ).fetchone()
+        if row and row["cnt"] > 0:
+            return {"verified": True, "reason": "sensor_confirmed", "message": "センサーで確認できました。"}
+        # person_id不問でも探す（未識別の場合）
+        params2 = [since] + rule["sources"] + rule["event_types"]
+        row2 = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM events
+                WHERE started_at >= ?
+                AND source IN ({placeholders_src})
+                AND event_type IN ({placeholders_evt})""",
+            params2,
+        ).fetchone()
+        if row2 and row2["cnt"] > 0:
+            return {"verified": True, "reason": "sensor_confirmed_unidentified", "message": "センサーで確認できました。"}
+        return {"verified": False, "reason": "no_sensor_data", "message": "センサーの記録がありません。本当にやりましたか？"}
+    finally:
+        conn.close()
+
+
+@app.post("/api/tablet-record")
+async def api_tablet_record(request: Request):
+    """祖母がタブレットの「できた」ボタンを押したときの処理。"""
+    body = await request.json()
+    activity = body.get("activity", "")
+    person_id = body.get("person_id", 1)
+
+    valid = {"起床", "お薬", "お風呂", "トイレ", "就寝"}
+    if activity not in valid:
+        raise HTTPException(status_code=400, detail=f"無効な活動: {activity}")
+
+    now = datetime.now()
+
+    # センサー照合
+    verify = _verify_sensor(activity, person_id)
+
+    # LINE通知（常に送信）
+    try:
+        from ..notifier import send_line_message
+        import asyncio
+        if verify["verified"]:
+            msg = f"📋 祖母が「{activity}」ボタンを押しました\n✅ センサー確認済み\n時刻: {now.strftime('%H:%M')}"
+        elif verify["reason"] == "no_sensor":
+            msg = f"📋 祖母が「{activity}」ボタンを押しました\n⚠️ センサーなし（家族確認が必要）\n時刻: {now.strftime('%H:%M')}"
+        else:
+            msg = f"📋 祖母が「{activity}」ボタンを押しました\n❌ センサー記録なし（確認してください）\n時刻: {now.strftime('%H:%M')}"
+        await asyncio.to_thread(send_line_message, msg)
+    except Exception:
+        pass  # LINE通知失敗は無視
+
+    if verify["verified"]:
+        # センサー確認済み → 記録する
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO events(person_id, source, event_type, started_at, value, confidence, raw_meta)
+                   VALUES(?, 'tablet_report', ?, ?, NULL, 1.0, ?)""",
+                (person_id, activity, now, json.dumps({"verified": True, "verify_reason": verify["reason"]}, ensure_ascii=False)),
+            )
+            conn.execute(
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
+                   VALUES(?, ?, ?, 1, ?)""",
+                (person_id, now, now, activity),
+            )
+        return {"ok": True, "verified": True, "message": f"{activity} を記録しました"}
+    else:
+        # 未確認 → 記録しない、アラートを返す
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO events(person_id, source, event_type, started_at, value, confidence, raw_meta)
+                   VALUES(?, 'tablet_report', ?, ?, NULL, 0.0, ?)""",
+                (person_id, f"{activity}_unverified", now,
+                 json.dumps({"verified": False, "verify_reason": verify["reason"]}, ensure_ascii=False)),
+            )
+        return {"ok": False, "verified": False, "reason": verify["reason"], "message": verify["message"]}
 
 
 @app.post("/api/quick-record")

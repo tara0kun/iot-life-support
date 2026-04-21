@@ -123,6 +123,28 @@
   .garden-row-label { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
   .garden-row-label span { font-size: 12px; color: #558B2F; font-weight: 500; }
 
+  /* できたボタン */
+  .stamp-btn {
+    margin-top: 6px; padding: 6px 16px; border: 2px solid var(--success); border-radius: 10px;
+    background: white; color: var(--success); font-size: 12px; font-weight: 700;
+    cursor: pointer; font-family: inherit; transition: all 0.2s;
+  }
+  .stamp-btn:hover { background: var(--success); color: white; }
+  .stamp-btn:active { transform: scale(0.95); }
+  .stamp-btn:disabled { border-color: var(--text-muted); color: var(--text-muted); cursor: not-allowed; }
+  .stamp-btn.pressed { background: var(--success); color: white; pointer-events: none; }
+
+  /* 検証アラート */
+  .verify-alert {
+    border-radius: var(--radius); padding: 18px 24px; margin: 16px 0;
+    box-shadow: var(--shadow); text-align: center;
+  }
+  .verify-alert.fail {
+    background: linear-gradient(135deg, #FFEBEE, #FFCDD2); border: 2px solid #EF9A9A;
+  }
+  .verify-alert .va-title { font-size: 16px; font-weight: 700; color: #C62828; margin-bottom: 6px; }
+  .verify-alert .va-sub { font-size: 13px; color: #5D4037; }
+
   /* セッション履歴 */
   .sessions-title { font-size: 14px; font-weight: 500; color: var(--text-muted); letter-spacing: 3px; margin-bottom: 12px; }
   .session-list { display: flex; flex-direction: column; gap: 8px; }
@@ -254,6 +276,7 @@
   <div class="card">
     <div class="card-label">今日の 記録</div>
     <div class="stamps-grid">
+      {% set button_activities = ["起床", "お薬", "お風呂", "トイレ", "就寝"] %}
       {% for s in stamps %}
       <div class="stamp {{ 'done' if s.done else '' }} {{ 'current' if s.current else '' }}">
         <div class="stamp-icon">{{ s.icon }}</div>
@@ -261,11 +284,16 @@
         {% if s.done %}
           <div class="stamp-check">&#10003;</div>
           <div class="stamp-time">{{ s.time }}</div>
+        {% elif s.label in button_activities %}
+          <button class="stamp-btn" onclick="tabletRecord('{{ s.label }}', this)">できた</button>
         {% endif %}
       </div>
       {% endfor %}
     </div>
   </div>
+
+  <!-- 検証アラート（ボタン押下時に表示） -->
+  <div id="verify-alert-area"></div>
 
   <!-- 私の庭 -->
   <div class="card garden-card">
@@ -562,6 +590,41 @@ document.querySelectorAll('.garden-flower').forEach(el => {
   }
   el.innerHTML = svg;
 });
+
+// 祖母「できた」ボタン処理
+async function tabletRecord(activity, btn) {
+  btn.disabled = true;
+  btn.textContent = '確認中...';
+  try {
+    const resp = await fetch('/api/tablet-record', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ activity, person_id: 1 })
+    });
+    const data = await resp.json();
+    const area = document.getElementById('verify-alert-area');
+    if (data.verified) {
+      btn.classList.add('pressed');
+      btn.textContent = '✓';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'できた';
+      let msg = '';
+      if (data.reason === 'no_sensor') {
+        msg = `<div class="va-title">「${activity}」はセンサーで確認できません</div>
+               <div class="va-sub">家族に「${activity}した」と伝えてください。<br>家族が記録してくれます。</div>`;
+      } else {
+        msg = `<div class="va-title">「${activity}」の記録が見つかりません</div>
+               <div class="va-sub">本当にやりましたか？<br>やった場合は家族に伝えてください。</div>`;
+      }
+      area.innerHTML = `<div class="verify-alert fail">${msg}</div>`;
+      setTimeout(() => { area.innerHTML = ''; }, 10000);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'できた';
+  }
+}
 
 // WebSocket
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';

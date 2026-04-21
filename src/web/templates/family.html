@@ -162,6 +162,7 @@
   .source-family_report { background: #FFF8E1; color: #F57F17; }
   .source-family_override { background: #FFEBEE; color: #C62828; }
   .source-toilet { background: #EFEBE9; color: #5D4037; }
+  .source-tablet_report { background: #E8EAF6; color: #283593; }
 
   .person-select {
     padding: 4px 8px; border: 1px solid #E0E0E0; border-radius: 6px; font-size: 12px;
@@ -325,7 +326,7 @@
           </select>
           <span class="save-msg" id="msg-{{ e.id }}">&#10003;</span>
         </td>
-        {% set source_names = {"rice_cooker": "炊飯器", "ih": "IH", "camera": "カメラ", "contact_sensor": "開閉センサー", "bath_door": "浴室ドア", "bath_motion": "浴室モーション", "family_report": "家族記録", "family_override": "家族操作", "toilet": "トイレ"} %}
+        {% set source_names = {"rice_cooker": "炊飯器", "ih": "IH", "camera": "カメラ", "contact_sensor": "開閉センサー", "bath_door": "浴室ドア", "bath_motion": "浴室モーション", "family_report": "家族記録", "family_override": "家族操作", "toilet": "トイレ", "tablet_report": "祖母ボタン"} %}
         <td><span class="source-badge source-{{ e.source }}">{{ source_names.get(e.source, e.source) }}</span></td>
         <td>{{ e.event_type }}</td>
         <td>{{ "%.1f" | format(e.value) if e.value else "-" }}</td>
