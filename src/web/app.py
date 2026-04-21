@@ -21,9 +21,9 @@ from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..db import get_conn, init_db, transaction
-from ..event_bus import get_events_today, get_recent_events, subscribe, unsubscribe
+from ..event_bus import get_events_today, get_recent_events, get_events_by_date, subscribe, unsubscribe
 from ..sessions import sessions_today, last_session
-from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES
+from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
 from ..lock_manager import get_device_state, unlock_device
 
 app = FastAPI(title="IoT生活サポート")
@@ -103,13 +103,22 @@ async def tablet_view(request: Request):
     last = last_session(grandma_id)
     now = datetime.now()
 
+    # 食事セッションのみの最後を取得（「最後に食べたのは」表示用）
+    meal_labels = {"朝食", "昼食", "夕食", "間食", "おやつ"}
+    last_meal = None
+    for s in reversed(sessions):
+        if s.get("label") in meal_labels:
+            last_meal = s
+            break
+
     next_meal = _guess_next_meal(now, sessions)
-    minutes_since_last = None
-    if last:
-        last_time = last["started_at"]
+    minutes_since_last_meal = None
+    if last_meal:
+        last_time = last_meal.get("started_at")
         if isinstance(last_time, str):
             last_time = datetime.fromisoformat(last_time)
-        minutes_since_last = int((now - last_time).total_seconds() / 60)
+        if isinstance(last_time, datetime):
+            minutes_since_last_meal = int((now - last_time).total_seconds() / 60)
 
     stamps = _build_stamps(sessions)
     current_activity = _current_activity(now, sessions)
@@ -131,18 +140,24 @@ async def tablet_view(request: Request):
     # 注意喚起
     alerts = _build_alerts(now, sessions, stamps, done_labels)
 
+    # 今日の花の色
+    today_flower_color = _date_to_color(now.date())
+
     return templates.TemplateResponse(request, "tablet.html", {
         "now": now,
         "sessions": sessions,
         "session_count": len(sessions),
         "last_session": last,
-        "minutes_since_last": minutes_since_last,
+        "last_meal": last_meal,
+        "minutes_since_last_meal": minutes_since_last_meal,
         "next_meal": next_meal,
         "stamps": stamps,
         "garden": garden,
         "time_greeting": _greeting(now),
         "current_activity": current_activity,
         "alerts": alerts,
+        "today_flower_color": today_flower_color,
+        "done_count": done_count,
     })
 
 
@@ -166,8 +181,8 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
                 alerts.append({
                     "type": "meal_recent",
                     "level": "gentle",
-                    "message": "さっき たべましたよ",
-                    "sub": f"{last_meal.get('label')} を {int(minutes_ago)}分まえ に たべました",
+                    "message": "さっき食べましたよ",
+                    "sub": f"{last_meal.get('label')}を{int(minutes_ago)}分前に食べました",
                     "color": "#E67E22",
                 })
 
@@ -176,8 +191,8 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
         alerts.append({
             "type": "meal_many",
             "level": "gentle",
-            "message": "きょうは よく たべましたね",
-            "sub": f"きょう {meal_count}かい たべました",
+            "message": "今日はよく食べましたね",
+            "sub": f"今日 {meal_count}回 食べました",
             "color": "#E67E22",
         })
 
@@ -187,7 +202,7 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
             alerts.append({
                 "type": "medicine",
                 "level": "remind",
-                "message": "おくすり のみましたか？",
+                "message": "お薬 飲みましたか？",
                 "sub": "",
                 "color": "#EC407A",
             })
@@ -195,7 +210,7 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
             alerts.append({
                 "type": "medicine",
                 "level": "warn",
-                "message": "おくすり まだですよ",
+                "message": "お薬 まだですよ",
                 "sub": "",
                 "color": "#EC407A",
             })
@@ -205,7 +220,7 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
         alerts.append({
             "type": "bath",
             "level": "remind",
-            "message": "おふろ はいりましたか？",
+            "message": "お風呂 入りましたか？",
             "sub": "",
             "color": "#29B6F6",
         })
@@ -222,52 +237,84 @@ def _greeting(now: datetime) -> str:
     return "こんばんは"
 
 
+# 食事ごとの炊飯量ガイド（.envで上書き可能）
+RICE_GUIDE = {
+    "朝食": "1合",
+    "昼食": "1合",
+    "夕食": "2合",
+}
+
+
+def _load_rice_guide() -> dict:
+    """炊飯量ガイドを.envから読み込み。未設定ならデフォルト値を使う。"""
+    env_path = BASE.parent.parent / ".env"
+    guide = dict(RICE_GUIDE)
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("RICE_GUIDE_"):
+                # RICE_GUIDE_朝食=1合 のような形式
+                key = line.split("=", 1)[0].replace("RICE_GUIDE_", "")
+                val = line.split("=", 1)[1].strip()
+                if key and val:
+                    guide[key] = val
+    return guide
+
+
 def _guess_next_meal(now: datetime, sessions: list) -> dict | None:
+    rice_guide = _load_rice_guide()
     schedule = [
         ("朝ごはん", time(7, 0)),
         ("お昼ごはん", time(12, 0)),
         ("夕ごはん", time(18, 0)),
     ]
     done_labels = {s.get("label", "") for s in sessions}
+    label_map = {"朝ごはん": "朝食", "お昼ごはん": "昼食", "夕ごはん": "夕食"}
     for name, t in schedule:
         meal_dt = datetime.combine(now.date(), t)
-        label_map = {"朝ごはん": "朝食", "お昼ごはん": "昼食", "夕ごはん": "夕食"}
-        if label_map.get(name) not in done_labels and meal_dt > now:
+        meal_label = label_map.get(name, "")
+        if meal_label not in done_labels and meal_dt > now:
             minutes = int((meal_dt - now).total_seconds() / 60)
-            return {"name": name, "time": t.strftime("%H:%M"), "minutes": minutes}
+            rice = rice_guide.get(meal_label, "")
+            return {"name": name, "time": t.strftime("%H:%M"), "minutes": minutes, "rice": rice}
     return None
 
 
-def _current_activity(now: datetime, sessions: list) -> str:
+def _current_activity(now: datetime, sessions: list) -> dict:
     """今の時間帯に応じた活動ガイドを返す。"""
     h = now.hour
     done_labels = {s.get("label", "") for s in sessions}
+    rice_guide = _load_rice_guide()
+
+    def _meal_activity(label, display, rice_key):
+        rice = rice_guide.get(rice_key, "")
+        rice_text = f"（ご飯は {rice}）" if rice else ""
+        return {"text": f"{display}の 時間 🍚", "rice": rice_text}
 
     if 5 <= h < 7:
-        return "あさの じかん 🌅"
+        return {"text": "朝の 時間 🌅", "rice": ""}
     if 7 <= h < 9:
         if "朝食" not in done_labels:
-            return "あさごはんの じかん 🍚"
-        return "ゆっくり すごす じかん ☕"
+            return _meal_activity("朝食", "朝ごはん", "朝食")
+        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
     if 9 <= h < 11:
-        return "ゆっくり すごす じかん ☕"
+        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
     if 11 <= h < 13:
         if "昼食" not in done_labels:
-            return "おひるごはんの じかん 🍚"
-        return "ゆっくり すごす じかん ☕"
+            return _meal_activity("昼食", "お昼ごはん", "昼食")
+        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
     if 13 <= h < 16:
-        return "おひるの じかん ☀️"
+        return {"text": "お昼の 時間 ☀️", "rice": ""}
     if 16 <= h < 18:
         if "お風呂" not in done_labels:
-            return "おふろの じかん 🛁"
-        return "ゆうがたの じかん 🌇"
+            return {"text": "お風呂の 時間 🛁", "rice": ""}
+        return {"text": "夕方の 時間 🌇", "rice": ""}
     if 18 <= h < 20:
         if "夕食" not in done_labels:
-            return "ゆうごはんの じかん 🍚"
-        return "よるの じかん 🌙"
+            return _meal_activity("夕食", "夕ごはん", "夕食")
+        return {"text": "夜の 時間 🌙", "rice": ""}
     if 20 <= h < 22:
-        return "そろそろ ねる じかん 🌙"
-    return "おやすみの じかん 😴"
+        return {"text": "そろそろ寝る 時間 🌙", "rice": ""}
+    return {"text": "おやすみの 時間 😴", "rice": ""}
 
 
 def _build_stamps(sessions: list) -> list[dict]:
@@ -550,7 +597,22 @@ async def api_delete_event(request: Request, event_id: int):
 async def family_view(request: Request):
     if not _is_family_authenticated(request):
         return RedirectResponse("/family/login", status_code=303)
-    events = get_recent_events(100)
+
+    # 日付パラメータ（指定なしなら今日）
+    date_param = request.query_params.get("date", "")
+    now = datetime.now()
+    if date_param:
+        selected_date = date_param
+    else:
+        selected_date = now.strftime("%Y-%m-%d")
+
+    is_today = (selected_date == now.strftime("%Y-%m-%d"))
+
+    if is_today:
+        events = get_recent_events(100)
+    else:
+        events = get_events_by_date(selected_date, 200)
+
     conn = get_conn()
     try:
         persons = [dict(r) for r in conn.execute("SELECT id, name, role FROM persons").fetchall()]
@@ -562,9 +624,11 @@ async def family_view(request: Request):
     return templates.TemplateResponse(request, "family.html", {
         "events": events,
         "persons": persons,
-        "now": datetime.now(),
+        "now": now,
         "grandma_meal_count": len(grandma_sessions),
         "is_locked": is_locked,
+        "selected_date": selected_date,
+        "is_today": is_today,
     })
 
 

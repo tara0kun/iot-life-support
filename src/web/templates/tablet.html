@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#2C3E50">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon-192.png">
-<title>きょうの記録</title>
+<title>今日の記録</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap');
 
@@ -201,10 +201,11 @@
   </div>
 
   <div class="time-guide">
-    <div class="label">いまは</div>
-    <div class="activity">{{ current_activity }}</div>
+    <div class="label">今は</div>
+    <div class="activity">{{ current_activity.text }}</div>
+    {% if current_activity.rice %}<div class="sub">{{ current_activity.rice }}</div>{% endif %}
     {% if next_meal %}
-    <div class="sub">つぎは {{ next_meal.name }}（{{ next_meal.time }}）あと{{ next_meal.minutes }}分</div>
+    <div class="sub">次は {{ next_meal.name }}（{{ next_meal.time }}）あと{{ next_meal.minutes }}分{% if next_meal.rice %} ── ご飯は {{ next_meal.rice }}{% endif %}</div>
     {% endif %}
   </div>
 
@@ -229,12 +230,12 @@
   </div>
   {% endfor %}
 
-  {% if last_session %}
+  {% if last_meal %}
   <div class="card last-meal">
-    <div class="card-label">さいごに たべたのは</div>
-    <div class="time-text">{{ last_session.started_at.strftime("%H:%M") }} の {{ last_session.label }}</div>
-    {% if minutes_since_last is not none and minutes_since_last >= 0 %}
-    <div class="ago">{{ minutes_since_last }}分まえ</div>
+    <div class="card-label">最後に食べたのは</div>
+    <div class="time-text">{{ last_meal.started_at.strftime("%H:%M") if last_meal.started_at is not string else last_meal.started_at }} の {{ last_meal.label }}</div>
+    {% if minutes_since_last_meal is not none and minutes_since_last_meal >= 0 %}
+    <div class="ago">{{ minutes_since_last_meal }}分前</div>
     {% endif %}
   </div>
   {% endif %}
@@ -243,7 +244,7 @@
   {% set done_count = stamps | selectattr("done") | list | length %}
   {% set total = stamps | length %}
   <div class="card flower-card">
-    <div class="card-label">きょうの おはな</div>
+    <div class="card-label">今日の お花</div>
     <div class="flower-stage" id="flowerStage"></div>
     <div class="flower-message" id="flowerMsg"></div>
     <div class="flower-sub" id="flowerSub"></div>
@@ -251,7 +252,7 @@
 
   <!-- スタンプカード -->
   <div class="card">
-    <div class="card-label">きょうの きろく</div>
+    <div class="card-label">今日の 記録</div>
     <div class="stamps-grid">
       {% for s in stamps %}
       <div class="stamp {{ 'done' if s.done else '' }} {{ 'current' if s.current else '' }}">
@@ -266,14 +267,14 @@
     </div>
   </div>
 
-  <!-- わたしのおにわ -->
+  <!-- 私の庭 -->
   <div class="card garden-card">
-    <div class="card-label">わたしの おにわ</div>
+    <div class="card-label">私の お庭</div>
     <div class="garden-grid">
       {% for g in garden %}
       <div class="garden-cell {{ 'today' if g.is_today else '' }}">
-        <div class="garden-flower" data-stage="{{ g.done_count }}"></div>
-        <div class="garden-score">{{ g.done_count }}/{{ g.total_count }}</div>
+        <div class="garden-flower" data-stage="{{ g.done_count }}" data-color-primary="{{ g.color_primary }}" data-color-secondary="{{ g.color_secondary }}" data-color-center="{{ g.color_center }}"></div>
+        <div class="garden-score">{% if g.done_count >= 4 %}{{ g.color_name }}{% else %}{{ g.done_count }}/{{ g.total_count }}{% endif %}</div>
         <div class="garden-date">{{ g.day }}日</div>
         <div class="garden-weekday">{{ g.weekday }}</div>
       </div>
@@ -285,7 +286,7 @@
   <!-- セッション履歴 -->
   {% if sessions %}
   <div style="margin-top: 24px;">
-    <div class="sessions-title">きょうの できごと</div>
+    <div class="sessions-title">今日の できごと</div>
     <div class="session-list">
       {% for s in sessions %}
       {% set cls = {
@@ -497,29 +498,69 @@ function getFlowerSVG(stage, size) {
   return clone.outerHTML;
 }
 
+// 花の色を変更する関数
+function recolorFlower(svgHTML, primary, secondary, center) {
+  // 花びらの色を置換（stage 4-7 の花のみ影響）
+  const colorMap = [
+    // ピンク系の花びら → primary/secondary
+    ['#E91E63', primary], ['#EC407A', secondary], ['#F8BBD0', secondary],
+    ['#F48FB1', secondary],
+    // オレンジ系（stage 6）→ primary/secondary
+    ['#FF9800', primary], ['#FFA726', secondary],
+    // 紫系のサブ花 → secondary
+    ['#AB47BC', secondary], ['#BA68C8', secondary],
+    // オレンジ系サブ花 → primary
+    ['#FF7043', primary], ['#FF8A65', secondary],
+    // 花の中心 → center
+    ['#FFF176', center], ['#FFE082', center], ['#FFF9C4', center],
+    ['#FFD54F', center], ['#FFCA28', center],
+  ];
+  let result = svgHTML;
+  for (const [from, to] of colorMap) {
+    result = result.split(from).join(to);
+  }
+  return result;
+}
+
 // きょうのお花
 (function() {
   const done = {{ done_count }};
+  const todayColor = {
+    primary: '{{ today_flower_color.primary }}',
+    secondary: '{{ today_flower_color.secondary }}',
+    center: '{{ today_flower_color.center }}',
+    name: '{{ today_flower_color.name }}'
+  };
   const msgs = [
-    ['たねを うえました', 'なにかすると そだつよ'],
-    ['めが でました！', ''],
-    ['すこし そだってきた', ''],
-    ['つぼみが できた！', ''],
-    ['おはなが さきました！', 'きれいだね'],
-    ['きれいに さいてるよ', ''],
-    ['おおきな おはな！', 'すごい！'],
-    ['まんかい！ すばらしい！', 'きょうも よくがんばりました'],
+    ['種を植えました', '何かすると育つよ'],
+    ['芽が出ました！', ''],
+    ['少し育ってきた', ''],
+    ['つぼみができた！', ''],
+    ['花が咲きました！', 'きれいだね'],
+    ['きれいに咲いてるよ', ''],
+    ['大きな花！', 'すごい！'],
+    ['満開！ すばらしい！', '今日もよく頑張りました'],
   ];
   const m = msgs[Math.min(done, msgs.length - 1)];
-  document.getElementById('flowerStage').innerHTML = getFlowerSVG(done, 160);
-  document.getElementById('flowerMsg').textContent = m[0];
+  let svg = getFlowerSVG(done, 160);
+  if (done >= 4) svg = recolorFlower(svg, todayColor.primary, todayColor.secondary, todayColor.center);
+  document.getElementById('flowerStage').innerHTML = svg;
+  const label = done >= 4 ? `${todayColor.name}が咲いた！` : m[0];
+  document.getElementById('flowerMsg').textContent = label;
   document.getElementById('flowerSub').textContent = m[1];
 })();
 
-// 庭の花
+// 庭の花（日ごとに色が異なる）
 document.querySelectorAll('.garden-flower').forEach(el => {
   const stage = parseInt(el.dataset.stage) || 0;
-  el.innerHTML = getFlowerSVG(stage, 36);
+  let svg = getFlowerSVG(stage, 36);
+  if (stage >= 4) {
+    const p = el.dataset.colorPrimary;
+    const s = el.dataset.colorSecondary;
+    const c = el.dataset.colorCenter;
+    if (p && s && c) svg = recolorFlower(svg, p, s, c);
+  }
+  el.innerHTML = svg;
 });
 
 // WebSocket
