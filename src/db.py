@@ -92,6 +92,15 @@ CREATE TABLE IF NOT EXISTS device_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS notify_targets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,                        -- 表示名（例: 母、孫）
+    line_user_id TEXT NOT NULL,                -- LINE User ID
+    level TEXT NOT NULL DEFAULT 'all',         -- all / urgent / daily
+    enabled INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS rice_guide (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     meal TEXT NOT NULL UNIQUE,              -- 朝食/昼食/夕食

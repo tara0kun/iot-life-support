@@ -840,8 +840,11 @@ async def family_view(request: Request):
     finally:
         conn.close()
     grandma_sessions = sessions_today(1)
-    rice_cooker_state = get_device_state("rice_cooker")
-    is_locked = rice_cooker_state["is_locked"] if rice_cooker_state else False
+    try:
+        rice_cooker_state = get_device_state("rice_cooker")
+        is_locked = rice_cooker_state["is_locked"] if rice_cooker_state else False
+    except Exception:
+        is_locked = False
     return templates.TemplateResponse(request, "family.html", {
         "events": events,
         "persons": persons,
