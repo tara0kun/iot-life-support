@@ -358,7 +358,13 @@
         <td>
           {% set time_str = "" %}
           {% if e.started_at is string %}
-            {% set time_str = e.started_at.split("T")[1][:5] if "T" in e.started_at else e.started_at[:5] %}
+            {% if "T" in e.started_at %}
+              {% set time_str = e.started_at.split("T")[1][:5] %}
+            {% elif " " in e.started_at %}
+              {% set time_str = e.started_at.split(" ")[1][:5] %}
+            {% else %}
+              {% set time_str = e.started_at[:5] %}
+            {% endif %}
           {% elif e.started_at %}
             {% set time_str = e.started_at.strftime("%H:%M") %}
           {% endif %}
