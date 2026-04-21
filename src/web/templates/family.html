@@ -485,11 +485,15 @@ function changeDate(delta) {
 
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const ws = new WebSocket(`${wsProto}//${location.host}/ws/events`);
+const isToday = {{ 'true' if is_today else 'false' }};
 ws.onmessage = (e) => {
   const data = JSON.parse(e.data);
   if (data.source && data.event_type === 'power_reading') {
     document.getElementById('live-power').textContent = data.value ? data.value.toFixed(1) : '0';
-  } else { setTimeout(() => location.reload(), 1000); }
+  } else if (isToday) {
+    // 今日の画面のみ自動リロード（過去日はリロードしない）
+    setTimeout(() => location.reload(), 1000);
+  }
 };
 </script>
 </body>
