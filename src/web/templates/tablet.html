@@ -255,7 +255,12 @@
   {% if last_meal %}
   <div class="card last-meal">
     <div class="card-label">最後に食べたのは</div>
-    <div class="time-text">{{ last_meal.started_at.strftime("%H:%M") if last_meal.started_at is not string else last_meal.started_at }} の {{ last_meal.label }}</div>
+    {% if last_meal.started_at is string %}
+      {% set lm_time = last_meal.started_at.split("T")[1][:5] if "T" in last_meal.started_at else last_meal.started_at[:5] %}
+    {% else %}
+      {% set lm_time = last_meal.started_at.strftime("%H:%M") %}
+    {% endif %}
+    <div class="time-text">{{ lm_time }} の {{ last_meal.label }}</div>
     {% if minutes_since_last_meal is not none and minutes_since_last_meal >= 0 %}
     <div class="ago">{{ minutes_since_last_meal }}分前</div>
     {% endif %}
@@ -348,7 +353,7 @@
         </div>
         <div class="s-info">
           <div class="s-label">{{ s.label }}</div>
-          <div class="s-time">{{ s.started_at.strftime("%H:%M") }}</div>
+          <div class="s-time">{% if s.started_at is string %}{{ s.started_at.split("T")[1][:5] if "T" in s.started_at else s.started_at[:5] }}{% else %}{{ s.started_at.strftime("%H:%M") }}{% endif %}</div>
         </div>
       </div>
       {% endfor %}
