@@ -281,6 +281,28 @@
     </div>
   </div>
 
+  <!-- お薬スケジュール -->
+  <div class="section-card">
+    <div class="section-title">お薬スケジュール</div>
+    <div class="section-desc">お薬を飲むタイミングを設定すると、タブレットにリマインドが表示されます。</div>
+    <div class="rice-grid">
+      {% for timing, default_hour in [("朝", 8), ("昼", 12), ("夜", 19)] %}
+      <div class="rice-item {{ 'set' if medicine_schedule.get(timing) is not none else '' }}">
+        <div class="rice-meal">{{ timing }}の薬</div>
+        <div class="rice-amount">{% if medicine_schedule.get(timing) is not none %}{{ medicine_schedule[timing] }}時{% else %}未設定{% endif %}</div>
+        <input class="rice-input" type="number" min="0" max="23" placeholder="{{ default_hour }}" value="{{ medicine_schedule.get(timing, '') }}" id="med-input-{{ timing }}">
+        <div style="font-size:10px;color:var(--text-muted);">時</div>
+        <div class="rice-btn-group">
+          <button class="rice-save-btn save" onclick="saveMedicine('{{ timing }}')">保存</button>
+          {% if medicine_schedule.get(timing) is not none %}
+          <button class="rice-save-btn delete" onclick="deleteMedicine('{{ timing }}')">削除</button>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
   <!-- 日付ナビ -->
   <div class="date-nav">
     <button class="date-nav-btn" onclick="changeDate(-1)">&lt; 前日</button>
@@ -464,6 +486,31 @@ async function deleteRice(meal) {
   if (!confirm(`${meal}の炊飯量設定を削除しますか？`)) return;
   try {
     const resp = await fetch(`/api/rice-guide/${encodeURIComponent(meal)}`, {
+      method: 'DELETE', credentials: 'same-origin'
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('削除に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function saveMedicine(timing) {
+  const input = document.getElementById(`med-input-${timing}`);
+  const hour = parseInt(input.value);
+  if (isNaN(hour) || hour < 0 || hour > 23) { alert('0〜23の時刻を入力してください'); return; }
+  try {
+    const resp = await fetch('/api/medicine-schedule', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ timing, hour })
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function deleteMedicine(timing) {
+  if (!confirm(`${timing}の薬スケジュールを削除しますか？`)) return;
+  try {
+    const resp = await fetch(`/api/medicine-schedule/${encodeURIComponent(timing)}`, {
       method: 'DELETE', credentials: 'same-origin'
     });
     if (resp.ok) { location.reload(); }

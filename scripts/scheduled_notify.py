@@ -23,28 +23,43 @@ GRANDMA_ID = 1
 
 
 def check_medicine():
-    """お薬未服用チェック。"""
+    """お薬未服用チェック（DBのスケジュールに基づく）。"""
     sessions = sessions_today(GRANDMA_ID)
     labels = {s.get("label") for s in sessions}
     if "お薬" not in labels:
         now = datetime.now()
         h = now.hour
-        if h >= 12:
-            send_line_message(
-                "💊 お薬リマインド\n"
-                "祖母がまだお薬を飲んでいないようです。\n"
-                "確認をお願いします。"
-            )
-            print("お薬リマインド送信")
-        elif h >= 9:
-            send_line_message(
-                "💊 お薬チェック\n"
-                "祖母がまだお薬を飲んでいません。\n"
-                "声かけをお願いします。"
-            )
-            print("お薬チェック送信")
-        else:
-            print("まだ早い時間帯 → スキップ")
+        # DBからスケジュール取得
+        conn = get_conn()
+        try:
+            schedules = conn.execute(
+                "SELECT timing, hour FROM medicine_schedule WHERE enabled = 1"
+            ).fetchall()
+        finally:
+            conn.close()
+        if not schedules:
+            print("薬スケジュール未設定 → スキップ")
+            return
+        # 現在時刻を過ぎているスケジュールがあれば通知
+        for s in schedules:
+            if h >= s["hour"]:
+                delay = h - s["hour"]
+                if delay >= 2:
+                    send_line_message(
+                        f"💊 お薬リマインド（{s['timing']}）\n"
+                        f"祖母がまだ{s['timing']}のお薬を飲んでいないようです。\n"
+                        "確認をお願いします。"
+                    )
+                    print(f"お薬リマインド送信（{s['timing']}）")
+                else:
+                    send_line_message(
+                        f"💊 お薬チェック（{s['timing']}）\n"
+                        f"祖母がまだ{s['timing']}のお薬を飲んでいません。\n"
+                        "声かけをお願いします。"
+                    )
+                    print(f"お薬チェック送信（{s['timing']}）")
+                return  # 1通知のみ
+        print("まだ薬の時間前 → スキップ")
     else:
         print("お薬服用済み → スキップ")
 

@@ -226,9 +226,6 @@
     <div class="label">今は</div>
     <div class="activity">{{ current_activity.text }}</div>
     {% if current_activity.rice %}<div class="sub">{{ current_activity.rice }}</div>{% endif %}
-    {% if next_meal %}
-    <div class="sub">次は {{ next_meal.name }}（{{ next_meal.time }}）あと{{ next_meal.minutes }}分{% if next_meal.rice %} ── ご飯は {{ next_meal.rice }}{% endif %}</div>
-    {% endif %}
   </div>
 
   <!-- 注意喚起 -->

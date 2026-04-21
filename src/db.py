@@ -92,6 +92,14 @@ CREATE TABLE IF NOT EXISTS device_state (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS medicine_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timing TEXT NOT NULL UNIQUE,                -- 朝/昼/夜
+    hour INTEGER NOT NULL,                      -- リマインド開始時刻（時）
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS rice_guide (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     meal TEXT NOT NULL UNIQUE,              -- 朝食/昼食/夕食

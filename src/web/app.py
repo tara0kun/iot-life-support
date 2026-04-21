@@ -111,7 +111,6 @@ async def tablet_view(request: Request):
             last_meal = s
             break
 
-    next_meal = _guess_next_meal(now, sessions)
     minutes_since_last_meal = None
     if last_meal:
         last_time = last_meal.get("started_at")
@@ -150,7 +149,6 @@ async def tablet_view(request: Request):
         "last_session": last,
         "last_meal": last_meal,
         "minutes_since_last_meal": minutes_since_last_meal,
-        "next_meal": next_meal,
         "stamps": stamps,
         "garden": garden,
         "time_greeting": _greeting(now),
@@ -196,31 +194,61 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
             "color": "#E67E22",
         })
 
-    # お薬未服用（朝9時以降で未服用）
-    if h >= 9 and "お薬" not in done_labels:
-        if h < 12:
-            alerts.append({
-                "type": "medicine",
-                "level": "remind",
-                "message": "お薬 飲みましたか？",
-                "sub": "",
-                "color": "#EC407A",
-            })
-        elif h >= 12:
-            alerts.append({
-                "type": "medicine",
-                "level": "warn",
-                "message": "お薬 まだですよ",
-                "sub": "",
-                "color": "#EC407A",
-            })
+    # お薬リマインド（家族が設定したスケジュールに基づく）
+    if "お薬" not in done_labels:
+        med_schedule = _load_medicine_schedule()
+        for med in med_schedule:
+            if h >= med["hour"]:
+                delay = h - med["hour"]
+                if delay <= 1:
+                    alerts.append({
+                        "type": "medicine",
+                        "level": "remind",
+                        "message": f"{med['timing']}のお薬 飲みましたか？",
+                        "sub": "",
+                        "color": "#EC407A",
+                    })
+                else:
+                    alerts.append({
+                        "type": "medicine",
+                        "level": "warn",
+                        "message": f"{med['timing']}のお薬 まだですよ",
+                        "sub": "",
+                        "color": "#EC407A",
+                    })
+                break  # 最も近いスケジュールのみ表示
 
-    # お風呂未入浴（17時以降）
-    if h >= 17 and "お風呂" not in done_labels:
+    # 一般的な時間帯での促し（指定ではなく、やさしい確認）
+    if 7 <= h < 10 and "朝食" not in done_labels:
         alerts.append({
-            "type": "bath",
-            "level": "remind",
-            "message": "お風呂 入りましたか？",
+            "type": "meal_remind",
+            "level": "gentle",
+            "message": "朝ごはんは食べましたか？",
+            "sub": "",
+            "color": "#FF9800",
+        })
+    elif 11 <= h < 14 and "昼食" not in done_labels:
+        alerts.append({
+            "type": "meal_remind",
+            "level": "gentle",
+            "message": "お昼ごはんは食べましたか？",
+            "sub": "",
+            "color": "#FF9800",
+        })
+    elif 17 <= h < 21 and "夕食" not in done_labels:
+        alerts.append({
+            "type": "meal_remind",
+            "level": "gentle",
+            "message": "夕ごはんは食べましたか？",
+            "sub": "",
+            "color": "#FF9800",
+        })
+
+    if 16 <= h < 22 and "お風呂" not in done_labels:
+        alerts.append({
+            "type": "bath_remind",
+            "level": "gentle",
+            "message": "お風呂は入りましたか？",
             "sub": "",
             "color": "#29B6F6",
         })
@@ -278,61 +306,43 @@ def _load_rice_guide() -> dict:
         conn.close()
 
 
-def _guess_next_meal(now: datetime, sessions: list) -> dict | None:
+def _load_medicine_schedule() -> list[dict]:
+    """薬の服用スケジュールをDBから読み込み。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT timing, hour, enabled FROM medicine_schedule WHERE enabled = 1 ORDER BY hour"
+        ).fetchall()
+        return [{"timing": r["timing"], "hour": r["hour"]} for r in rows]
+    finally:
+        conn.close()
+
+
+def _get_rice_info(now: datetime, sessions: list) -> str:
+    """現在の未済の食事に対応する炊飯量を返す。"""
     rice_guide = _load_rice_guide()
-    schedule = [
-        ("朝ごはん", time(7, 0)),
-        ("お昼ごはん", time(12, 0)),
-        ("夕ごはん", time(18, 0)),
-    ]
+    if not rice_guide:
+        return ""
     done_labels = {s.get("label", "") for s in sessions}
-    label_map = {"朝ごはん": "朝食", "お昼ごはん": "昼食", "夕ごはん": "夕食"}
-    for name, t in schedule:
-        meal_dt = datetime.combine(now.date(), t)
-        meal_label = label_map.get(name, "")
-        if meal_label not in done_labels and meal_dt > now:
-            minutes = int((meal_dt - now).total_seconds() / 60)
-            rice = rice_guide.get(meal_label, "")
-            return {"name": name, "time": t.strftime("%H:%M"), "minutes": minutes, "rice": rice}
-    return None
+    # まだ食べていない食事で、炊飯量が設定されているものを返す
+    for meal in ["朝食", "昼食", "夕食"]:
+        if meal not in done_labels and meal in rice_guide:
+            return f"（次のご飯は {rice_guide[meal]}）"
+    return ""
 
 
 def _current_activity(now: datetime, sessions: list) -> dict:
-    """今の時間帯に応じた活動ガイドを返す。"""
+    """時間帯に応じた挨拶を返す（活動の指定はしない）。"""
     h = now.hour
-    done_labels = {s.get("label", "") for s in sessions}
-    rice_guide = _load_rice_guide()
+    rice_info = _get_rice_info(now, sessions)
 
-    def _meal_activity(label, display, rice_key):
-        rice = rice_guide.get(rice_key, "")
-        rice_text = f"（ご飯は {rice}）" if rice else ""
-        return {"text": f"{display}の 時間 🍚", "rice": rice_text}
-
-    if 5 <= h < 7:
-        return {"text": "朝の 時間 🌅", "rice": ""}
-    if 7 <= h < 9:
-        if "朝食" not in done_labels:
-            return _meal_activity("朝食", "朝ごはん", "朝食")
-        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
-    if 9 <= h < 11:
-        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
-    if 11 <= h < 13:
-        if "昼食" not in done_labels:
-            return _meal_activity("昼食", "お昼ごはん", "昼食")
-        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
-    if 13 <= h < 16:
-        return {"text": "お昼の 時間 ☀️", "rice": ""}
-    if 16 <= h < 18:
-        if "お風呂" not in done_labels:
-            return {"text": "お風呂の 時間 🛁", "rice": ""}
-        return {"text": "夕方の 時間 🌇", "rice": ""}
-    if 18 <= h < 20:
-        if "夕食" not in done_labels:
-            return _meal_activity("夕食", "夕ごはん", "夕食")
-        return {"text": "夜の 時間 🌙", "rice": ""}
-    if 20 <= h < 22:
-        return {"text": "そろそろ寝る 時間 🌙", "rice": ""}
-    return {"text": "おやすみの 時間 😴", "rice": ""}
+    if 5 <= h < 10:
+        return {"text": "おはようございます 🌅", "rice": rice_info}
+    if 10 <= h < 17:
+        return {"text": "良い一日を ☀️", "rice": rice_info}
+    if 17 <= h < 21:
+        return {"text": "お疲れさまです 🌇", "rice": rice_info}
+    return {"text": "おやすみなさい 🌙", "rice": ""}
 
 
 def _build_stamps(sessions: list) -> list[dict]:
@@ -357,24 +367,6 @@ def _build_stamps(sessions: list) -> list[dict]:
                     t = t.split("T")[1][:5]
                 stamp["done"] = True
                 stamp["time"] = str(t)
-                break
-
-    # 今の時間帯に対応するスタンプを current にする（未完了のもの）
-    h = now.hour
-    current_label = None
-    if 5 <= h < 9:
-        current_label = "朝食"
-    elif 11 <= h < 13:
-        current_label = "昼食"
-    elif 16 <= h < 18:
-        current_label = "お風呂"
-    elif 18 <= h < 20:
-        current_label = "夕食"
-
-    if current_label:
-        for stamp in all_stamps:
-            if stamp["label"] == current_label and not stamp["done"]:
-                stamp["current"] = True
                 break
 
     return all_stamps
@@ -647,6 +639,45 @@ async def api_quick_record(request: Request):
     return {"ok": True, "activity": activity, "time": now.strftime("%H:%M")}
 
 
+@app.get("/api/medicine-schedule")
+async def api_get_medicine_schedule(request: Request):
+    """薬スケジュールを取得。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    return _load_medicine_schedule()
+
+
+@app.post("/api/medicine-schedule")
+async def api_set_medicine_schedule(request: Request):
+    """薬スケジュールを登録・更新。body: {"timing": "朝", "hour": 8}"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    timing = body.get("timing", "")
+    hour = body.get("hour")
+    if timing not in {"朝", "昼", "夜"}:
+        raise HTTPException(status_code=400, detail=f"無効なタイミング: {timing}")
+    if hour is None or not (0 <= int(hour) <= 23):
+        raise HTTPException(status_code=400, detail="時刻は0〜23で指定してください")
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO medicine_schedule(timing, hour, updated_at) VALUES(?, ?, ?)
+               ON CONFLICT(timing) DO UPDATE SET hour = excluded.hour, updated_at = excluded.updated_at""",
+            (timing, int(hour), datetime.now()),
+        )
+    return {"ok": True, "timing": timing, "hour": int(hour)}
+
+
+@app.delete("/api/medicine-schedule/{timing}")
+async def api_delete_medicine_schedule(request: Request, timing: str):
+    """薬スケジュールを削除。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    with transaction() as conn:
+        conn.execute("DELETE FROM medicine_schedule WHERE timing = ?", (timing,))
+    return {"ok": True}
+
+
 @app.get("/api/rice-guide")
 async def api_get_rice_guide(request: Request):
     """炊飯量ガイドを取得。"""
@@ -816,6 +847,7 @@ async def family_view(request: Request):
         "selected_date": selected_date,
         "is_today": is_today,
         "rice_guide": _load_rice_guide(),
+        "medicine_schedule": {m["timing"]: m["hour"] for m in _load_medicine_schedule()},
     })
 
 
