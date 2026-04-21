@@ -553,6 +553,9 @@ def _check_cooldown(activity: str, person_id: int) -> bool:
 @app.post("/api/tablet-record")
 async def api_tablet_record(request: Request):
     """祖母がタブレットの「できた」ボタンを押したときの処理。"""
+    # ローカル or タブレットセッション認証済みのみ許可
+    if not _is_local(request) and not _check_tablet_access(request):
+        raise HTTPException(status_code=403, detail="アクセスできません")
     body = await request.json()
     activity = body.get("activity", "")
     person_id = body.get("person_id", 1)
