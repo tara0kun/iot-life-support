@@ -608,10 +608,7 @@ async def family_view(request: Request):
 
     is_today = (selected_date == now.strftime("%Y-%m-%d"))
 
-    if is_today:
-        events = get_recent_events(100)
-    else:
-        events = get_events_by_date(selected_date, 200)
+    events = get_events_by_date(selected_date, 200)
 
     conn = get_conn()
     try:

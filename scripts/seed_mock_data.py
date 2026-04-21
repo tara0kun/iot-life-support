@@ -28,9 +28,22 @@ def clear_today():
     print("今日のデータを削除しました")
 
 
+def clear_all():
+    with transaction() as conn:
+        conn.execute("DELETE FROM session_events")
+        conn.execute("DELETE FROM meal_sessions")
+        conn.execute("DELETE FROM events")
+        conn.execute("DELETE FROM daily_scores")
+    print("全データを削除しました")
+
+
+# 対象日を保持するグローバル変数
+_target_date = None
+
 def t(hour, minute=0):
-    """今日の指定時刻のdatetimeを返す"""
-    return datetime.combine(datetime.now().date(), time(hour, minute))
+    """対象日の指定時刻のdatetimeを返す"""
+    base = _target_date or datetime.now().date()
+    return datetime.combine(base, time(hour, minute))
 
 
 def insert_event(conn, person_id, source, event_type, at, value=None):
@@ -206,39 +219,55 @@ def scenario_full_day(conn):
 
 
 def main():
+    global _target_date
     parser = argparse.ArgumentParser(description="モックデータ投入")
     parser.add_argument("--clear", action="store_true", help="今日のデータを消してから投入")
+    parser.add_argument("--clear-all", action="store_true", help="全データを消してから投入")
     parser.add_argument("--scenario", type=int, default=1, choices=[1, 2, 3, 4],
                         help="1:普通の1日, 2:食べ過ぎ, 3:トイレ+入浴, 4:充実した1日")
+    parser.add_argument("--days", type=int, default=1,
+                        help="過去N日分のデータを生成（シナリオをローテーション）")
     args = parser.parse_args()
 
     init_db()
 
-    if args.clear:
+    if args.clear_all:
+        clear_all()
+    elif args.clear:
         clear_today()
 
-    with transaction() as conn:
-        if args.scenario == 1:
-            scenario_normal(conn)
-        elif args.scenario == 2:
-            scenario_overeating(conn)
-        elif args.scenario == 3:
-            scenario_with_toilet(conn)
-        elif args.scenario == 4:
-            scenario_full_day(conn)
+    scenarios = [scenario_normal, scenario_overeating, scenario_with_toilet, scenario_full_day]
 
-    # セッション集約を実行
-    created = aggregate_sessions()
-    print(f"セッション集約: {created}件作成")
+    if args.days > 1:
+        # 複数日分: 今日から過去N日分を生成
+        for i in range(args.days - 1, -1, -1):
+            _target_date = (datetime.now() - timedelta(days=i)).date()
+            scenario_fn = scenarios[(args.days - 1 - i) % len(scenarios)]
+            print(f"\n--- {_target_date} ---")
+            with transaction() as conn:
+                scenario_fn(conn)
+            aggregate_sessions()
+        _target_date = None
+    else:
+        # 単日
+        _target_date = datetime.now().date()
+        with transaction() as conn:
+            if args.scenario == 1:
+                scenario_normal(conn)
+            elif args.scenario == 2:
+                scenario_overeating(conn)
+            elif args.scenario == 3:
+                scenario_with_toilet(conn)
+            elif args.scenario == 4:
+                scenario_full_day(conn)
+        aggregate_sessions()
 
     # 結果表示
     conn = get_conn()
-    events = conn.execute("SELECT COUNT(*) FROM events WHERE started_at >= ?",
-                          (datetime.combine(datetime.now().date(), time.min),)).fetchone()[0]
-    sessions = conn.execute("SELECT COUNT(*) FROM meal_sessions WHERE started_at >= ?",
-                            (datetime.combine(datetime.now().date(), time.min),)).fetchone()[0]
+    total_events = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+    total_sessions = conn.execute("SELECT COUNT(*) FROM meal_sessions").fetchone()[0]
     conn.close()
-    print(f"\n結果: イベント{events}件, 食事セッション{sessions}件")
+    print(f"\n結果: イベント{total_events}件, セッション{total_sessions}件")
     print(f"タブレット確認: http://localhost:8000/tablet")
     print(f"家族画面確認:   http://localhost:8000/family")
 
