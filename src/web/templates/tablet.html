@@ -660,6 +660,11 @@ document.addEventListener('visibilitychange', () => {
 
 // 5分ごとにページ自動リロード（データ鮮度維持）
 setTimeout(() => location.reload(), 5 * 60 * 1000);
+
+// Service Worker登録（オフライン対応）
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
 </script>
 </body>
 </html>
