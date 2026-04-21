@@ -196,7 +196,8 @@
 <div class="header">
   <h1>家族管理画面</h1>
   <div class="header-right">
-    <div class="time">{{ now.strftime("%Y/%m/%d %H:%M") }}</div>
+    {% set days = ["月","火","水","木","金","土","日"] %}
+    <div class="time">{{ now.strftime("%-m/%-d") }}（{{ days[now.weekday()] }}）{{ now.strftime("%H:%M") }}</div>
     <a href="/family/logout" class="logout-btn">ログアウト</a>
   </div>
 </div>
