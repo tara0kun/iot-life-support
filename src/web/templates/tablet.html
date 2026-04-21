@@ -610,7 +610,12 @@ async function tabletRecord(activity, btn) {
       btn.disabled = false;
       btn.textContent = 'できた';
       let msg = '';
-      if (data.reason === 'no_sensor') {
+      if (data.reason === 'cooldown') {
+        msg = `<div class="va-title">さっき押しましたよ</div>
+               <div class="va-sub">しばらく待ってからもう一度押してください。</div>`;
+        btn.disabled = true;
+        btn.textContent = '待って';
+      } else if (data.reason === 'no_sensor') {
         msg = `<div class="va-title">「${activity}」はセンサーで確認できません</div>
                <div class="va-sub">家族に「${activity}した」と伝えてください。<br>家族が記録してくれます。</div>`;
       } else {

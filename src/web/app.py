@@ -531,6 +531,25 @@ def _verify_sensor(activity: str, person_id: int) -> dict:
         conn.close()
 
 
+TABLET_COOLDOWN_MINUTES = 30
+
+
+def _check_cooldown(activity: str, person_id: int) -> bool:
+    """同じ活動のボタンが最近押されていないかチェック。True=押せる、False=クールダウン中。"""
+    conn = get_conn()
+    try:
+        since = datetime.now() - timedelta(minutes=TABLET_COOLDOWN_MINUTES)
+        row = conn.execute(
+            """SELECT COUNT(*) as cnt FROM events
+               WHERE person_id = ? AND source = 'tablet_report'
+               AND event_type IN (?, ?) AND started_at >= ?""",
+            (person_id, activity, f"{activity}_unverified", since),
+        ).fetchone()
+        return row["cnt"] == 0
+    finally:
+        conn.close()
+
+
 @app.post("/api/tablet-record")
 async def api_tablet_record(request: Request):
     """祖母がタブレットの「できた」ボタンを押したときの処理。"""
@@ -543,6 +562,11 @@ async def api_tablet_record(request: Request):
         raise HTTPException(status_code=400, detail=f"無効な活動: {activity}")
 
     now = datetime.now()
+
+    # クールダウンチェック
+    if not _check_cooldown(activity, person_id):
+        return {"ok": False, "verified": False, "reason": "cooldown",
+                "message": f"さっき押しましたよ。{TABLET_COOLDOWN_MINUTES}分後にまた押せます。"}
 
     # センサー照合
     verify = _verify_sensor(activity, person_id)
