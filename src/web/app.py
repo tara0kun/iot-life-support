@@ -27,7 +27,7 @@ from ..db import get_conn, init_db, transaction
 from ..event_bus import get_events_today, get_recent_events, get_events_by_date, subscribe, unsubscribe
 from ..sessions import sessions_today, last_session
 from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
-from ..lock_manager import get_device_state, unlock_device
+from ..lock_manager import get_device_state, lock_device, unlock_device
 
 app = FastAPI(title="IoT生活サポート")
 app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
@@ -453,13 +453,8 @@ async def api_unlock(request: Request):
     reason = body.get("reason", "家族による手動解除")
     node_id = 1  # rice_cooker のMatter node_id
 
-    state = get_device_state(device_name)
-    if not state or not state["is_locked"]:
-        return {"ok": True, "message": "ロックされていません"}
-
     success = await unlock_device(device_name, node_id, reason=reason)
     if success:
-        # 解除ログを記録
         now = datetime.now()
         with transaction() as conn:
             conn.execute(
@@ -468,6 +463,30 @@ async def api_unlock(request: Request):
                 (now, json.dumps({"device": device_name, "reason": reason}, ensure_ascii=False)),
             )
         return {"ok": True, "message": "解除しました"}
+    else:
+        raise HTTPException(status_code=500, detail="Matter通信に失敗しました")
+
+
+@app.post("/api/lock")
+async def api_lock(request: Request):
+    """家族が手動でロックをかける（予防的措置）。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    device_name = body.get("device", "rice_cooker")
+    reason = body.get("reason", "家族による手動ロック")
+    node_id = 1
+
+    success = await lock_device(device_name, node_id, reason=reason)
+    if success:
+        now = datetime.now()
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO events(person_id, source, event_type, started_at, raw_meta)
+                   VALUES(NULL, 'family_override', 'lock', ?, ?)""",
+                (now, json.dumps({"device": device_name, "reason": reason}, ensure_ascii=False)),
+            )
+        return {"ok": True, "message": "ロックしました"}
     else:
         raise HTTPException(status_code=500, detail="Matter通信に失敗しました")
 
@@ -795,6 +814,7 @@ async def line_webhook(request: Request):
     allowed = _load_line_allowed_senders()
 
     from ..notifier import reply_line_message
+    from ..line_commands import dispatch
     events = payload.get("events", [])
     for ev in events:
         if ev.get("type") != "message":
@@ -811,8 +831,12 @@ async def line_webhook(request: Request):
             _webhook_log.info("未許可送信者: %s", sender_id)
             continue
 
-        if _is_url_request(text):
+        # コマンドディスパッチ（リンク以外すべて）
+        reply = await dispatch(text, sender_id)
+        if reply is None and _is_url_request(text):
             reply = _build_url_reply()
+
+        if reply:
             try:
                 await asyncio.to_thread(reply_line_message, reply_token, reply)
             except Exception as e:

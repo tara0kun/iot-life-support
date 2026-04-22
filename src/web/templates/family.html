@@ -215,6 +215,22 @@
   </div>
   {% endif %}
 
+  <!-- 機器管理（常駐） -->
+  <div class="section-card">
+    <div class="section-title">機器管理</div>
+    <div class="section-desc">炊飯器のロック状態を手動で切り替えできます</div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;">
+      <div>
+        <span style="font-weight:500;">炊飯器:</span>
+        <span id="device-state-badge" style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:0.9em;margin-left:6px;{% if is_locked %}background:#FDECEA;color:#C62828;{% else %}background:#E8F5E9;color:#2E7D32;{% endif %}">
+          {% if is_locked %}🔒 ロック中{% else %}🔓 通常{% endif %}
+        </span>
+      </div>
+      <button id="unlock-btn" onclick="unlockDevice()" style="background:#43A047;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if not is_locked %}display:none;{% endif %}">ロック解除</button>
+      <button id="lock-btn" onclick="lockDevice()" style="background:#E65100;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if is_locked %}display:none;{% endif %}">手動ロック</button>
+    </div>
+  </div>
+
   <!-- ステータスカード -->
   <div class="status-grid">
     <div class="stat-card">
@@ -398,6 +414,18 @@ async function unlockDevice() {
     });
     if (resp.ok) { alert('ロックを解除しました'); location.reload(); }
     else { const d = await resp.json(); alert('解除失敗: ' + (d.detail || '不明')); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function lockDevice() {
+  if (!confirm('炊飯器を手動でロックしますか？（電源OFFになります）')) return;
+  try {
+    const resp = await fetch('/api/lock', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ device: 'rice_cooker', reason: '家族による手動ロック' })
+    });
+    if (resp.ok) { alert('ロックしました'); location.reload(); }
+    else { const d = await resp.json(); alert('ロック失敗: ' + (d.detail || '不明')); }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
