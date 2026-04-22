@@ -320,6 +320,47 @@
     </div>
   </div>
 
+  <!-- 家族タスク（役割分担） -->
+  <div class="section-card">
+    <div class="section-title">家族タスク（役割分担）</div>
+    <div class="section-desc">担当者と時刻を設定すると、指定時刻にLINEで担当者へリマインドされます。</div>
+
+    <table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:0.9em;">
+      <thead>
+        <tr style="background:#F5F5F5;text-align:left;">
+          <th style="padding:8px;">タスク名</th>
+          <th style="padding:8px;">担当</th>
+          <th style="padding:8px;">時刻</th>
+          <th style="padding:8px;">状態</th>
+          <th style="padding:8px;"></th>
+        </tr>
+      </thead>
+      <tbody id="care-task-rows">
+        {% for t in care_tasks %}
+        <tr style="border-bottom:1px solid #EEE;">
+          <td style="padding:8px;">{{ t.task_name }}</td>
+          <td style="padding:8px;">{{ t.assignee_name or '未割当' }}</td>
+          <td style="padding:8px;">{% if t.reminder_hour is not none %}{{ '%02d' % t.reminder_hour }}:00{% else %}--:--{% endif %}</td>
+          <td style="padding:8px;">{% if t.done_by %}<span style="color:#2E7D32;">✅ 完了</span>{% else %}<span style="color:#999;">⬜ 未対応</span>{% endif %}</td>
+          <td style="padding:8px;"><button class="delete-btn" onclick="deleteCareTask({{ t.id }}, '{{ t.task_name }}')" title="削除">&#x2715;</button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="padding:16px;color:#999;text-align:center;">タスクが登録されていません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="margin-top:12px;padding:12px;background:#FAFAFA;border-radius:6px;">
+      <div style="font-weight:500;margin-bottom:8px;">新規タスクを追加</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input id="new-task-name" type="text" placeholder="タスク名（例: 朝のお薬確認）" style="flex:1;min-width:180px;padding:6px;border:1px solid #CCC;border-radius:4px;">
+        <input id="new-task-assignee" type="text" placeholder="担当（例: 母）" style="width:120px;padding:6px;border:1px solid #CCC;border-radius:4px;">
+        <input id="new-task-hour" type="number" min="0" max="23" placeholder="時" style="width:60px;padding:6px;border:1px solid #CCC;border-radius:4px;">
+        <button onclick="addCareTask()" style="background:#1976D2;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">追加</button>
+      </div>
+    </div>
+  </div>
+
   <!-- お薬スケジュール -->
   <div class="section-card">
     <div class="section-title">お薬スケジュール</div>
@@ -571,6 +612,32 @@ async function saveMedicine(timing) {
     });
     if (resp.ok) { location.reload(); }
     else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function addCareTask() {
+  const name = document.getElementById('new-task-name').value.trim();
+  const assignee = document.getElementById('new-task-assignee').value.trim();
+  const hourStr = document.getElementById('new-task-hour').value.trim();
+  if (!name) { alert('タスク名を入力してください'); return; }
+  const hour = hourStr === '' ? null : parseInt(hourStr);
+  if (hour !== null && (isNaN(hour) || hour < 0 || hour > 23)) { alert('時刻は0〜23'); return; }
+  try {
+    const resp = await fetch('/api/care-tasks', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ task_name: name, assignee_name: assignee || null, reminder_hour: hour })
+    });
+    if (resp.ok) { location.reload(); }
+    else { const d = await resp.json(); alert('追加失敗: ' + (d.detail || '不明')); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function deleteCareTask(id, name) {
+  if (!confirm(`「${name}」を削除しますか？`)) return;
+  try {
+    const resp = await fetch(`/api/care-tasks/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+    if (resp.ok) { location.reload(); }
+    else { alert('削除失敗'); }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 

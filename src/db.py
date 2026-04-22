@@ -127,6 +127,25 @@ CREATE TABLE IF NOT EXISTS daily_scores (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, date)
 );
+
+CREATE TABLE IF NOT EXISTS care_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_name TEXT NOT NULL UNIQUE,             -- 例: 朝のお薬確認、夜の様子見
+    assignee_name TEXT,                         -- 例: 母、孫（NULLなら未割当）
+    reminder_hour INTEGER,                      -- リマインダー送信時刻 (0-23)
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS care_task_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES care_tasks(id),
+    date TEXT NOT NULL,                         -- YYYY-MM-DD
+    done_by TEXT,                               -- 誰が対応したか (LINE sender ID or 名前)
+    done_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    note TEXT,
+    UNIQUE(task_id, date)
+);
 """
 
 

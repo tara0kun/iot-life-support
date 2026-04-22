@@ -846,6 +846,65 @@ async def line_webhook(request: Request):
     return {"ok": True}
 
 
+# ============================================================
+# 家族タスク管理（役割分担）
+# ============================================================
+
+@app.get("/api/care-tasks")
+async def api_list_care_tasks(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT t.id, t.task_name, t.assignee_name, t.reminder_hour, t.enabled,
+                      l.done_by, l.done_at
+               FROM care_tasks t
+               LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
+               ORDER BY t.reminder_hour""",
+            (today,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/api/care-tasks")
+async def api_create_care_task(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    name = (body.get("task_name") or "").strip()
+    assignee = (body.get("assignee_name") or "").strip() or None
+    hour = body.get("reminder_hour")
+    if not name:
+        raise HTTPException(status_code=400, detail="task_nameは必須")
+    if hour is not None and not (0 <= int(hour) <= 23):
+        raise HTTPException(status_code=400, detail="reminder_hourは0〜23")
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO care_tasks(task_name, assignee_name, reminder_hour)
+               VALUES(?, ?, ?)
+               ON CONFLICT(task_name) DO UPDATE SET
+                   assignee_name = excluded.assignee_name,
+                   reminder_hour = excluded.reminder_hour,
+                   updated_at = CURRENT_TIMESTAMP""",
+            (name, assignee, int(hour) if hour is not None else None),
+        )
+    return {"ok": True}
+
+
+@app.delete("/api/care-tasks/{task_id}")
+async def api_delete_care_task(request: Request, task_id: int):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    with transaction() as conn:
+        conn.execute("DELETE FROM care_task_logs WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM care_tasks WHERE id = ?", (task_id,))
+    return {"ok": True}
+
+
 @app.get("/api/medicine-schedule")
 async def api_get_medicine_schedule(request: Request):
     """薬スケジュールを取得。"""
@@ -1035,6 +1094,23 @@ async def family_view(request: Request):
     grandma_sessions = sessions_today(1)
     rice_cooker_state = get_device_state("rice_cooker")
     is_locked = rice_cooker_state["is_locked"] if rice_cooker_state else False
+    # 家族タスク一覧
+    care_tasks_data: list[dict] = []
+    conn = get_conn()
+    try:
+        today = now.strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT t.id, t.task_name, t.assignee_name, t.reminder_hour, t.enabled,
+                      l.done_by, l.done_at
+               FROM care_tasks t
+               LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
+               ORDER BY t.reminder_hour""",
+            (today,),
+        ).fetchall()
+        care_tasks_data = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
     return templates.TemplateResponse(request, "family.html", {
         "events": events,
         "persons": persons,
@@ -1045,6 +1121,7 @@ async def family_view(request: Request):
         "is_today": is_today,
         "rice_amount": _load_rice_guide(),
         "medicine_schedule": {m["timing"]: m["hour"] for m in _load_medicine_schedule()},
+        "care_tasks": care_tasks_data,
     })
 
 

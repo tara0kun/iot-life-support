@@ -46,6 +46,10 @@ def match_command(text: str) -> str:
         return "unlock_request"
     if re.fullmatch(r"\d{4}", t):
         return "unlock_confirm"
+    if t in ("済", "完了", "done", "done!") or t.startswith("済 ") or t.startswith("完了 "):
+        return "task_done"
+    if any(kw in t for kw in ("タスク", "担当", "今日の仕事")):
+        return "task_list"
     if any(kw in t for kw in ("状況", "様子", "今日")):
         return "status"
     if "最後" in t or "さっき" in t:
@@ -192,11 +196,100 @@ def handle_last_meal() -> str:
     return f"🍴 最後の食事\n\n{info[0]}\n（{info[1]}分前）"
 
 
+def handle_task_list() -> str:
+    """今日のタスク一覧と完了状況を返す。"""
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT t.id, t.task_name, t.assignee_name, t.reminder_hour,
+                      l.done_by, l.done_at
+               FROM care_tasks t
+               LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
+               WHERE t.enabled = 1
+               ORDER BY t.reminder_hour""",
+            (today,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return "📋 タスクは登録されていません。\n家族管理画面で登録してください。"
+    lines = ["📋 今日のタスク", ""]
+    for r in rows:
+        mark = "✅" if r["done_by"] else "⬜"
+        assignee = r["assignee_name"] or "未割当"
+        hour = f"{r['reminder_hour']:02d}:00" if r["reminder_hour"] is not None else "--:--"
+        lines.append(f"{mark} {hour} {r['task_name']} [{assignee}]")
+        if r["done_by"]:
+            lines.append(f"    └ {r['done_by']} が完了")
+    lines.append("")
+    lines.append("対応したら「済 タスク名」と返信してください（例: 済 朝のお薬確認）")
+    return "\n".join(lines)
+
+
+def handle_task_done(text: str, sender_id: str) -> str:
+    """「済 タスク名」でタスクを完了記録する。"""
+    t = text.strip()
+    # 「済」のみなら最も近い未完了タスクを補完候補に
+    task_name = ""
+    for prefix in ("済 ", "済　", "完了 ", "完了　"):
+        if t.startswith(prefix):
+            task_name = t[len(prefix):].strip()
+            break
+
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        if not task_name:
+            # 今日の未完了タスクを列挙
+            rows = conn.execute(
+                """SELECT t.task_name FROM care_tasks t
+                   LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
+                   WHERE t.enabled = 1 AND l.id IS NULL
+                   ORDER BY t.reminder_hour""",
+                (today,),
+            ).fetchall()
+            if not rows:
+                return "✅ 今日のタスクは全て完了しています。"
+            names = "、".join(r["task_name"] for r in rows)
+            return f"どのタスクを完了しましたか？\n「済 タスク名」の形式で送ってください。\n\n未完了: {names}"
+        # タスク検索（部分一致）
+        task = conn.execute(
+            "SELECT id, task_name, assignee_name FROM care_tasks WHERE task_name LIKE ? AND enabled = 1",
+            (f"%{task_name}%",),
+        ).fetchone()
+        if not task:
+            return f"⚠️ タスク「{task_name}」が見つかりません。「タスク」で一覧を確認してください。"
+
+        # 既に完了済みかチェック
+        existing = conn.execute(
+            "SELECT done_by, done_at FROM care_task_logs WHERE task_id = ? AND date = ?",
+            (task["id"], today),
+        ).fetchone()
+        if existing:
+            return f"ℹ️ 「{task['task_name']}」は既に {existing['done_by']} が対応済みです。"
+
+        # 完了記録
+        conn.execute(
+            "INSERT INTO care_task_logs(task_id, date, done_by) VALUES(?, ?, ?)",
+            (task["id"], today, sender_id[:8] + "..."),
+        )
+        conn.commit()
+        return (
+            f"✅ 「{task['task_name']}」の完了を記録しました。\n"
+            f"家族全員に共有されます。"
+        )
+    finally:
+        conn.close()
+
+
 def handle_help() -> str:
     return (
         "📖 使えるコマンド\n\n"
         "「状況」— 今日の様子まとめ\n"
         "「最後の食事」— 直近の食事時刻\n"
+        "「タスク」— 今日の家族タスク一覧\n"
+        "「済 タスク名」— タスクを完了記録\n"
         "「リンク」— 最新の公開URL\n"
         "「ロック解除」— 炊飯器ロックを解除（確認コード付き）\n"
         "「ヘルプ」— このメッセージ"
@@ -272,6 +365,10 @@ async def dispatch(text: str, sender_id: str) -> str | None:
         return handle_unlock_request(sender_id)
     if cmd == "unlock_confirm":
         return await handle_unlock_confirm(text, sender_id)
+    if cmd == "task_list":
+        return handle_task_list()
+    if cmd == "task_done":
+        return handle_task_done(text, sender_id)
     if cmd == "status":
         return handle_status()
     if cmd == "last_meal":
