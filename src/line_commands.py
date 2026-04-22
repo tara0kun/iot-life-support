@@ -11,6 +11,7 @@ import re
 import time
 from datetime import datetime
 
+from .db import get_conn
 from .lock_manager import get_device_state, unlock_device
 from .sessions import sessions_today
 
@@ -72,6 +73,81 @@ def _last_meal_info(grandma_id: int = 1) -> tuple[str, int] | None:
     return f"{last.get('label')} — {t.strftime('%H:%M')}", minutes_ago
 
 
+def _today_toilet_count(grandma_id: int = 1) -> int:
+    """今日のトイレイベント数を取得（ドアセンサーまたは家族記録）。"""
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        row = conn.execute(
+            """SELECT COUNT(*) as cnt FROM events
+               WHERE started_at LIKE ?
+               AND (source = 'toilet' AND event_type = 'open'
+                    OR source IN ('family_report', 'tablet_report') AND event_type = 'トイレ')
+               AND (person_id = ? OR person_id IS NULL)""",
+            (f"{today}%", grandma_id),
+        ).fetchone()
+        return row["cnt"] if row else 0
+    finally:
+        conn.close()
+
+
+def _bath_info(grandma_id: int = 1) -> str:
+    """今日のお風呂の時刻情報を返す。"""
+    sessions = sessions_today(grandma_id)
+    bath_sessions = [s for s in sessions if s.get("label") == "お風呂"]
+    if not bath_sessions:
+        return "まだ"
+    b = bath_sessions[-1]
+    t = b.get("started_at")
+    if isinstance(t, str):
+        t = datetime.fromisoformat(t)
+    return f"済（{t.strftime('%H:%M')}）"
+
+
+def _medicine_status() -> str:
+    """お薬の予定と実績を返す。"""
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        schedule = conn.execute(
+            "SELECT timing, hour FROM medicine_schedule WHERE enabled = 1 ORDER BY hour"
+        ).fetchall()
+        if not schedule:
+            return "（予定なし）"
+        taken = conn.execute(
+            """SELECT COUNT(*) as cnt FROM events
+               WHERE started_at LIKE ?
+               AND source IN ('family_report', 'tablet_report')
+               AND event_type = 'お薬'""",
+            (f"{today}%",),
+        ).fetchone()["cnt"]
+        return f"{taken}/{len(schedule)}回（予定: {'/'.join(m['timing'] for m in schedule)}）"
+    finally:
+        conn.close()
+
+
+def _recent_witness_reports(limit: int = 3) -> list[str]:
+    """家族が証人として記録した最新の報告を返す。"""
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT event_type, started_at, raw_meta FROM events
+               WHERE source = 'family_report' AND started_at LIKE ?
+               ORDER BY started_at DESC LIMIT ?""",
+            (f"{today}%", limit),
+        ).fetchall()
+        out = []
+        for r in rows:
+            t = r["started_at"]
+            if isinstance(t, str):
+                t = datetime.fromisoformat(t)
+            out.append(f"{t.strftime('%H:%M')} {r['event_type']}")
+        return out
+    finally:
+        conn.close()
+
+
 def handle_status() -> str:
     grandma_id = 1
     sessions = sessions_today(grandma_id)
@@ -85,13 +161,28 @@ def handle_status() -> str:
     last_info = _last_meal_info(grandma_id)
     last_line = f"{last_info[0]}（{last_info[1]}分前）" if last_info else "（記録なし）"
 
-    return (
-        "📊 今日の祖母の状況\n\n"
-        f"🍴 食事回数: {meal_count}回\n"
-        f"⭐ スタンプ達成: {stamp_done}/{len(STAMP_LABELS)}\n"
-        f"🕐 最後の食事: {last_line}\n"
-        f"🍚 炊飯器: {lock_status}"
-    )
+    toilet_count = _today_toilet_count(grandma_id)
+    bath = _bath_info(grandma_id)
+    medicine = _medicine_status()
+    witnesses = _recent_witness_reports(3)
+
+    lines = [
+        "📊 今日の祖母の状況",
+        "",
+        f"🍴 食事回数: {meal_count}回",
+        f"🕐 最後の食事: {last_line}",
+        f"💊 お薬: {medicine}",
+        f"🛁 お風呂: {bath}",
+        f"🚽 トイレ: {toilet_count}回",
+        f"⭐ スタンプ達成: {stamp_done}/{len(STAMP_LABELS)}",
+        f"🍚 炊飯器: {lock_status}",
+    ]
+    if witnesses:
+        lines.append("")
+        lines.append("📋 家族の記録（最新）:")
+        lines.extend(f"  • {w}" for w in witnesses)
+
+    return "\n".join(lines)
 
 
 def handle_last_meal() -> str:
