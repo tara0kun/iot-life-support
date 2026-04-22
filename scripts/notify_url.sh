@@ -23,10 +23,14 @@ TABLET_TOKEN=$(grep "^TABLET_TOKEN=" "$IOT_DIR/.env" 2>/dev/null | cut -d= -f2)
 cd "$IOT_DIR"
 source venv/bin/activate
 python -c "
-from src.notifier import send_line_message
+from src.notifier import send_line_message, update_webhook_url
 url = '$URL'
 token = '$TABLET_TOKEN'
 tablet_url = f'{url}/tablet?token={token}' if token else f'{url}/tablet'
+
+# LINE webhook URLも再登録（URL自体は同じだが、LINE側で外れていた場合の保険）
+update_webhook_url(f'{url}/line/webhook')
+
 msg = f'''🔄 Webサーバが再起動しました
 
 📱 タブレット画面:

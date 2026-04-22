@@ -8,14 +8,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
+import logging
 import secrets
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -679,6 +682,144 @@ def _get_active_prompts() -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+# ============================================================
+# LINE Webhook (「リンクが欲しい」等のメッセージで現URLを返信)
+# ============================================================
+
+_webhook_log = logging.getLogger("line_webhook")
+
+LINE_URL_TRIGGERS = (
+    "リンク", "url", "URL", "Url",
+    "つながらない", "繋がらない", "つながらん",
+    "見れない", "みれない", "見られない", "みられない",
+    "アクセス", "開けない", "あけない",
+    "接続",
+)
+
+
+def _load_line_secret() -> str:
+    env_path = BASE.parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("LINE_CHANNEL_SECRET="):
+                return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _load_line_allowed_senders() -> set[str]:
+    """許可された送信者ID。未設定ならLINE_USER_IDをフォールバック。"""
+    env_path = BASE.parent.parent / ".env"
+    allowed: set[str] = set()
+    line_user_id = ""
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("LINE_ALLOWED_SENDERS="):
+                raw = line.split("=", 1)[1].strip()
+                allowed.update(x.strip() for x in raw.split(",") if x.strip())
+            elif line.startswith("LINE_USER_ID="):
+                line_user_id = line.split("=", 1)[1].strip()
+    if not allowed and line_user_id:
+        allowed.add(line_user_id)
+    return allowed
+
+
+def _current_tunnel_url() -> str:
+    url_file = BASE.parent.parent / "data" / "tunnel_url.txt"
+    if url_file.exists():
+        return url_file.read_text().strip()
+    return ""
+
+
+def _build_url_reply() -> str:
+    url = _current_tunnel_url()
+    if not url:
+        return "⚠️ 現在公開URLが未発行です。ラズパイ側で `bash scripts/start_tunnel.sh` を実行してください。"
+    token = _load_tablet_token()
+    tablet_url = f"{url}/tablet?token={token}" if token else f"{url}/tablet"
+    return (
+        "🌐 最新の公開URL\n\n"
+        "📱 タブレット画面:\n"
+        f"{tablet_url}\n\n"
+        "👨‍👩‍👧 家族管理画面:\n"
+        f"{url}/family"
+    )
+
+
+def _is_url_request(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    for kw in LINE_URL_TRIGGERS:
+        if kw.lower() in lower:
+            return True
+    return False
+
+
+def _extract_sender_id(source: dict) -> str:
+    """LINE event.source からIDを取り出す（group/room/user のいずれか）。"""
+    return source.get("groupId") or source.get("roomId") or source.get("userId", "")
+
+
+@app.get("/line/webhook")
+async def line_webhook_get():
+    """LINE Developersコンソールからの疎通確認用（GETには200で応答）。"""
+    return PlainTextResponse("OK")
+
+
+@app.post("/line/webhook")
+async def line_webhook(request: Request):
+    """LINE Messaging APIからのwebhookを受信する。
+
+    「リンク」「URL」等のキーワードを含むメッセージを受けたら、現在の公開URLを返信する。
+    """
+    body = await request.body()
+    signature = request.headers.get("x-line-signature", "")
+    secret = _load_line_secret()
+
+    # 署名検証（シークレット未設定なら検証スキップ＝自己責任）
+    if secret:
+        expected = base64.b64encode(
+            hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+        ).decode("utf-8")
+        if not hmac.compare_digest(expected, signature):
+            _webhook_log.warning("LINE webhook署名不一致")
+            raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    allowed = _load_line_allowed_senders()
+
+    from ..notifier import reply_line_message
+    events = payload.get("events", [])
+    for ev in events:
+        if ev.get("type") != "message":
+            continue
+        msg = ev.get("message", {})
+        if msg.get("type") != "text":
+            continue
+        text = msg.get("text", "")
+        reply_token = ev.get("replyToken", "")
+        sender_id = _extract_sender_id(ev.get("source", {}))
+
+        # 許可リストチェック（allowedが空なら全拒否＝未設定の不正アクセス防止）
+        if allowed and sender_id not in allowed:
+            _webhook_log.info("未許可送信者: %s", sender_id)
+            continue
+
+        if _is_url_request(text):
+            reply = _build_url_reply()
+            try:
+                await asyncio.to_thread(reply_line_message, reply_token, reply)
+            except Exception as e:
+                _webhook_log.error("LINE返信失敗: %s", e)
+
+    # 常に200を返す（LINEの再送を防ぐ）
+    return {"ok": True}
 
 
 @app.get("/api/medicine-schedule")
