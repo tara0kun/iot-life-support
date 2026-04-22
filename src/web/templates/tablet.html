@@ -220,6 +220,10 @@
     <div class="clock" id="clock">{{ now.strftime("%H:%M") }}</div>
     <div class="date">{{ now.strftime("%Y年%-m月%-d日") }}
       {% set days = ["月","火","水","木","金","土","日"] %}（{{ days[now.weekday()] }}曜日）</div>
+    <button id="tts-toggle" onclick="setTTSEnabled(!isTTSEnabled())"
+            style="margin-top:8px;border:2px solid #BDBDBD;border-radius:20px;padding:4px 14px;font-size:13px;font-family:inherit;cursor:pointer;background:#E8F5E9;color:#2E7D32;font-weight:700;">
+      🔊 音声ON
+    </button>
   </div>
 
   <div class="time-guide">
@@ -605,6 +609,72 @@ document.querySelectorAll('.garden-flower').forEach(el => {
     if (p && s && c) svg = recolorFlower(svg, p, s, c);
   }
   el.innerHTML = svg;
+});
+
+// ============================================================
+// 音声読み上げ (Web Speech API)
+// ============================================================
+const TTS_KEY = 'tablet_tts_enabled';
+const ttsSupported = 'speechSynthesis' in window;
+
+function isTTSEnabled() {
+  const v = localStorage.getItem(TTS_KEY);
+  return v === null ? true : v === '1';  // デフォルトON
+}
+
+function setTTSEnabled(on) {
+  localStorage.setItem(TTS_KEY, on ? '1' : '0');
+  updateTTSButton();
+  if (!on) speechSynthesis.cancel();
+}
+
+function updateTTSButton() {
+  const btn = document.getElementById('tts-toggle');
+  if (!btn) return;
+  btn.textContent = isTTSEnabled() ? '🔊 音声ON' : '🔇 音声OFF';
+  btn.style.background = isTTSEnabled() ? '#E8F5E9' : '#FAFAFA';
+  btn.style.color = isTTSEnabled() ? '#2E7D32' : '#999';
+}
+
+function speak(text, opts = {}) {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ja-JP';
+  u.rate = opts.rate || 0.9;  // 祖母向けに少し遅め
+  u.pitch = opts.pitch || 1.0;
+  u.volume = opts.volume || 1.0;
+  speechSynthesis.speak(u);
+}
+
+function speakAlerts() {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  speechSynthesis.cancel();  // 既存キューをクリア
+
+  // 家族からのメッセージ優先
+  const famMsgs = document.querySelectorAll('.alert-card .alert-message');
+  const alertTexts = Array.from(famMsgs).map(el => el.textContent.trim()).filter(Boolean);
+  if (alertTexts.length === 0) return;
+
+  // 重要: ユーザー操作由来でないとブラウザが抑制する場合がある
+  // → 画面タップ後に読み上げる方針
+  alertTexts.forEach((t, i) => {
+    setTimeout(() => speak(t), i * 300);
+  });
+}
+
+// 初回タップで音声読み上げ（ブラウザのautoplay制約対策）
+let ttsInitialized = false;
+function initTTSOnInteraction() {
+  if (ttsInitialized) return;
+  ttsInitialized = true;
+  speakAlerts();
+}
+document.addEventListener('click', initTTSOnInteraction, { once: true });
+document.addEventListener('touchstart', initTTSOnInteraction, { once: true });
+
+window.addEventListener('DOMContentLoaded', () => {
+  updateTTSButton();
 });
 
 // 家族メッセージ確認
