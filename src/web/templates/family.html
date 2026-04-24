@@ -198,6 +198,7 @@
   <div class="header-right">
     {% set days = ["月","火","水","木","金","土","日"] %}
     <div class="time">{{ now.strftime("%-m/%-d") }}（{{ days[now.weekday()] }}）{{ now.strftime("%H:%M") }}</div>
+    <a href="/family/manual" class="logout-btn" style="margin-right:8px;">📖 マニュアル</a>
     <a href="/family/weekly-report" class="logout-btn" style="margin-right:8px;">週次レポート</a>
     <a href="/family/logout" class="logout-btn">ログアウト</a>
   </div>

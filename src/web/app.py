@@ -850,6 +850,14 @@ async def line_webhook(request: Request):
 # 家族タスク管理（役割分担）
 # ============================================================
 
+@app.get("/family/manual", response_class=HTMLResponse)
+async def family_manual(request: Request):
+    """家族向け説明書＋操作マニュアル（ブラウザ印刷でPDF化可）。"""
+    if not _is_family_authenticated(request):
+        return RedirectResponse("/family/login", status_code=303)
+    return templates.TemplateResponse(request, "family_manual.html", {})
+
+
 @app.get("/family/weekly-report", response_class=HTMLResponse)
 async def family_weekly_report(request: Request):
     """週次レポートをブラウザで表示。Chrome等の「PDFに保存」で出力できる。"""
