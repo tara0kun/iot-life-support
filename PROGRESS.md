@@ -1,6 +1,54 @@
 # 認知症祖母IoTサポート プロジェクト 進捗記録
 
-最終更新: 2026-04-22
+最終更新: 2026-04-24
+
+---
+
+## 📌 現状ダイジェスト（最初に読む）
+
+**ステータス**: GW投入準備中（**残り5日**: 4/29〜5/6 設置）
+**ブランチ**: `dev` が最新（`main` より先行）。本番反映前に `main` へマージする
+**最新コミット**: `3065030`（PROGRESS.md更新）
+
+### 動作中のコンポーネント
+- ✅ Webサーバ (`iot-web`) — タブレットUI / 家族UI / API / WebSocket
+- ✅ Matterサーバ (`iot-matter`) — P110M電力監視・ロック制御の基盤
+- ✅ Cloudflare Tunnel — 外部アクセス（URL自動LINE通知）
+- ✅ LINE Messaging API — 通知＋webhook双方向（「リンク」「状況」「タスク」「ロック解除」等）
+- ⏳ センサー監視 (`iot-monitor`) — H100ハブ電源未投入のため未稼働
+
+### GW前にやり残し（高優先度）
+1. **顔登録テスト** — `python scripts/register_face.py --person-id 1 --name 祖母`
+2. **H100電源投入 → T110統合テスト**
+3. **実炊飯器での電力しきい値確認**
+4. **全センサー統合テスト** — monitor.py 通しで DB → UI → LINE通知まで
+5. **cron追加**（GW前に有効化推奨）:
+   ```cron
+   */30 7-22 * * *  cd ~/IoT && venv/bin/python scripts/scheduled_notify.py care_tasks
+   0 22 * * 0       cd ~/IoT && venv/bin/python scripts/weekly_report.py
+   */10 * * * *     cd ~/IoT && venv/bin/python scripts/anomaly_check.py
+   ```
+
+### 直近実装（2026-04-22）
+| 機能 | 概要 |
+|---|---|
+| LINE webhook双方向 | 「リンク」で最新URL自動返信、トンネル起動時にwebhook URL自動登録 |
+| LINEコマンド体系 | 状況・最後の食事・タスク・済・ロック解除・ヘルプ |
+| ロック解除PIN | 4桁コード・5分有効・3回失敗で15分ロックアウト |
+| 機器管理セクション常駐 | 家族UIで手動ロック/解除がいつでも可能 |
+| 「状況」情報拡充 | お薬・お風呂・トイレ・家族証言を追加 |
+| 家族タスク役割分担 | care_tasks DB＋LINE通知＋家族UI管理 |
+| 週次レポート | 7日分の食事・スタンプ・薬・お風呂を集計してLINE送信 |
+| タブレット音声読み上げ | Web Speech API、ON/OFFトグル付き |
+| 異常検知 | 深夜炊飯器・無反応・冷蔵庫開放を10分おきにチェック |
+
+### 残っている改善案（着手判断要）
+- Named Tunnel化（要Cloudflareアカウント＋独自ドメイン年1,500円）
+- 訪問販売対応（要 Tapo D230S1 ドアベル）
+- 服薬自動化（要 T110＋薬箱）
+- 週次レポートのPDF化＋メール送信
+- データ可視化ヒートマップ（実データ蓄積後）
+- 声の感情分析（倫理議論）
 
 ---
 
