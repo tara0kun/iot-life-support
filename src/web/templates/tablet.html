@@ -750,8 +750,32 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') requestWakeLock();
 });
 
-// 5分ごとにページ自動リロード（データ鮮度維持）
+// 3分ごとにページ自動リロード（データ鮮度維持）
 setTimeout(() => location.reload(), 3 * 60 * 1000);
+
+// Service Worker 登録（オフラインキャッシュ）
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  });
+}
+
+// オンライン/オフラインバナー
+const offlineBanner = document.createElement('div');
+offlineBanner.id = 'offline-banner';
+offlineBanner.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;background:#FFC107;color:#5D4037;text-align:center;padding:8px;font-weight:700;font-size:14px;z-index:9999;';
+offlineBanner.textContent = '⚠️ 接続が切れています。表示は最後の記録です。';
+document.body.appendChild(offlineBanner);
+
+function updateOnlineStatus() {
+  offlineBanner.style.display = navigator.onLine ? 'none' : 'block';
+}
+window.addEventListener('online', () => {
+  updateOnlineStatus();
+  setTimeout(() => location.reload(), 500);  // 復活したら再読み込み
+});
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
 </script>
 </body>
 </html>
