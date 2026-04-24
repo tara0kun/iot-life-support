@@ -850,6 +850,108 @@ async def line_webhook(request: Request):
 # 家族タスク管理（役割分担）
 # ============================================================
 
+@app.get("/family/weekly-report", response_class=HTMLResponse)
+async def family_weekly_report(request: Request):
+    """週次レポートをブラウザで表示。Chrome等の「PDFに保存」で出力できる。"""
+    if not _is_family_authenticated(request):
+        return RedirectResponse("/family/login", status_code=303)
+    end_date_str = request.query_params.get("end", "")
+    days = int(request.query_params.get("days", "7"))
+    days = max(1, min(days, 30))
+    if end_date_str:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    else:
+        end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=days - 1)
+    date_strs = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+    grandma_id = 1
+    meal_labels = {"朝食", "昼食", "夕食", "間食", "おやつ"}
+    stamp_labels = ["起床", "お薬", "朝食", "昼食", "お風呂", "夕食", "就寝"]
+
+    conn = get_conn()
+    try:
+        ph = ",".join("?" * len(date_strs))
+        # 食事
+        meal_rows = conn.execute(
+            f"""SELECT DATE(started_at) as d, label, started_at FROM meal_sessions
+                WHERE person_id = ? AND DATE(started_at) IN ({ph})
+                AND label IN ('朝食','昼食','夕食','間食','おやつ')
+                ORDER BY started_at""",
+            (grandma_id, *date_strs),
+        ).fetchall()
+        # スタンプ
+        stamp_rows = conn.execute(
+            f"""SELECT date, done_count, total_count, details FROM daily_scores
+                WHERE person_id = ? AND date IN ({ph})""",
+            (grandma_id, *date_strs),
+        ).fetchall()
+        # お薬
+        med_taken = conn.execute(
+            f"""SELECT DATE(started_at) as d, COUNT(*) as cnt FROM events
+                WHERE source IN ('family_report', 'tablet_report')
+                AND event_type = 'お薬'
+                AND DATE(started_at) IN ({ph})
+                GROUP BY d""",
+            date_strs,
+        ).fetchall()
+        med_sched = conn.execute(
+            "SELECT COUNT(*) as cnt FROM medicine_schedule WHERE enabled = 1"
+        ).fetchone()["cnt"]
+        # ロック発動
+        lock_count = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM events
+                WHERE source = 'lock_manager' AND event_type = 'auto_lock'
+                AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()["cnt"]
+    finally:
+        conn.close()
+
+    # 集計
+    by_date = {ds: {"meals": [], "stamps": 0, "med_taken": 0} for ds in date_strs}
+    for r in meal_rows:
+        t = r["started_at"]
+        if isinstance(t, str):
+            try:
+                t = datetime.fromisoformat(t.replace("T", " "))
+            except ValueError:
+                continue
+        by_date.setdefault(r["d"], {"meals": [], "stamps": 0, "med_taken": 0})
+        by_date[r["d"]]["meals"].append({"label": r["label"], "time": t.strftime("%H:%M")})
+    for r in stamp_rows:
+        if r["date"] in by_date:
+            by_date[r["date"]]["stamps"] = r["done_count"]
+    for r in med_taken:
+        if r["d"] in by_date:
+            by_date[r["d"]]["med_taken"] = r["cnt"]
+
+    daily_data = [{"date": ds, **by_date[ds]} for ds in date_strs]
+
+    meal_counts = [len(d["meals"]) for d in daily_data]
+    stamp_counts = [d["stamps"] for d in daily_data]
+    med_counts = [d["med_taken"] for d in daily_data]
+
+    summary = {
+        "meal_avg": sum(meal_counts) / len(meal_counts) if meal_counts else 0,
+        "meal_max": max(meal_counts) if meal_counts else 0,
+        "overeat_days": sum(1 for c in meal_counts if c >= 3),
+        "stamp_avg": sum(stamp_counts) / len(stamp_counts) if stamp_counts else 0,
+        "stamp_pct": int(100 * sum(stamp_counts) / (len(stamp_labels) * len(date_strs))) if date_strs else 0,
+        "med_pct": int(100 * sum(med_counts) / (med_sched * len(date_strs))) if med_sched else 0,
+        "lock_count": lock_count,
+    }
+
+    return templates.TemplateResponse(request, "weekly_report.html", {
+        "start_date": start_date,
+        "end_date": end_date,
+        "days": days,
+        "daily_data": daily_data,
+        "summary": summary,
+        "stamp_labels": stamp_labels,
+    })
+
+
 @app.get("/api/heatmap")
 async def api_heatmap(request: Request, days: int = 7):
     """過去N日×24時間のイベント密度を返す（家族UIヒートマップ用）。
