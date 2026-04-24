@@ -850,6 +850,78 @@ async def line_webhook(request: Request):
 # 家族タスク管理（役割分担）
 # ============================================================
 
+@app.get("/api/heatmap")
+async def api_heatmap(request: Request, days: int = 7):
+    """過去N日×24時間のイベント密度を返す（家族UIヒートマップ用）。
+
+    返却形式: {
+        "dates": ["04-18", "04-19", ...],
+        "matrix": [[h0_count, h1_count, ..., h23_count], ...],
+        "max": 最大カウント,
+        "summary": {"meals": int, "baths": int, "toilets": int}
+    }
+    """
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    days = max(1, min(days, 30))
+    today = datetime.now().date()
+    dates = [(today - timedelta(days=i)) for i in range(days - 1, -1, -1)]
+    date_strs = [d.strftime("%Y-%m-%d") for d in dates]
+
+    matrix = [[0] * 24 for _ in range(days)]
+    summary = {"meals": 0, "baths": 0, "toilets": 0}
+
+    conn = get_conn()
+    try:
+        # 全イベントを集計
+        ph = ",".join("?" * len(date_strs))
+        rows = conn.execute(
+            f"""SELECT DATE(started_at) as d, CAST(strftime('%H', started_at) AS INTEGER) as h, COUNT(*) as cnt
+                FROM events
+                WHERE DATE(started_at) IN ({ph})
+                GROUP BY d, h""",
+            date_strs,
+        ).fetchall()
+        date_idx = {ds: i for i, ds in enumerate(date_strs)}
+        for r in rows:
+            i = date_idx.get(r["d"])
+            if i is None or r["h"] is None:
+                continue
+            matrix[i][r["h"]] = r["cnt"]
+
+        # サマリー
+        meals_row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM meal_sessions
+                WHERE label IN ('朝食','昼食','夕食','間食','おやつ')
+                AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()
+        summary["meals"] = meals_row["cnt"] if meals_row else 0
+        baths_row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM meal_sessions
+                WHERE label = 'お風呂' AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()
+        summary["baths"] = baths_row["cnt"] if baths_row else 0
+        toilets_row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM events
+                WHERE source = 'toilet' AND event_type = 'open'
+                AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()
+        summary["toilets"] = toilets_row["cnt"] if toilets_row else 0
+    finally:
+        conn.close()
+
+    max_cnt = max((max(row) for row in matrix), default=0)
+    return {
+        "dates": [d.strftime("%m-%d (%a)") for d in dates],
+        "matrix": matrix,
+        "max": max_cnt,
+        "summary": summary,
+    }
+
+
 @app.get("/api/care-tasks")
 async def api_list_care_tasks(request: Request):
     if not _is_family_authenticated(request):

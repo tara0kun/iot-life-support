@@ -320,6 +320,28 @@
     </div>
   </div>
 
+  <!-- 7日間アクティビティヒートマップ -->
+  <div class="section-card">
+    <div class="section-title">7日間アクティビティ</div>
+    <div class="section-desc">過去7日の時間帯別イベント密度。色が濃いほど活動あり。</div>
+    <div id="heatmap-summary" style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap;">
+      <div style="background:#FFF3E0;padding:8px 14px;border-radius:6px;">
+        🍴 食事 <span id="hm-meals" style="font-weight:700;">-</span>回
+      </div>
+      <div style="background:#E1F5FE;padding:8px 14px;border-radius:6px;">
+        🛁 お風呂 <span id="hm-baths" style="font-weight:700;">-</span>回
+      </div>
+      <div style="background:#F3E5F5;padding:8px 14px;border-radius:6px;">
+        🚽 トイレ <span id="hm-toilets" style="font-weight:700;">-</span>回
+      </div>
+    </div>
+    <div id="heatmap-container" style="overflow-x:auto;">
+      <table id="heatmap-table" style="border-collapse:collapse;font-size:0.75em;font-family:monospace;">
+        <!-- JSで描画 -->
+      </table>
+    </div>
+  </div>
+
   <!-- 家族タスク（役割分担） -->
   <div class="section-card">
     <div class="section-title">家族タスク（役割分担）</div>
@@ -647,6 +669,56 @@ async function saveMedicine(timing) {
     else { alert('保存に失敗しました'); }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
+
+async function loadHeatmap() {
+  try {
+    const resp = await fetch('/api/heatmap?days=7', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    document.getElementById('hm-meals').textContent = data.summary.meals;
+    document.getElementById('hm-baths').textContent = data.summary.baths;
+    document.getElementById('hm-toilets').textContent = data.summary.toilets;
+
+    const table = document.getElementById('heatmap-table');
+    table.innerHTML = '';
+    // ヘッダー: 時間
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    hr.appendChild(document.createElement('th'));
+    for (let h = 0; h < 24; h++) {
+      const th = document.createElement('th');
+      th.textContent = h;
+      th.style.cssText = 'padding:2px 4px;color:#999;font-weight:400;';
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const max = Math.max(data.max, 1);
+    data.dates.forEach((dateLabel, i) => {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.textContent = dateLabel;
+      th.style.cssText = 'padding:4px 8px;text-align:right;font-weight:500;color:#666;white-space:nowrap;';
+      tr.appendChild(th);
+      data.matrix[i].forEach(cnt => {
+        const td = document.createElement('td');
+        const intensity = cnt / max;
+        const alpha = intensity === 0 ? 0.05 : 0.15 + intensity * 0.85;
+        td.style.cssText = `width:18px;height:22px;background:rgba(76,175,80,${alpha});text-align:center;color:${intensity > 0.5 ? '#fff' : '#333'};border:1px solid #fff;`;
+        td.textContent = cnt > 0 ? cnt : '';
+        td.title = `${cnt}件`;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  } catch(e) {
+    console.error('heatmap load error', e);
+  }
+}
+window.addEventListener('DOMContentLoaded', loadHeatmap);
 
 async function saveSetting(key, value) {
   try {
