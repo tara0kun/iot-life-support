@@ -19,16 +19,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn
 from src.notifier import send_line_message
+from src.settings import get_bool, get_int
 
 FLAG_DIR = Path(__file__).resolve().parent.parent / "data" / "anomaly_flags"
 FLAG_DIR.mkdir(parents=True, exist_ok=True)
 
 DAYTIME_START = 7    # 時
 DAYTIME_END = 22
-INACTIVITY_HOURS = 4
-NIGHT_RICE_START = 2
-NIGHT_RICE_END = 5
-FRIDGE_OPEN_THRESHOLD_MIN = 30
 
 
 def _already_notified_today(key: str) -> bool:
@@ -62,6 +59,10 @@ def _last_sensor_activity(conn) -> datetime | None:
 
 def check_inactivity():
     """日中にセンサーが長時間反応しない場合にアラート。"""
+    if not get_bool("notify_anomaly_enabled"):
+        print("異常検知OFF → スキップ")
+        return
+    inactivity_hours = get_int("anomaly_inactivity_hours", 4)
     now = datetime.now()
     if not (DAYTIME_START <= now.hour < DAYTIME_END):
         print(f"時間外 ({now.hour}時) → スキップ")
@@ -81,13 +82,13 @@ def check_inactivity():
         return
 
     gap = now - latest
-    if gap < timedelta(hours=INACTIVITY_HOURS):
+    if gap < timedelta(hours=inactivity_hours):
         print(f"最終活動 {gap.total_seconds()/60:.0f}分前 → 通常")
         return
 
     msg = (
         "⚠️ 安否確認アラート\n\n"
-        f"直近{INACTIVITY_HOURS}時間、センサーに反応がありません。\n"
+        f"直近{inactivity_hours}時間、センサーに反応がありません。\n"
         f"最終活動: {latest.strftime('%m/%d %H:%M')}\n\n"
         "様子を確認してください。"
     )
@@ -98,8 +99,13 @@ def check_inactivity():
 
 def check_night_rice():
     """深夜の炊飯器稼働をチェック。"""
+    if not get_bool("notify_anomaly_enabled"):
+        print("異常検知OFF → スキップ")
+        return
+    night_start = get_int("anomaly_night_rice_start_hour", 2)
+    night_end = get_int("anomaly_night_rice_end_hour", 5)
     now = datetime.now()
-    if not (NIGHT_RICE_START <= now.hour < NIGHT_RICE_END):
+    if not (night_start <= now.hour < night_end):
         print(f"深夜時間外 ({now.hour}時) → スキップ")
         return
     if _already_notified_today("night_rice"):
@@ -137,6 +143,10 @@ def check_night_rice():
 
 def check_fridge_open():
     """冷蔵庫開きっぱなしチェック。"""
+    if not get_bool("notify_anomaly_enabled"):
+        print("異常検知OFF → スキップ")
+        return
+    threshold_min = get_int("anomaly_fridge_open_minutes", 30)
     if _already_notified_today("fridge_open"):
         print("今日は通知済み → スキップ")
         return
@@ -164,7 +174,7 @@ def check_fridge_open():
             return
 
     gap = now - opened_at
-    if gap < timedelta(minutes=FRIDGE_OPEN_THRESHOLD_MIN):
+    if gap < timedelta(minutes=threshold_min):
         print(f"冷蔵庫開放 {gap.total_seconds()/60:.0f}分 → 正常範囲")
         return
 

@@ -905,6 +905,32 @@ async def api_delete_care_task(request: Request, task_id: int):
     return {"ok": True}
 
 
+# ============================================================
+# 動的設定（通知ON/OFF・しきい値）
+# ============================================================
+
+@app.get("/api/settings")
+async def api_list_settings(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    from ..settings import list_settings
+    return list_settings()
+
+
+@app.post("/api/settings")
+async def api_set_setting(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    from ..settings import set_setting, SETTING_DEFAULTS
+    body = await request.json()
+    key = body.get("key", "")
+    value = body.get("value", "")
+    if key not in SETTING_DEFAULTS:
+        raise HTTPException(status_code=400, detail=f"未知の設定キー: {key}")
+    set_setting(key, str(value))
+    return {"ok": True, "key": key, "value": value}
+
+
 @app.get("/api/medicine-schedule")
 async def api_get_medicine_schedule(request: Request):
     """薬スケジュールを取得。"""
@@ -1111,6 +1137,7 @@ async def family_view(request: Request):
     finally:
         conn.close()
 
+    from ..settings import list_settings
     return templates.TemplateResponse(request, "family.html", {
         "events": events,
         "persons": persons,
@@ -1122,6 +1149,7 @@ async def family_view(request: Request):
         "rice_amount": _load_rice_guide(),
         "medicine_schedule": {m["timing"]: m["hour"] for m in _load_medicine_schedule()},
         "care_tasks": care_tasks_data,
+        "settings": list_settings(),
     })
 
 

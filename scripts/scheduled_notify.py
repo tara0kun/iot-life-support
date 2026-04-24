@@ -19,12 +19,16 @@ from src.db import init_db, get_conn
 from src.sessions import sessions_today
 from src.notifier import send_line_message
 from src.garden import save_daily_score, FLOWER_TYPES
+from src.settings import get_bool
 
 GRANDMA_ID = 1
 
 
 def check_medicine():
     """お薬未服用チェック（DBのスケジュールに基づく）。"""
+    if not get_bool("notify_medicine_enabled"):
+        print("お薬通知OFF → スキップ")
+        return
     sessions = sessions_today(GRANDMA_ID)
     labels = {s.get("label") for s in sessions}
     if "お薬" not in labels:
@@ -67,6 +71,9 @@ def check_medicine():
 
 def check_bath():
     """お風呂未入浴チェック（夕方に実行）。"""
+    if not get_bool("notify_bath_enabled"):
+        print("お風呂通知OFF → スキップ")
+        return
     sessions = sessions_today(GRANDMA_ID)
     labels = {s.get("label") for s in sessions}
     if "お風呂" not in labels:
@@ -82,6 +89,9 @@ def check_bath():
 
 def daily_summary():
     """1日のまとめ通知（夜に実行）。"""
+    if not get_bool("notify_summary_enabled"):
+        print("まとめ通知OFF → スキップ")
+        return
     sessions = sessions_today(GRANDMA_ID)
     labels = [s.get("label", "") for s in sessions]
     now = datetime.now()
@@ -152,6 +162,9 @@ def check_care_tasks():
     各タスクの reminder_hour になったら担当者を通知。
     当該の時刻〜30分以内の1回だけ送る（重複防止）。
     """
+    if not get_bool("notify_care_tasks_enabled"):
+        print("家族タスク通知OFF → スキップ")
+        return
     now = datetime.now()
     today = now.strftime("%Y-%m-%d")
 

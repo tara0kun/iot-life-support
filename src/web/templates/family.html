@@ -361,6 +361,39 @@
     </div>
   </div>
 
+  <!-- 詳細設定（通知ON/OFF・しきい値） -->
+  <details class="section-card" style="padding:0;overflow:hidden;">
+    <summary style="cursor:pointer;padding:16px;font-weight:700;font-size:1.05em;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+      <span>⚙️ 詳細設定（通知ON/OFF・しきい値）</span>
+      <span style="font-size:0.8em;color:#999;">▼ クリックで開く</span>
+    </summary>
+    <div style="padding:0 16px 16px;">
+      <div class="section-desc">通知の有効/無効や閾値を変更できます。普段は触らなくてOKです。</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.9em;margin-top:10px;">
+        {% for s in settings %}
+        <tr style="border-bottom:1px solid #EEE;">
+          <td style="padding:8px;width:60%;">
+            <div style="font-weight:500;">{{ s.description }}</div>
+            <div style="color:#999;font-size:0.85em;">{{ s.key }}</div>
+          </td>
+          <td style="padding:8px;text-align:right;">
+            {% if s.is_bool %}
+              <select onchange="saveSetting('{{ s.key }}', this.value)" style="padding:6px;border:1px solid #CCC;border-radius:4px;">
+                <option value="1" {% if s.value == '1' %}selected{% endif %}>ON</option>
+                <option value="0" {% if s.value == '0' %}selected{% endif %}>OFF</option>
+              </select>
+            {% else %}
+              <input type="number" value="{{ s.value }}" onchange="saveSetting('{{ s.key }}', this.value)"
+                     style="width:80px;padding:6px;border:1px solid #CCC;border-radius:4px;text-align:right;">
+              <span style="color:#999;font-size:0.85em;">(default: {{ s.default }})</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </details>
+
   <!-- お薬スケジュール -->
   <div class="section-card">
     <div class="section-title">お薬スケジュール</div>
@@ -612,6 +645,19 @@ async function saveMedicine(timing) {
     });
     if (resp.ok) { location.reload(); }
     else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function saveSetting(key, value) {
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ key, value })
+    });
+    if (!resp.ok) {
+      const d = await resp.json();
+      alert('設定保存失敗: ' + (d.detail || '不明'));
+    }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 

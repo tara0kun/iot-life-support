@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn
 from src.notifier import send_line_message
+from src.settings import get_bool
 
 GRANDMA_ID = 1
 MEAL_LABELS = {"朝食", "昼食", "夕食", "間食", "おやつ"}
@@ -198,6 +199,9 @@ def main():
     report = build_report()
     print(report)
     print()
+    if not get_bool("notify_weekly_report_enabled"):
+        print("週次レポート通知OFF → 送信スキップ")
+        return
     success = send_line_message(report)
     print(f"LINE送信: {'成功' if success else '失敗'}")
 

@@ -146,6 +146,13 @@ CREATE TABLE IF NOT EXISTS care_task_logs (
     note TEXT,
     UNIQUE(task_id, date)
 );
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
