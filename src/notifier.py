@@ -28,6 +28,16 @@ def _load_env() -> dict[str, str]:
 
 
 def send_line_message(message: str, user_id: str | None = None) -> bool:
+    # マスタースイッチ確認（settings.notify_master_enabled）
+    # importは関数内（循環import回避＋settings未初期化時の安全のため）
+    try:
+        from .settings import get_bool
+        if not get_bool("notify_master_enabled", default=True):
+            log.info("LINE通知マスタースイッチOFF → 送信スキップ: %s", message[:50])
+            return False
+    except Exception:
+        pass  # settingsが使えない状態でも通知は送る（フェイルオープン）
+
     env = _load_env()
     token = env.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     uid = user_id or env.get("LINE_USER_ID", "")

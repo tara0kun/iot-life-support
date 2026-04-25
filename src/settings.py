@@ -12,6 +12,9 @@ from .db import get_conn, transaction
 
 # 既知設定キーのデフォルトと説明
 SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
+    # マスタースイッチ（OFFで全LINE自動通知を停止）
+    "notify_master_enabled": ("1", "🚨 LINE通知マスタースイッチ（OFFで全Push通知を停止。Webhook返信は継続）"),
+
     # 通知ON/OFF（"1"=ON, "0"=OFF）
     "notify_medicine_enabled": ("1", "お薬リマインダー通知"),
     "notify_bath_enabled": ("1", "お風呂リマインダー通知"),
