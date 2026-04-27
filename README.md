@@ -206,29 +206,112 @@ crontab -e
 
 ## ブランチ運用
 
-| ブランチ | 用途 | 主な内容 |
-|---|---|---|
-| `main` | 安定版・本番（祖母宅ラズパイで稼働） | dev からPRマージで更新 |
-| `dev` | 開発・テスト用（普段の作業はここ） | 安定したら main にPR |
-| `future` | 新機能・実験的コード（Phase 2以降） | 試験的機能・大幅変更 |
+3つのブランチを目的別に使い分けています。
 
-**保護設定（main）**: GitHub Settings → Branches で「force push禁止」「削除禁止」を有効化推奨。
+### 役割
 
-### `future` ブランチの実験機能
-現在 `future` だけにある追加機能：
+| ブランチ | 役割 | 安定度 | 編集タイミング |
+|---|---|---|---|
+| **`main`** | 🏠 本番（祖母宅ラズパイで稼働中） | 安定 | `dev` からPRマージのみ。直接コミット禁止 |
+| **`dev`** | 🛠 開発・テスト用 | 中（動作検証中） | 普段の作業はここ。新機能・修正をコミット |
+| **`future`** | 🧪 実験・Phase 2用 | 不安定（試験中） | 大規模変更・物理機器が必要な機能・破壊的変更 |
 
-- 📱 **祖母タブレット用キオスクAPK** ([android/](https://github.com/tara0kun/iot-life-support/tree/future/android))
-  - Kivy + Android WebView で `/tablet` を全画面表示
-  - ホームランチャー化により他アプリ起動を防止（Immersive Sticky Mode）
-  - 60秒ごとの自動再ロード、KEEP_SCREEN_ON
-  - URL設定: ビルド時定数 / `/sdcard/.../url.txt` / GitHub Actions入力
-- 🔧 **GitHub Actions: APK自動ビルド** (`.github/workflows/build-apk.yml`)
-  - push時にAPKがArtifactsに出力される（Ubuntu 22.04 + JDK 17 + buildozer）
-- 📊 **週間サマリー API** (`/api/weekly-summary`)
-- 📨 **複数LINE通知先基盤** (`notify_targets` テーブル)
-- 🗃️ **データアーカイブスクリプト** (`scripts/archive_old_data.py`)
+### 流れ
 
-これらは Phase 2 移行や試験運用が安定後に main へマージ予定。
+```
+[future] ── 実験成功 ───→ [dev] ── 動作OK ──PR──→ [main] ── pull ──→ 祖母宅ラズパイ
+   ↑                                                ↓
+   └── main の最新を merge ──────────────────────┘
+       （定期的に同期して乖離を防ぐ）
+```
+
+- `future` で実験 → 良ければ `dev` にcherry-pick or マージ
+- `dev` で動作確認 → PR で `main` にマージ
+- `main` の更新を `future` へ取り込み（コンフリクト防止）
+
+### 機能比較マトリクス
+
+各ブランチに含まれる主な機能：
+
+| 機能カテゴリ | `main` | `dev` | `future` |
+|---|:---:|:---:|:---:|
+| **Phase 1コア機能** | | | |
+| 食事自動検知（P110M + T110 + C220） | ✅ | ✅ | ✅ |
+| 炊飯器自動ロック（90分以内の再食事） | ✅ | ✅ | ✅ |
+| お風呂安全監視（30分動作なしで通知） | ✅ | ✅ | ✅ |
+| 顔認識（face_recognition） | ✅ | ✅ | ✅ |
+| **タブレットUI** | | | |
+| 大時計＋スタンプカード＋お花成長 | ✅ | ✅ | ✅ |
+| 「できた」ボタン（センサー照合） | ✅ | ✅ | ✅ |
+| 音声読み上げ（Web Speech API） | ✅ | ✅ | ✅ |
+| Service Worker（オフライン対応） | ✅ | ✅ | ✅ |
+| **タブレット用キオスクAPK**（Kivy+WebView） | ❌ | ❌ | ✅ |
+| **家族管理画面** | | | |
+| かんたん記録・イベント編集・日付ナビ | ✅ | ✅ | ✅ |
+| 機器管理（手動ロック/解除） | ✅ | ✅ | ✅ |
+| 7日ヒートマップ | ✅ | ✅ | ✅ |
+| 家族タスク役割分担 | ✅ | ✅ | ✅ |
+| お薬スケジュール / 炊飯量ガイド / 伝言 | ✅ | ✅ | ✅ |
+| 動的設定（通知ON/OFF・しきい値編集） | ✅ | ✅ | ✅ |
+| 説明書＋操作マニュアル（`/family/manual`） | ✅ | ✅ | ✅ |
+| 週次レポート（`/family/weekly-report`） | ✅ | ✅ | ✅ |
+| **週間サマリー API**（`/api/weekly-summary`） | ❌ | ❌ | ✅ |
+| **LINE双方向** | | | |
+| Webhook（「リンク」「状況」「タスク」「ロック解除」等） | ✅ | ✅ | ✅ |
+| 通知マスタースイッチ（一括ON/OFF） | ✅ | ✅ | ✅ |
+| **複数LINE通知先基盤**（`notify_targets`） | ❌ | ❌ | ✅ |
+| **自動化・運用** | | | |
+| 異常検知（深夜炊飯器・無反応・冷蔵庫） | ✅ | ✅ | ✅ |
+| ヘルスチェック（コンポーネント別状態） | ✅ | ✅ | ✅ |
+| DBバックアップ＆復元 | ✅ | ✅ | ✅ |
+| ログローテーション＆エラー集約 | ✅ | ✅ | ✅ |
+| 週次レポート自動LINE送信（cron） | ✅ | ✅ | ✅ |
+| **データアーカイブスクリプト** | ❌ | ❌ | ✅ |
+| **CI/CD** | | | |
+| **GitHub Actions: APK自動ビルド** | ❌ | ❌ | ✅ |
+
+凡例: ✅ あり / ❌ なし
+
+> 💡 **要するに**: `main` と `dev` は内容ほぼ同じ（dev が一時的に先行する程度）。
+> `future` だけが独自に持っている機能は **5つ**（太字の項目）：
+> ① キオスクAPK ② 週間サマリーAPI ③ 複数通知先 ④ アーカイブ ⑤ Actions
+
+### 開発者向け：典型的な作業フロー
+
+```bash
+# 普段の開発（dev で作業）
+git checkout dev
+git pull origin dev
+# ... コード変更 ...
+git commit -m "..."
+git push origin dev
+
+# 安定したら main にマージ（GitHub上でPR作成）
+# https://github.com/tara0kun/iot-life-support/compare/main...dev
+
+# 実験的な大改造は future で
+git checkout future
+# ... 実験 ...
+git push origin future
+
+# future は定期的に main を merge してコンフリクトを防ぐ
+git checkout future
+git merge main
+# ... コンフリクト解消 ...
+git push origin future
+
+# 祖母宅ラズパイ側
+ssh tara0@taraberrypi.local
+cd ~/IoT && git checkout main && git pull
+sudo systemctl restart iot-web
+```
+
+### 保護設定（main）
+GitHub Settings → Branches で以下を有効化推奨：
+- ✅ **Do not allow force pushes**（履歴破壊防止）
+- ✅ **Do not allow deletions**（誤削除防止）
+
+PR必須までは1人開発のため不要。
 
 ## プロジェクト構成
 
