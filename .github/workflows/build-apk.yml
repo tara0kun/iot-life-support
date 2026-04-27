@@ -1,0 +1,85 @@
+name: Build Android APK
+
+on:
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+  workflow_dispatch:
+    inputs:
+      server_url:
+        description: 'IoTサーバURL（祖母宅のラズパイ）'
+        required: false
+        default: 'http://taraberrypi.local:8000/tablet'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git zip unzip \
+            autoconf libtool pkg-config \
+            zlib1g-dev \
+            libncurses5-dev libncursesw5-dev \
+            libtinfo5 \
+            cmake \
+            libffi-dev libssl-dev
+
+      - name: Install buildozer & cython
+        run: |
+          pip install --upgrade pip
+          pip install buildozer cython==0.29.36
+
+      - name: Cache buildozer global
+        uses: actions/cache@v4
+        with:
+          path: ~/.buildozer
+          key: buildozer-${{ runner.os }}-${{ hashFiles('android/buildozer.spec') }}
+          restore-keys: |
+            buildozer-${{ runner.os }}-
+
+      - name: Cache buildozer .buildozer
+        uses: actions/cache@v4
+        with:
+          path: android/.buildozer
+          key: buildozer-local-${{ runner.os }}-${{ hashFiles('android/buildozer.spec') }}
+
+      - name: Inject IoT_SERVER_URL
+        if: ${{ github.event.inputs.server_url != '' }}
+        run: |
+          sed -i "s|http://taraberrypi.local:8000/tablet|${{ github.event.inputs.server_url }}|g" android/main.py
+
+      - name: Build APK (debug)
+        working-directory: android
+        run: |
+          buildozer android debug
+
+      - name: List artifacts
+        run: ls -la android/bin/ || true
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: kiroku-apk
+          path: android/bin/*.apk
+          retention-days: 30
