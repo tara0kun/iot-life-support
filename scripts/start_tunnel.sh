@@ -35,10 +35,15 @@ for i in $(seq 1 30); do
         cd "$IOT_DIR"
         source venv/bin/activate
         python -c "
-from src.notifier import send_line_message
+from src.notifier import send_line_message, update_webhook_url
 url = '$URL'
 token = '$TABLET_TOKEN'
 tablet_url = f'{url}/tablet?token={token}' if token else f'{url}/tablet'
+
+# LINE webhook URLを自動更新（「リンクが欲しい」返信のため）
+webhook_ok = update_webhook_url(f'{url}/line/webhook')
+webhook_status = '✅ webhook更新OK' if webhook_ok else '⚠️ webhook更新失敗'
+
 msg = f'''🌐 IoTシステムの公開URLが更新されました
 
 📱 タブレット画面:
@@ -48,7 +53,8 @@ msg = f'''🌐 IoTシステムの公開URLが更新されました
 {url}/family
 パスワード: .envのFAMILY_PASSWORDを確認
 
-このURLをブックマークしてください。'''
+{webhook_status}
+URLが使えない時はLINEで「リンク」と送ると最新URLが届きます。'''
 send_line_message(msg)
 print('LINE通知送信完了')
 "

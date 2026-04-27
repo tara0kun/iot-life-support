@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>週次レポート {{ start_date }} 〜 {{ end_date }}</title>
+<style>
+  @page { size: A4; margin: 15mm; }
+  body { font-family: 'Hiragino Sans', 'Yu Gothic', sans-serif; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; }
+  h1 { font-size: 22px; border-bottom: 2px solid #333; padding-bottom: 8px; }
+  h2 { font-size: 18px; margin-top: 24px; color: #1976D2; border-left: 4px solid #1976D2; padding-left: 10px; }
+  .meta { color: #666; font-size: 14px; margin-bottom: 24px; }
+  .summary-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin: 16px 0; }
+  .summary-card { background: #F5F5F5; padding: 12px 16px; border-radius: 6px; }
+  .summary-card .label { color: #666; font-size: 12px; }
+  .summary-card .value { font-size: 24px; font-weight: 700; color: #1976D2; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 14px; }
+  th, td { border: 1px solid #DDD; padding: 8px; text-align: left; }
+  th { background: #FAFAFA; font-weight: 600; }
+  .meal-list { font-size: 12px; color: #666; }
+  .footer { margin-top: 40px; text-align: center; color: #999; font-size: 12px; border-top: 1px solid #EEE; padding-top: 16px; }
+  .print-controls { background: #FFF9C4; padding: 12px 16px; border-radius: 6px; margin-bottom: 20px; }
+  .print-btn { background: #1976D2; color: #fff; border: none; padding: 8px 18px; border-radius: 4px; cursor: pointer; font-size: 14px; }
+  @media print { .print-controls { display: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="print-controls">
+  <strong>📄 PDFとして保存:</strong> 下のボタンを押してブラウザの印刷画面で「PDFに保存」を選択してください。
+  <button class="print-btn" onclick="window.print()" style="margin-left:12px;">印刷 / PDF保存</button>
+</div>
+
+<h1>祖母の週次レポート</h1>
+<div class="meta">
+  期間: {{ start_date.strftime('%Y年%-m月%-d日') }} 〜 {{ end_date.strftime('%Y年%-m月%-d日') }}（{{ days }}日間）
+</div>
+
+<h2>📊 サマリー</h2>
+<div class="summary-grid">
+  <div class="summary-card">
+    <div class="label">食事回数（平均/日）</div>
+    <div class="value">{{ "%.1f" | format(summary.meal_avg) }} 回</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">食事回数（最大）</div>
+    <div class="value">{{ summary.meal_max }} 回</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">食べ過ぎ日数（3回以上）</div>
+    <div class="value">{{ summary.overeat_days }} 日</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">スタンプ達成率</div>
+    <div class="value">{{ summary.stamp_pct }}%</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">お薬服用率</div>
+    <div class="value">{{ summary.med_pct }}%</div>
+  </div>
+  <div class="summary-card">
+    <div class="label">自動ロック発動</div>
+    <div class="value">{{ summary.lock_count }} 回</div>
+  </div>
+</div>
+
+<h2>📅 日別詳細</h2>
+<table>
+  <thead>
+    <tr>
+      <th style="width:14%;">日付</th>
+      <th style="width:10%;">食事数</th>
+      <th>食事内容</th>
+      <th style="width:10%;">スタンプ</th>
+      <th style="width:10%;">お薬</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for d in daily_data %}
+    <tr>
+      <td>{{ d.date }}</td>
+      <td>{{ d.meals | length }}回</td>
+      <td class="meal-list">
+        {% for m in d.meals %}{{ m.label }}({{ m.time }}){% if not loop.last %}、{% endif %}{% endfor %}
+        {% if not d.meals %}—{% endif %}
+      </td>
+      <td>{{ d.stamps }}/7</td>
+      <td>{{ d.med_taken }}回</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>💡 所見</h2>
+<ul>
+  {% if summary.overeat_days >= 3 %}
+  <li>食べ過ぎの日が{{ summary.overeat_days }}日ありました。食事回数の管理に注意が必要です。</li>
+  {% endif %}
+  {% if summary.stamp_pct < 50 %}
+  <li>スタンプ達成率が{{ summary.stamp_pct }}%と低めです。生活リズムに変化がある可能性があります。</li>
+  {% endif %}
+  {% if summary.med_pct < 70 and summary.med_pct > 0 %}
+  <li>お薬の服用率が{{ summary.med_pct }}%です。服薬の確認をお願いします。</li>
+  {% endif %}
+  {% if summary.lock_count > 0 %}
+  <li>自動ロックが{{ summary.lock_count }}回発動しました。食事行動の頻度に注意してください。</li>
+  {% endif %}
+  {% if summary.overeat_days < 3 and summary.stamp_pct >= 50 and (summary.med_pct >= 70 or summary.med_pct == 0) %}
+  <li>特に大きな問題はありません。安定した1週間でした。</li>
+  {% endif %}
+</ul>
+
+<div class="footer">
+  IoT生活サポート - {{ end_date.strftime('%Y/%-m/%-d') }} 生成 - ケアマネージャー/医師との共有用
+</div>
+
+</body>
+</html>

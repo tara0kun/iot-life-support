@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>IoT生活サポート 家族用マニュアル</title>
+<style>
+  @page { size: A4; margin: 15mm 14mm; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: 'Hiragino Sans', 'Yu Gothic', 'Noto Sans JP', sans-serif;
+    color: #2C3E50; line-height: 1.7; max-width: 820px;
+    margin: 0 auto; padding: 20px; background: #fff;
+  }
+  h1 {
+    font-size: 28px; text-align: center; padding: 20px 0 12px;
+    border-bottom: 3px double #1976D2; color: #1976D2; margin-bottom: 4px;
+  }
+  h1 + .subtitle { text-align: center; color: #666; font-size: 14px; margin-bottom: 30px; }
+  h2 {
+    font-size: 22px; color: #fff; background: #1976D2;
+    padding: 8px 16px; border-radius: 6px; margin: 32px 0 14px;
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 18px; color: #1976D2; margin: 22px 0 10px;
+    border-left: 4px solid #1976D2; padding-left: 10px;
+    page-break-after: avoid;
+  }
+  h4 { font-size: 15px; color: #444; margin: 16px 0 6px; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0 8px 28px; }
+  li { margin: 4px 0; }
+  code {
+    background: #F5F5F5; padding: 2px 6px; border-radius: 3px;
+    font-family: 'Menlo', monospace; font-size: 0.9em; color: #C2185B;
+  }
+  .box {
+    background: #F5F9FF; border-left: 4px solid #1976D2;
+    padding: 12px 16px; margin: 12px 0; border-radius: 0 6px 6px 0;
+  }
+  .warn {
+    background: #FFF3E0; border-left-color: #E65100;
+  }
+  .danger {
+    background: #FFEBEE; border-left-color: #C62828;
+  }
+  .ok {
+    background: #E8F5E9; border-left-color: #2E7D32;
+  }
+  table {
+    width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px;
+    page-break-inside: avoid;
+  }
+  th, td { border: 1px solid #DDD; padding: 8px 12px; text-align: left; vertical-align: top; }
+  th { background: #FAFAFA; font-weight: 600; }
+  td.cmd { font-family: monospace; color: #C2185B; white-space: nowrap; }
+  .screenshot {
+    text-align: center; margin: 16px 0; page-break-inside: avoid;
+  }
+  .screenshot img {
+    max-width: 60%; max-height: 380px; border: 1px solid #DDD;
+    border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+  .screenshot .caption {
+    font-size: 12px; color: #666; margin-top: 6px;
+  }
+  .toc {
+    background: #FAFAFA; padding: 16px 24px; border-radius: 8px;
+    margin: 16px 0 32px; border: 1px solid #EEE;
+  }
+  .toc h2 {
+    background: none; color: #1976D2; padding: 0; margin: 0 0 8px;
+    font-size: 16px;
+  }
+  .toc ol { margin-left: 20px; }
+  .toc a { color: #1976D2; text-decoration: none; }
+  .step {
+    background: #fff; border: 2px solid #1976D2; border-radius: 8px;
+    padding: 12px 16px; margin: 10px 0; display: flex; align-items: flex-start;
+    page-break-inside: avoid;
+  }
+  .step-num {
+    background: #1976D2; color: #fff; width: 32px; height: 32px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; font-weight: 700; margin-right: 14px;
+  }
+  .footer {
+    margin-top: 48px; padding: 16px 0; border-top: 2px solid #DDD;
+    text-align: center; color: #999; font-size: 12px;
+  }
+  .print-controls {
+    background: #FFF9C4; padding: 16px 20px; border-radius: 6px;
+    margin-bottom: 24px; border: 1px solid #FBC02D;
+  }
+  .print-btn {
+    background: #1976D2; color: #fff; border: none; padding: 10px 22px;
+    border-radius: 6px; cursor: pointer; font-size: 15px; font-weight: 600;
+  }
+  .print-btn:hover { background: #1565C0; }
+  @media print {
+    .print-controls { display: none !important; }
+    body { padding: 0; }
+    h2 { page-break-after: avoid; }
+    .step { page-break-inside: avoid; }
+  }
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<div class="print-controls">
+  <strong>📄 PDFとして保存:</strong> 下のボタンを押してブラウザの印刷画面で「PDFに保存」を選択してください。
+  紙に印刷して家族で共有することもできます。
+  <div style="margin-top:10px;">
+    <button class="print-btn" onclick="window.print()">🖨️ 印刷 / PDF保存</button>
+  </div>
+</div>
+
+<h1>IoT生活サポート<br><span style="font-size:18px;font-weight:400;">家族用マニュアル</span></h1>
+<p class="subtitle">おばあちゃんの生活をみんなで見守るためのガイド ／ 2026年4月版</p>
+
+<div class="toc">
+  <h2>📑 目次</h2>
+  <p style="font-size:13px;color:#666;margin:8px 0;"><strong>第Ⅰ部：説明書（仕組み解説）</strong></p>
+  <ol>
+    <li><a href="#intro">はじめに ─ なぜこのシステムを作ったか</a></li>
+    <li><a href="#how-it-works">システムの仕組み</a></li>
+    <li><a href="#features">機能一覧</a></li>
+    <li><a href="#privacy">プライバシーと倫理について</a></li>
+  </ol>
+  <p style="font-size:13px;color:#666;margin:8px 0;"><strong>第Ⅱ部：操作マニュアル</strong></p>
+  <ol start="5">
+    <li><a href="#access">アクセス方法</a></li>
+    <li><a href="#line">LINEでの確認・操作</a></li>
+    <li><a href="#family">家族管理画面の使い方</a></li>
+    <li><a href="#tablet">おばあちゃんのタブレット画面</a></li>
+    <li><a href="#trouble">困ったとき</a></li>
+    <li><a href="#emergency">緊急連絡</a></li>
+  </ol>
+</div>
+
+<div style="background:#1976D2;color:#fff;padding:8px 16px;border-radius:6px;margin:24px 0 8px;font-weight:700;font-size:14px;">
+  第Ⅰ部 ─ 説明書
+</div>
+
+<h2 id="intro">1. はじめに ─ なぜこのシステムを作ったか</h2>
+
+<h3>解決したい問題</h3>
+<p>認知症のおばあちゃんが抱えている3つの困りごと：</p>
+<ol>
+  <li><strong>🍚 食事を何度も摂ってしまう</strong>（最優先 / Phase 1で対応）<br>
+      食べたことを忘れて何度も食事を準備してしまう。家族が見ていない時の繰り返しが懸念。</li>
+  <li><strong>🚪 訪問販売・勧誘への対応</strong>（Phase 2予定）</li>
+  <li><strong>🚿 入浴時に頭を洗わない</strong>（Phase 2予定）</li>
+</ol>
+
+<h3>設計の4つの原則</h3>
+<table>
+  <tr>
+    <th style="width:30%;">原則</th>
+    <th>意図</th>
+  </tr>
+  <tr>
+    <td><strong>気づかせない</strong></td>
+    <td>「監視されている」と感じさせない。タブレットは「自分の記録帳」として説明</td>
+  </tr>
+  <tr>
+    <td><strong>命令しない</strong></td>
+    <td>「食べちゃダメ」と直接指摘せず、機械の不調に見せて物理的に阻止する</td>
+  </tr>
+  <tr>
+    <td><strong>多層防御</strong></td>
+    <td>1段階目：そっと気づかせる → 2段階目：物理阻止 → 3段階目：家族通知</td>
+  </tr>
+  <tr>
+    <td><strong>家族操作は見えない</strong></td>
+    <td>編集・バイパス・ロック解除はおばあちゃんに絶対知られない仕組み</td>
+  </tr>
+</table>
+
+<h3>家族での合意事項（2026-04-17）</h3>
+<table>
+  <tr><th>項目</th><th>合意内容</th></tr>
+  <tr><td>Phase 1のスコープ</td><td>食事問題のみに絞る</td></tr>
+  <tr><td>祖母への説明</td><td>「記録帳」として伝える（秘密ではない）</td></tr>
+  <tr><td>祖父の同意</td><td>取得済み</td></tr>
+  <tr><td>運用担当</td><td>孫（システム）＋ 母（日々の対応）</td></tr>
+  <tr><td>投入時期</td><td>2026年GW中</td></tr>
+  <tr><td>中断基準</td><td>記録しなくなる／反発／機器破壊／ずるをし始めた</td></tr>
+</table>
+
+<h2 id="how-it-works">2. システムの仕組み</h2>
+
+<h3>🏠 設置している機器</h3>
+<table>
+  <tr><th>機器</th><th>役割</th><th>設置場所</th></tr>
+  <tr><td>Tapo P110M（スマートプラグ）</td><td>炊飯器の電力監視＋電源ON/OFF制御</td><td>炊飯器のコンセント</td></tr>
+  <tr><td>Tapo C220（カメラ）</td><td>顔認識で誰がキッチンにいるか判別</td><td>壁時計の横（高い位置）</td></tr>
+  <tr><td>Tapo H100（ハブ）</td><td>T110/T100センサーをWi-Fiに中継</td><td>ルーター付近</td></tr>
+  <tr><td>Tapo T110（開閉センサー） ×3</td><td>冷蔵庫ドア・浴室ドア の開閉検知</td><td>冷蔵庫／浴室ドア</td></tr>
+  <tr><td>Tapo T100（モーション）</td><td>脱衣所での動きを検知（入浴中の安全確認）</td><td>脱衣所</td></tr>
+  <tr><td>Raspberry Pi 5</td><td>すべてを統合する小型コンピュータ</td><td>ルーター付近</td></tr>
+  <tr><td>Androidタブレット</td><td>おばあちゃん用の記録帳画面</td><td>キッチンテーブル</td></tr>
+</table>
+
+<h3>🔄 データの流れ（食事検知の例）</h3>
+<div class="box">
+  <ol style="margin-left:20px;">
+    <li>炊飯器の電源が入る → P110Mが <strong>1100W</strong> を検知</li>
+    <li>カメラが <strong>祖母の顔</strong> を認識（顔認識DB照合）</li>
+    <li>冷蔵庫ドアが開閉（T110が検知）</li>
+    <li>3つのセンサー反応を <strong>15分以内のセッション</strong> として集約</li>
+    <li>「<strong>朝食</strong>」セッションとしてDB記録</li>
+    <li>タブレットのスタンプに「✓」表示／お花が成長</li>
+  </ol>
+</div>
+
+<h3>🛡️ 食べ過ぎ防止の仕組み</h3>
+<div class="box warn">
+  <ol style="margin-left:20px;">
+    <li>1回目の食事を検知 → DBに記録</li>
+    <li>その後 <strong>90分以内</strong> に冷蔵庫開閉＋カメラ＋電力 のいずれかを検知</li>
+    <li>「2回目の食事行動」と判定 → 炊飯器の電源を <strong>自動でOFF</strong>（Matter経由）</li>
+    <li>家族にLINE通知「🍚 祖母が食事行動を検知しました」</li>
+    <li>2時間後に自動で電源復帰（または家族が手動解除）</li>
+  </ol>
+  <p style="margin-top:8px;">おばあちゃんには「炊飯器が壊れた」と見える → 反発が起きにくい</p>
+</div>
+
+<h3>🌐 通信経路</h3>
+<table>
+  <tr><th>通信</th><th>方式</th></tr>
+  <tr><td>P110M ⇄ ラズパイ</td><td>Matter（python-matter-server経由）</td></tr>
+  <tr><td>T110/T100 ⇄ ラズパイ</td><td>H100ハブ → Wi-Fi → python-kasa</td></tr>
+  <tr><td>C220 ⇄ ラズパイ</td><td>RTSP（ストリーミング）</td></tr>
+  <tr><td>ラズパイ ⇄ 家族のスマホ</td><td>Cloudflare Tunnel経由のHTTPS</td></tr>
+  <tr><td>ラズパイ ⇄ LINE</td><td>LINE Messaging API（双方向）</td></tr>
+</table>
+
+<h3>💾 データの保存</h3>
+<ul>
+  <li><strong>SQLite</strong>（ラズパイ内）に全データを保存</li>
+  <li><strong>毎日3時に自動バックアップ</strong>（14日分保持）</li>
+  <li><strong>顔データ</strong>はラズパイのローカルにのみ保存（クラウドに送らない）</li>
+  <li><strong>カメラ映像</strong>は人物検知時に静止画のみ保存（動画録画はしない）</li>
+</ul>
+
+<h2 id="features">3. 機能一覧</h2>
+
+<table>
+  <tr><th>カテゴリ</th><th>機能</th></tr>
+  <tr>
+    <td rowspan="3">🍚 食事関連</td>
+    <td>炊飯器・冷蔵庫・カメラ統合の自動食事検知</td>
+  </tr>
+  <tr><td>2回目検知時の炊飯器自動ロック（90分以内）</td></tr>
+  <tr><td>「ご飯は何合炊いてね」のリマインド</td></tr>
+
+  <tr>
+    <td rowspan="2">💊 お薬</td>
+    <td>家族設定スケジュールに基づくリマインド</td>
+  </tr>
+  <tr><td>家族or祖母記録による服用ログ</td></tr>
+
+  <tr>
+    <td rowspan="2">🛁 お風呂</td>
+    <td>ドアセンサー＋モーションでの入浴検知</td>
+  </tr>
+  <tr><td>30分以上モーション無し → 緊急通知</td></tr>
+
+  <tr>
+    <td rowspan="3">📱 LINE連携</td>
+    <td>双方向コマンド（状況・タスク・ロック解除等）</td>
+  </tr>
+  <tr><td>定期通知（朝薬・昼薬・夕お風呂・夜まとめ・週次レポート）</td></tr>
+  <tr><td>異常検知（無反応・深夜稼働・冷蔵庫開放）</td></tr>
+
+  <tr>
+    <td rowspan="2">👨‍👩‍👧 家族管理</td>
+    <td>かんたん記録（証言の1タップ記録）</td>
+  </tr>
+  <tr><td>役割分担タスク・伝言・週次レポート・ヒートマップ</td></tr>
+
+  <tr>
+    <td rowspan="3">🌸 ゲーミフィケーション</td>
+    <td>1日のスタンプカード（7項目）</td>
+  </tr>
+  <tr><td>達成数に応じたお花の成長（種→満開）</td></tr>
+  <tr><td>過去14日のお庭表示</td></tr>
+</table>
+
+<h2 id="privacy">4. プライバシーと倫理について</h2>
+
+<h3>守っていること</h3>
+<ul>
+  <li><strong>映像はローカル保存のみ</strong>：クラウドや外部サービスに送信しません</li>
+  <li><strong>顔データもローカルのみ</strong>：祖母・家族の顔特徴量はラズパイ内で完結</li>
+  <li><strong>動画録画なし</strong>：人物検知時の静止画のみ（14日で自動削除）</li>
+  <li><strong>家族のみアクセス</strong>：パスワード認証＋トークン認証</li>
+  <li><strong>監査ログ</strong>：家族の編集・解除はすべて記録（後から追跡可能）</li>
+</ul>
+
+<h3>悩ましい点・継続して考えること</h3>
+<ul>
+  <li>「監視されている」と本人が気づいた時の対応 → 中断基準を明確化済み</li>
+  <li>家族間の意見対立時の決定権 → 母を中心に運用</li>
+  <li>事故時の責任所在 → 物理的な事故防止より「気づき」の補助としての位置づけ</li>
+  <li>祖母の自尊心への配慮 → 「できた」を強調するUI設計</li>
+</ul>
+
+<div class="page-break"></div>
+
+<div style="background:#E65100;color:#fff;padding:8px 16px;border-radius:6px;margin:24px 0 8px;font-weight:700;font-size:14px;">
+  第Ⅱ部 ─ 操作マニュアル
+</div>
+
+<h2 id="access">5. アクセス方法</h2>
+
+<h3>家族管理画面（スマホ・PC両対応）</h3>
+<table>
+  <tr>
+    <th>状況</th>
+    <th>URL</th>
+  </tr>
+  <tr>
+    <td>祖母宅Wi-Fiに接続中</td>
+    <td class="cmd">http://taraberrypi.local:8000/family</td>
+  </tr>
+  <tr>
+    <td>外出先</td>
+    <td>LINEで届くURL + <code>/family</code></td>
+  </tr>
+</table>
+<p>パスワードは家族で共有しているもの（<code>FAMILY_PASSWORD</code>）。お母さんに聞いてください。</p>
+
+<h3>おばあちゃんのタブレット画面</h3>
+<p>
+  普段はおばあちゃんが見るので、家族がアクセスする必要は通常ありません。
+  外出先からどうしても確認したい場合は、LINEで届くトークン付きURLを使ってください。
+</p>
+
+<h2 id="line">6. LINEでの確認・操作</h2>
+
+<p>LINE公式アカウント（@428cbmzr）にメッセージを送ると、いろいろなことができます。</p>
+
+<h3>📌 使えるコマンド一覧</h3>
+<table>
+  <tr><th>送る言葉</th><th>返ってくるもの</th></tr>
+  <tr><td class="cmd">ヘルプ</td><td>使えるコマンドの一覧</td></tr>
+  <tr><td class="cmd">状況</td><td>食事回数・お薬・お風呂・トイレ・最後の食事・スタンプ達成・ロック状態のまとめ</td></tr>
+  <tr><td class="cmd">最後の食事</td><td>最後に食べた時刻と何を食べたか（経過時間付き）</td></tr>
+  <tr><td class="cmd">タスク</td><td>今日の家族タスク一覧と完了状況</td></tr>
+  <tr><td class="cmd">済 タスク名</td><td>そのタスクを完了として記録（例：「済 朝のお薬確認」）</td></tr>
+  <tr><td class="cmd">リンク</td><td>最新の公開URLを返信（外出先で繋がらないとき）</td></tr>
+  <tr><td class="cmd">ロック解除</td><td>炊飯器のロック解除用4桁コードを返信</td></tr>
+  <tr><td class="cmd">数字4桁</td><td>「ロック解除」で受け取った確認コード（5分以内に返信）</td></tr>
+</table>
+
+<h3>📨 自動で届くLINE通知</h3>
+<table>
+  <tr><th>通知</th><th>タイミング</th></tr>
+  <tr><td>🍚 食事行動を検知（2回目以降）</td><td>1回目から90分以内の食事</td></tr>
+  <tr><td>🔒 炊飯器を自動ロック</td><td>食事2回目検知時</td></tr>
+  <tr><td>💊 お薬リマインド</td><td>登録時刻の前後</td></tr>
+  <tr><td>🛁 お風呂リマインド</td><td>夕方に未入浴なら通知</td></tr>
+  <tr><td>📋 きょうのまとめ</td><td>毎晩22時</td></tr>
+  <tr><td>🔔 タスクリマインダー</td><td>登録時刻に担当者へ</td></tr>
+  <tr><td>📊 週次レポート</td><td>毎週日曜22時</td></tr>
+  <tr><td>🚨 安否確認アラート</td><td>4時間以上センサー無反応</td></tr>
+  <tr><td>🚨 深夜の家電稼働</td><td>2時〜5時の炊飯器ON</td></tr>
+  <tr><td>🌐 公開URL更新</td><td>外部URL（Cloudflare Tunnel）が変わった時</td></tr>
+</table>
+
+<div class="screenshot">
+  <img src="/static/screenshots/line_notifications.jpg" alt="LINE通知の例">
+  <div class="caption">▲ LINE通知の例（食事検知・ロック・まとめ）</div>
+</div>
+
+<h3>🔓 ロック解除の手順（LINE）</h3>
+<div class="step"><div class="step-num">1</div><div>「ロック解除」とLINEに送信</div></div>
+<div class="step"><div class="step-num">2</div><div>4桁の確認コードが返ってくる（例: <code>3847</code>）</div></div>
+<div class="step"><div class="step-num">3</div><div>5分以内にその4桁を返信</div></div>
+<div class="step"><div class="step-num">4</div><div>「✅ 解除しました」と返信が来たら完了</div></div>
+<div class="box warn">
+  <strong>注意</strong>：3回間違えると15分間ロックされます。確認コードは5分で無効になります。
+</div>
+
+<div class="page-break"></div>
+
+<h2 id="family">7. 家族管理画面の使い方</h2>
+
+<div class="screenshot">
+  <img src="/static/screenshots/family_dashboard.jpg" alt="家族管理画面のダッシュボード">
+  <div class="caption">▲ 家族管理画面（スマホ表示）</div>
+</div>
+
+<h3>🔝 ヘッダー</h3>
+<ul>
+  <li><strong>週次レポート</strong>ボタン：過去7日のまとめを表示（PDF保存可）</li>
+  <li><strong>ログアウト</strong>ボタン</li>
+</ul>
+
+<h3>📊 ステータスカード（4つの数字）</h3>
+<ul>
+  <li><strong>今日のイベント</strong>：センサーが検知した数</li>
+  <li><strong>登録人数</strong>：システムに登録された家族の人数</li>
+  <li><strong>消費電力 (W)</strong>：炊飯器のリアルタイム電力</li>
+  <li><strong>祖母の食事回数</strong>：3回以上で赤く警告</li>
+</ul>
+
+<h3>🔒 機器管理セクション</h3>
+<p>炊飯器のロック状態が常に見えます。</p>
+<ul>
+  <li><strong>🔓 通常</strong>：使える状態。「手動ロック」ボタンで予防的にロック可能</li>
+  <li><strong>🔒 ロック中</strong>：自動ロックされている状態。「ロック解除」で解除可能</li>
+</ul>
+
+<h3>📊 7日間アクティビティ（ヒートマップ）</h3>
+<p>過去7日のセンサー反応を時間帯別に可視化。色が濃いほど活動が多いです。</p>
+<ul>
+  <li>食事数・お風呂数・トイレ数のサマリーが上に表示されます</li>
+  <li>マスをタップすると件数が見えます</li>
+</ul>
+
+<h3>📝 かんたん記録</h3>
+<p>おばあちゃんから「薬飲んだよ」など報告を受けたら、対応するボタンを押して記録します。</p>
+<ul>
+  <li>起床 / お薬 / お風呂 / トイレ / おやつ / 就寝 の6種類</li>
+  <li>誤タップ防止の確認ダイアログ付き</li>
+  <li>記録すると即座にタブレットのスタンプにも反映</li>
+</ul>
+
+<h3>📋 家族タスク（役割分担）</h3>
+<p>「朝のお薬確認は母」のように担当を決めてリマインドできます。</p>
+<table>
+  <tr><th>項目</th><th>意味</th></tr>
+  <tr><td>タスク名</td><td>例：朝のお薬確認、夜の様子見</td></tr>
+  <tr><td>担当</td><td>例：母、孫</td></tr>
+  <tr><td>時刻</td><td>0〜23（その時刻にLINEで担当者に通知）</td></tr>
+  <tr><td>状態</td><td>⬜ 未対応 / ✅ 完了</td></tr>
+</table>
+<p>完了したらLINEで「<code>済 タスク名</code>」と送信、または家族画面で操作してください。</p>
+
+<h3>💊 お薬スケジュール</h3>
+<p>朝・昼・夜のそれぞれで「何時に飲むか」を設定。</p>
+<ul>
+  <li>その時刻にタブレットにリマインドが表示される</li>
+  <li>未設定なら表示されない（飲まない時間帯はそのまま）</li>
+</ul>
+
+<h3>🍚 炊飯量ガイド</h3>
+<p>家族が「次に何合炊くか」を設定すると、おばあちゃんのタブレットに表示されます。</p>
+<ul>
+  <li>1合 / 2合 / 3合のプリセット or 自由入力</li>
+  <li>クリアすると非表示になります</li>
+</ul>
+
+<h3>💬 タブレットに伝言</h3>
+<p>おばあちゃんへのメッセージをタブレットに表示できます。</p>
+<ul>
+  <li>プリセット（お薬／お風呂／ご飯／電話）または自由入力</li>
+  <li>表示時間は60分（自動で消える）</li>
+  <li>おばあちゃんが「わかった」を押すと消える</li>
+</ul>
+
+<h3>⚙️ 詳細設定（折りたたみ式）</h3>
+<p>普段は触らなくてOK。以下を変更できます：</p>
+<ul>
+  <li>各種通知のON/OFF（医薬・お風呂・まとめ・タスク・異常検知・週次・URL）</li>
+  <li>異常検知のしきい値（無反応時間・深夜時間帯・冷蔵庫開放時間）</li>
+  <li>食事ロックの判定窓・食べ過ぎ警告のしきい値</li>
+</ul>
+
+<h3>📅 イベント一覧</h3>
+<div class="screenshot">
+  <img src="/static/screenshots/family_events.jpg" alt="イベント一覧">
+  <div class="caption">▲ 全イベントの履歴（人物・ソース別）</div>
+</div>
+<ul>
+  <li>日付ナビで前日・翌日に移動可能</li>
+  <li>人物フィルタ（全員 / 祖母 / 母 等）</li>
+  <li>各イベントの<strong>時刻クリック</strong>で時刻編集</li>
+  <li>各イベントの<strong>人物ドロップダウン</strong>で人物変更</li>
+  <li>右端の<strong>×ボタン</strong>で削除（確認ダイアログあり）</li>
+</ul>
+
+<h3>📊 週次レポート（ヘッダーから）</h3>
+<p>過去7日のまとめがブラウザで表示されます。</p>
+<ul>
+  <li>食事回数・スタンプ達成率・お薬服用率・お風呂日数・自動ロック発動回数</li>
+  <li>「印刷／PDF保存」ボタンでPDFに変換可能</li>
+  <li>ケアマネージャーや医師への共有に使えます</li>
+</ul>
+
+<div class="page-break"></div>
+
+<h2 id="tablet">8. おばあちゃんのタブレット画面</h2>
+
+<p>おばあちゃんが見る画面です。家族が直接操作することは基本的にありません。</p>
+
+<div class="screenshot">
+  <img src="/static/screenshots/tablet_clock_alerts.jpg" alt="タブレット時計画面">
+  <div class="caption">▲ 時計＋時間帯ガイド＋注意喚起</div>
+</div>
+
+<h3>主な構成</h3>
+<ul>
+  <li><strong>時計＋日付＋挨拶</strong>：「おはようございます」など時間帯に応じた挨拶</li>
+  <li><strong>家族からの伝言</strong>：青いカードで表示。「わかった」ボタンで消える</li>
+  <li><strong>注意喚起</strong>：「さっき食べましたよ」「お薬飲みましたか？」など</li>
+  <li><strong>最後に食べたのは</strong>：直近の食事ラベルと時刻</li>
+  <li><strong>お花</strong>：1日のスタンプ達成数で成長（種→芽→花→満開）</li>
+  <li><strong>スタンプカード</strong>：今日できたことが「✓」で記録される</li>
+  <li><strong>「できた」ボタン</strong>：起床・お薬・お風呂・就寝で表示</li>
+  <li><strong>わたしのおにわ</strong>：過去14日のお花が並ぶ</li>
+  <li><strong>音声ON/OFFトグル</strong>：ヘッダー右、家族メッセージなどを読み上げ</li>
+</ul>
+
+<div class="screenshot">
+  <img src="/static/screenshots/tablet_flower_stamps.jpg" alt="お花とスタンプ">
+  <div class="caption">▲ お花の成長とスタンプカード</div>
+</div>
+
+<div class="screenshot">
+  <img src="/static/screenshots/tablet_garden.jpg" alt="お庭">
+  <div class="caption">▲ わたしのおにわ（過去14日のお花）</div>
+</div>
+
+<h3>🔘 「できた」ボタンの仕組み</h3>
+<p>センサーで確認できる活動だけスタンプ記録されます：</p>
+<table>
+  <tr><th>項目</th><th>センサー</th><th>未確認時</th></tr>
+  <tr><td>起床</td><td>カメラ</td><td>「家族に伝えてください」</td></tr>
+  <tr><td>お薬</td><td>なし</td><td>常に「家族に伝えてください」</td></tr>
+  <tr><td>お風呂</td><td>浴室ドア＋モーション</td><td>「家族に伝えてください」</td></tr>
+  <tr><td>就寝</td><td>なし</td><td>常に「家族に伝えてください」</td></tr>
+</table>
+<p>30分間のクールダウンあり（連打防止）。</p>
+
+<h2 id="trouble">9. 困ったとき</h2>
+
+<h3>📱 タブレットが真っ白になった</h3>
+<ul>
+  <li>Wi-Fiが切れている可能性 → 黄色いバナー「接続が切れています」が出ているか確認</li>
+  <li>復活すると自動で再読み込みされます</li>
+  <li>それでもダメなら：タブレットの電源を入れ直す</li>
+</ul>
+
+<h3>🌐 LINEで届いたURLが繋がらない</h3>
+<ul>
+  <li>LINEで「<code>リンク</code>」と送ると最新URLが返ってきます</li>
+  <li>古いURLは無効になっています</li>
+</ul>
+
+<h3>🔒 炊飯器が動かない（ロック中）</h3>
+<ul>
+  <li>家族管理画面の「機器管理」セクションで「ロック解除」ボタン</li>
+  <li>もしくはLINEで「<code>ロック解除</code>」→ 4桁コード返信</li>
+</ul>
+
+<h3>⚠️ 通知が多すぎる/少なすぎる</h3>
+<ul>
+  <li>家族管理画面の「⚙️ 詳細設定」を開く</li>
+  <li>各通知のON/OFF、しきい値（4時間→6時間など）を変更</li>
+</ul>
+
+<h3>🚨 「センサー無反応」アラートが届いた</h3>
+<div class="box danger">
+  おばあちゃんに電話／訪問して安否を確認してください。
+  4時間以上センサーが反応していません。
+</div>
+
+<h3>🚨 「深夜の家電稼働」アラートが届いた</h3>
+<div class="box danger">
+  深夜2時〜5時に炊飯器が動きました。
+  徘徊や認知症による異常行動の可能性があります。至急確認してください。
+</div>
+
+<h2 id="emergency">10. 緊急連絡</h2>
+
+<table>
+  <tr><th>状況</th><th>連絡先</th></tr>
+  <tr><td>システムの不具合</td><td>孫（システム担当）</td></tr>
+  <tr><td>おばあちゃんの体調異変</td><td>母 → 119（救急）</td></tr>
+  <tr><td>機器の物理故障</td><td>孫（システム担当）</td></tr>
+</table>
+
+<div class="box ok">
+  このマニュアルは <code>/family/manual</code> にいつでもアクセスできます。
+  ブラウザで開いて「印刷」ボタンを押すとPDFに変換できます。
+</div>
+
+<div class="footer">
+  IoT生活サポート 家族用マニュアル ／ 2026年4月版<br>
+  最新版: <code>http://taraberrypi.local:8000/family/manual</code>
+</div>
+
+</body>
+</html>
