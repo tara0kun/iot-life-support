@@ -206,11 +206,29 @@ crontab -e
 
 ## ブランチ運用
 
-| ブランチ | 用途 |
-|---|---|
-| `main` | 安定版・本番（祖母宅ラズパイで稼働） |
-| `dev` | 開発・テスト用（普段の作業はここ） |
-| `future` | 新機能・実験的コード（Phase 2以降） |
+| ブランチ | 用途 | 主な内容 |
+|---|---|---|
+| `main` | 安定版・本番（祖母宅ラズパイで稼働） | dev からPRマージで更新 |
+| `dev` | 開発・テスト用（普段の作業はここ） | 安定したら main にPR |
+| `future` | 新機能・実験的コード（Phase 2以降） | 試験的機能・大幅変更 |
+
+**保護設定（main）**: GitHub Settings → Branches で「force push禁止」「削除禁止」を有効化推奨。
+
+### `future` ブランチの実験機能
+現在 `future` だけにある追加機能：
+
+- 📱 **祖母タブレット用キオスクAPK** ([android/](https://github.com/tara0kun/iot-life-support/tree/future/android))
+  - Kivy + Android WebView で `/tablet` を全画面表示
+  - ホームランチャー化により他アプリ起動を防止（Immersive Sticky Mode）
+  - 60秒ごとの自動再ロード、KEEP_SCREEN_ON
+  - URL設定: ビルド時定数 / `/sdcard/.../url.txt` / GitHub Actions入力
+- 🔧 **GitHub Actions: APK自動ビルド** (`.github/workflows/build-apk.yml`)
+  - push時にAPKがArtifactsに出力される（Ubuntu 22.04 + JDK 17 + buildozer）
+- 📊 **週間サマリー API** (`/api/weekly-summary`)
+- 📨 **複数LINE通知先基盤** (`notify_targets` テーブル)
+- 🗃️ **データアーカイブスクリプト** (`scripts/archive_old_data.py`)
+
+これらは Phase 2 移行や試験運用が安定後に main へマージ予定。
 
 ## プロジェクト構成
 

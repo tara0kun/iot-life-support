@@ -1,14 +1,18 @@
 # 認知症祖母IoTサポート プロジェクト 進捗記録
 
-最終更新: 2026-04-24
+最終更新: 2026-04-27
 
 ---
 
 ## 📌 現状ダイジェスト（最初に読む）
 
-**ステータス**: GW投入準備中（**残り5日**: 4/29〜5/6 設置）
-**ブランチ**: `dev` が最新（`main` より先行・25コミット差）
-**最新コミット**: `31c4ddf`（Service Workerオフライン対応）
+**ステータス**: GW投入準備中（**残り2日**: 4/29〜5/6 設置）
+**ブランチ**: `main` = `dev`（PR #1でマージ済）／`future` は main をマージ済 + 実験機能搭載
+**最新コミット (main)**: `bb6c85e`（PRマージ）／**future**: `e80283c`（mainマージ＋コンフリクト解消）
+
+### 🔒 ブランチ保護設定（GitHub Settings → Branches で推奨）
+- main: **force push禁止 / 削除禁止**（誤操作防止）
+- 通知: 「Your main branch isn't protected」警告は force push 禁止/削除禁止で消える
 
 ### 動作中のコンポーネント
 - ✅ Webサーバ (`iot-web`) — タブレットUI / 家族UI / API / WebSocket
@@ -63,6 +67,14 @@
 - **週次レポートのメール送信**（PDFはブラウザ印刷で対応済み）
 - **声の感情分析**（倫理議論待ち）
 - **CSRF対策・レート制限**（家族のみアクセス前提のため緊急性低）
+
+### `future` ブランチの実験機能（main へマージ前）
+- 📱 **タブレット用キオスクAPK**（[android/](android/)） — Kivy + WebView、ホームランチャー化、Immersive Mode、URL設定3経路
+- 🔧 **GitHub Actions: APK自動ビルド**（`.github/workflows/build-apk.yml`） — push時にArtifactsへAPK出力
+- 📊 **週間サマリー API** (`/api/weekly-summary`)
+- 📨 **複数LINE通知先基盤** (`notify_targets` テーブル) — 家族別の通知レベル設定（all/urgent/daily）
+- 🗃️ **データアーカイブスクリプト** (`scripts/archive_old_data.py`)
+- ⚠️ **エラー時フォールバック**（device_state取得のtry/except）
 
 ---
 
