@@ -1,7 +1,7 @@
 """庭（ガーデン）モジュール。
 
 毎日のスタンプ達成数を記録し、過去の花を庭として表示する。
-達成度に応じて花の種類が変わり、日々の庭が成長していく。
+達成度に応じて花の成長段階が変わり、花の色は日付ごとに異なる。
 """
 from __future__ import annotations
 
@@ -10,23 +10,41 @@ from datetime import datetime, date, timedelta
 
 from .db import get_conn, transaction
 
-# 達成数 → 花の種類マッピング
+# 達成数 → 成長段階マッピング
 FLOWER_TYPES = [
-    {"key": "seed",    "emoji": "🫘",  "label": "たね"},
-    {"key": "sprout",  "emoji": "🌱",  "label": "め"},
-    {"key": "stem",    "emoji": "🌿",  "label": "くき"},
+    {"key": "seed",    "emoji": "🫘",  "label": "種"},
+    {"key": "sprout",  "emoji": "🌱",  "label": "芽"},
+    {"key": "stem",    "emoji": "🌿",  "label": "茎"},
     {"key": "bud",     "emoji": "🌷",  "label": "つぼみ"},
-    {"key": "flower",  "emoji": "🌸",  "label": "おはな"},
-    {"key": "pretty",  "emoji": "🌺",  "label": "きれいなはな"},
-    {"key": "big",     "emoji": "🌻",  "label": "おおきなはな"},
-    {"key": "bouquet", "emoji": "💐",  "label": "まんかい"},
+    {"key": "flower",  "emoji": "🌸",  "label": "花"},
+    {"key": "pretty",  "emoji": "🌺",  "label": "きれいな花"},
+    {"key": "big",     "emoji": "🌻",  "label": "大きな花"},
+    {"key": "bouquet", "emoji": "💐",  "label": "満開"},
+]
+
+# 花の色バリエーション（日付のハッシュで決定）
+FLOWER_COLORS = [
+    {"name": "桜",       "primary": "#E91E63", "secondary": "#F48FB1", "center": "#FFF176"},
+    {"name": "チューリップ", "primary": "#E53935", "secondary": "#EF5350", "center": "#FFEE58"},
+    {"name": "すみれ",     "primary": "#7B1FA2", "secondary": "#BA68C8", "center": "#FFF9C4"},
+    {"name": "ひまわり",   "primary": "#FF9800", "secondary": "#FFA726", "center": "#5D4037"},
+    {"name": "あじさい",   "primary": "#1565C0", "secondary": "#64B5F6", "center": "#E1F5FE"},
+    {"name": "バラ",      "primary": "#C62828", "secondary": "#EF9A9A", "center": "#FFECB3"},
+    {"name": "コスモス",   "primary": "#AD1457", "secondary": "#F06292", "center": "#FFF8E1"},
+    {"name": "たんぽぽ",   "primary": "#F9A825", "secondary": "#FDD835", "center": "#4E342E"},
 ]
 
 
 def _done_to_flower(done_count: int) -> dict:
-    """達成数から花の種類を決定。"""
+    """達成数から花の成長段階を決定。"""
     idx = min(done_count, len(FLOWER_TYPES) - 1)
     return FLOWER_TYPES[idx]
+
+
+def _date_to_color(target_date: date) -> dict:
+    """日付から花の色を決定（日付のハッシュで一意に決まる）。"""
+    day_hash = (target_date.year * 366 + target_date.month * 31 + target_date.day) % len(FLOWER_COLORS)
+    return FLOWER_COLORS[day_hash]
 
 
 def save_daily_score(
@@ -102,6 +120,12 @@ def get_garden_data(person_id: int, days: int = 14) -> list[dict]:
             )
             entry["emoji"] = flower_info["emoji"]
             entry["flower_label"] = flower_info["label"]
+            # 花の色（日付ごとに異なる）
+            color = _date_to_color(current)
+            entry["color_name"] = color["name"]
+            entry["color_primary"] = color["primary"]
+            entry["color_secondary"] = color["secondary"]
+            entry["color_center"] = color["center"]
             # 日付の表示用
             entry["day"] = current.day
             entry["weekday"] = ["月", "火", "水", "木", "金", "土", "日"][current.weekday()]

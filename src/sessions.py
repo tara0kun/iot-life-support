@@ -63,6 +63,7 @@ def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
          WHERE se.event_id IS NULL
            AND e.person_id IS NOT NULL
            AND e.started_at >= ?
+           AND e.source NOT IN ('family_report', 'tablet_report', 'family_override')
          ORDER BY e.person_id, e.started_at
         """,
         (since,),

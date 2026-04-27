@@ -8,7 +8,7 @@
 <meta name="theme-color" content="#2C3E50">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon-192.png">
-<title>きょうの記録</title>
+<title>今日の記録</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap');
 
@@ -77,21 +77,21 @@
   .flower-stage svg { animation: grow-in 1s ease forwards; }
   .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 
-  /* スタンプカード */
-  .stamps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+  /* スタンプカード（高齢者向けに拡大） */
+  .stamps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0; }
   @media (min-width: 600px) { .stamps-grid { grid-template-columns: repeat(7, 1fr); } }
   .stamp {
-    background: var(--bg); border-radius: var(--radius-sm); padding: 14px 4px 12px;
+    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 4px 14px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border: 2px solid transparent; min-height: 90px; transition: all 0.3s ease;
+    border: 2px solid transparent; min-height: 110px; transition: all 0.3s ease;
   }
   .stamp.done { background: linear-gradient(135deg, #E8F8F0, #D5F5E3); border-color: var(--success); }
   .stamp.current { border-color: var(--accent-light); background: #FFF8EE; animation: stamp-pulse 2.5s infinite; }
   @keyframes stamp-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(243,156,18,0.2); } 50% { box-shadow: 0 0 0 6px rgba(243,156,18,0); } }
-  .stamp-icon { width: 32px; height: 32px; }
-  .stamp-name { font-size: 11px; font-weight: 700; color: var(--text-light); margin-top: 6px; }
-  .stamp-check { font-size: 12px; color: var(--success); font-weight: 700; margin-top: 4px; }
-  .stamp-time { font-size: 10px; color: var(--text-muted); font-weight: 500; }
+  .stamp-icon { width: 40px; height: 40px; }
+  .stamp-name { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 6px; }
+  .stamp-check { font-size: 14px; color: var(--success); font-weight: 700; margin-top: 4px; }
+  .stamp-time { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 
   /* 庭 */
   .garden-card { background: linear-gradient(180deg, #E8F5E9 0%, #C8E6C9 40%, #A5D6A7 100%); position: relative; overflow: hidden; padding: 28px 20px 20px; }
@@ -122,6 +122,29 @@
   .garden-score { font-size: 9px; color: #689F38; font-weight: 500; }
   .garden-row-label { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
   .garden-row-label span { font-size: 12px; color: #558B2F; font-weight: 500; }
+
+  /* できたボタン（タッチ領域を拡大） */
+  .stamp-btn {
+    margin-top: 8px; padding: 10px 22px; border: 2px solid var(--success); border-radius: 12px;
+    background: white; color: var(--success); font-size: 16px; font-weight: 700;
+    cursor: pointer; font-family: inherit; transition: all 0.2s;
+    min-width: 80px; min-height: 44px;
+  }
+  .stamp-btn:hover { background: var(--success); color: white; }
+  .stamp-btn:active { transform: scale(0.95); }
+  .stamp-btn:disabled { border-color: var(--text-muted); color: var(--text-muted); cursor: not-allowed; }
+  .stamp-btn.pressed { background: var(--success); color: white; pointer-events: none; }
+
+  /* 検証アラート */
+  .verify-alert {
+    border-radius: var(--radius); padding: 18px 24px; margin: 16px 0;
+    box-shadow: var(--shadow); text-align: center;
+  }
+  .verify-alert.fail {
+    background: linear-gradient(135deg, #FFEBEE, #FFCDD2); border: 2px solid #EF9A9A;
+  }
+  .verify-alert .va-title { font-size: 16px; font-weight: 700; color: #C62828; margin-bottom: 6px; }
+  .verify-alert .va-sub { font-size: 13px; color: #5D4037; }
 
   /* セッション履歴 */
   .sessions-title { font-size: 14px; font-weight: 500; color: var(--text-muted); letter-spacing: 3px; margin-bottom: 12px; }
@@ -198,15 +221,31 @@
     <div class="clock" id="clock">{{ now.strftime("%H:%M") }}</div>
     <div class="date">{{ now.strftime("%Y年%-m月%-d日") }}
       {% set days = ["月","火","水","木","金","土","日"] %}（{{ days[now.weekday()] }}曜日）</div>
+    <button id="tts-toggle" onclick="setTTSEnabled(!isTTSEnabled())"
+            style="margin-top:12px;border:2px solid #BDBDBD;border-radius:24px;padding:10px 20px;font-size:15px;font-family:inherit;cursor:pointer;background:#E8F5E9;color:#2E7D32;font-weight:700;min-height:44px;">
+      🔊 音声ON
+    </button>
   </div>
 
   <div class="time-guide">
-    <div class="label">いまは</div>
-    <div class="activity">{{ current_activity }}</div>
-    {% if next_meal %}
-    <div class="sub">つぎは {{ next_meal.name }}（{{ next_meal.time }}）あと{{ next_meal.minutes }}分</div>
-    {% endif %}
+    <div class="label">今は</div>
+    <div class="activity">{{ current_activity.text }}</div>
+    {% if current_activity.rice %}<div class="sub">{{ current_activity.rice }}</div>{% endif %}
   </div>
+
+  <!-- 家族からのメッセージ -->
+  {% for fp in family_prompts %}
+  <div class="alert-card remind" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
+    <div class="alert-icon">
+      <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#42A5F5" opacity="0.15"/><path d="M12 16 h24 v16 q0 4 -4 4 H16 q-4 0 -4-4Z" fill="#42A5F5" opacity="0.3"/><path d="M12 16 L24 26 L36 16" fill="none" stroke="#1565C0" stroke-width="2.5"/></svg>
+    </div>
+    <div class="alert-text">
+      <div class="alert-message" style="color: #1565C0">{{ fp.message }}</div>
+      <div class="alert-sub" style="color: #5D4037; font-size: 11px;">家族より</div>
+    </div>
+    <button onclick="dismissPrompt({{ fp.id }}, this)" style="background:none;border:2px solid #90CAF9;color:#1565C0;border-radius:12px;padding:12px 24px;font-size:18px;cursor:pointer;font-family:inherit;font-weight:700;min-height:48px;min-width:100px;">わかった</button>
+  </div>
+  {% endfor %}
 
   <!-- 注意喚起 -->
   {% for a in alerts %}
@@ -229,12 +268,17 @@
   </div>
   {% endfor %}
 
-  {% if last_session %}
+  {% if last_meal %}
   <div class="card last-meal">
-    <div class="card-label">さいごに たべたのは</div>
-    <div class="time-text">{{ last_session.started_at.strftime("%H:%M") }} の {{ last_session.label }}</div>
-    {% if minutes_since_last is not none and minutes_since_last >= 0 %}
-    <div class="ago">{{ minutes_since_last }}分まえ</div>
+    <div class="card-label">最後に食べたのは</div>
+    {% if last_meal.started_at is string %}
+      {% set lm_time = last_meal.started_at.split("T")[1][:5] if "T" in last_meal.started_at else last_meal.started_at[:5] %}
+    {% else %}
+      {% set lm_time = last_meal.started_at.strftime("%H:%M") %}
+    {% endif %}
+    <div class="time-text">{{ lm_time }} の {{ last_meal.label }}</div>
+    {% if minutes_since_last_meal is not none and minutes_since_last_meal >= 0 %}
+    <div class="ago">{{ minutes_since_last_meal }}分前</div>
     {% endif %}
   </div>
   {% endif %}
@@ -243,7 +287,7 @@
   {% set done_count = stamps | selectattr("done") | list | length %}
   {% set total = stamps | length %}
   <div class="card flower-card">
-    <div class="card-label">きょうの おはな</div>
+    <div class="card-label">今日の お花</div>
     <div class="flower-stage" id="flowerStage"></div>
     <div class="flower-message" id="flowerMsg"></div>
     <div class="flower-sub" id="flowerSub"></div>
@@ -251,8 +295,9 @@
 
   <!-- スタンプカード -->
   <div class="card">
-    <div class="card-label">きょうの きろく</div>
+    <div class="card-label">今日の 記録</div>
     <div class="stamps-grid">
+      {% set button_activities = ["起床", "お薬", "お風呂", "就寝"] %}
       {% for s in stamps %}
       <div class="stamp {{ 'done' if s.done else '' }} {{ 'current' if s.current else '' }}">
         <div class="stamp-icon">{{ s.icon }}</div>
@@ -260,20 +305,25 @@
         {% if s.done %}
           <div class="stamp-check">&#10003;</div>
           <div class="stamp-time">{{ s.time }}</div>
+        {% elif s.label in button_activities %}
+          <button class="stamp-btn" onclick="tabletRecord('{{ s.label }}', this)">できた</button>
         {% endif %}
       </div>
       {% endfor %}
     </div>
   </div>
 
-  <!-- わたしのおにわ -->
+  <!-- 検証アラート（ボタン押下時に表示） -->
+  <div id="verify-alert-area"></div>
+
+  <!-- 私の庭 -->
   <div class="card garden-card">
-    <div class="card-label">わたしの おにわ</div>
+    <div class="card-label">私の お庭</div>
     <div class="garden-grid">
       {% for g in garden %}
       <div class="garden-cell {{ 'today' if g.is_today else '' }}">
-        <div class="garden-flower" data-stage="{{ g.done_count }}"></div>
-        <div class="garden-score">{{ g.done_count }}/{{ g.total_count }}</div>
+        <div class="garden-flower" data-stage="{{ g.done_count }}" data-color-primary="{{ g.color_primary }}" data-color-secondary="{{ g.color_secondary }}" data-color-center="{{ g.color_center }}"></div>
+        <div class="garden-score">{% if g.done_count >= 4 %}{{ g.color_name }}{% else %}{{ g.done_count }}/{{ g.total_count }}{% endif %}</div>
         <div class="garden-date">{{ g.day }}日</div>
         <div class="garden-weekday">{{ g.weekday }}</div>
       </div>
@@ -285,7 +335,7 @@
   <!-- セッション履歴 -->
   {% if sessions %}
   <div style="margin-top: 24px;">
-    <div class="sessions-title">きょうの できごと</div>
+    <div class="sessions-title">今日の できごと</div>
     <div class="session-list">
       {% for s in sessions %}
       {% set cls = {
@@ -319,7 +369,7 @@
         </div>
         <div class="s-info">
           <div class="s-label">{{ s.label }}</div>
-          <div class="s-time">{{ s.started_at.strftime("%H:%M") }}</div>
+          <div class="s-time">{% if s.started_at is string %}{{ s.started_at.split("T")[1][:5] if "T" in s.started_at else s.started_at[:5] }}{% else %}{{ s.started_at.strftime("%H:%M") }}{% endif %}</div>
         </div>
       </div>
       {% endfor %}
@@ -497,30 +547,186 @@ function getFlowerSVG(stage, size) {
   return clone.outerHTML;
 }
 
+// 花の色を変更する関数
+function recolorFlower(svgHTML, primary, secondary, center) {
+  // 花びらの色を置換（stage 4-7 の花のみ影響）
+  const colorMap = [
+    // ピンク系の花びら → primary/secondary
+    ['#E91E63', primary], ['#EC407A', secondary], ['#F8BBD0', secondary],
+    ['#F48FB1', secondary],
+    // オレンジ系（stage 6）→ primary/secondary
+    ['#FF9800', primary], ['#FFA726', secondary],
+    // 紫系のサブ花 → secondary
+    ['#AB47BC', secondary], ['#BA68C8', secondary],
+    // オレンジ系サブ花 → primary
+    ['#FF7043', primary], ['#FF8A65', secondary],
+    // 花の中心 → center
+    ['#FFF176', center], ['#FFE082', center], ['#FFF9C4', center],
+    ['#FFD54F', center], ['#FFCA28', center],
+  ];
+  let result = svgHTML;
+  for (const [from, to] of colorMap) {
+    result = result.split(from).join(to);
+  }
+  return result;
+}
+
 // きょうのお花
 (function() {
   const done = {{ done_count }};
+  const todayColor = {
+    primary: '{{ today_flower_color.primary }}',
+    secondary: '{{ today_flower_color.secondary }}',
+    center: '{{ today_flower_color.center }}',
+    name: '{{ today_flower_color.name }}'
+  };
   const msgs = [
-    ['たねを うえました', 'なにかすると そだつよ'],
-    ['めが でました！', ''],
-    ['すこし そだってきた', ''],
-    ['つぼみが できた！', ''],
-    ['おはなが さきました！', 'きれいだね'],
-    ['きれいに さいてるよ', ''],
-    ['おおきな おはな！', 'すごい！'],
-    ['まんかい！ すばらしい！', 'きょうも よくがんばりました'],
+    ['種を植えました', '何かすると育つよ'],
+    ['芽が出ました！', ''],
+    ['少し育ってきた', ''],
+    ['つぼみができた！', ''],
+    ['花が咲きました！', 'きれいだね'],
+    ['きれいに咲いてるよ', ''],
+    ['大きな花！', 'すごい！'],
+    ['満開！ すばらしい！', '今日もよく頑張りました'],
   ];
   const m = msgs[Math.min(done, msgs.length - 1)];
-  document.getElementById('flowerStage').innerHTML = getFlowerSVG(done, 160);
-  document.getElementById('flowerMsg').textContent = m[0];
+  let svg = getFlowerSVG(done, 160);
+  if (done >= 4) svg = recolorFlower(svg, todayColor.primary, todayColor.secondary, todayColor.center);
+  document.getElementById('flowerStage').innerHTML = svg;
+  const label = done >= 4 ? `${todayColor.name}が咲いた！` : m[0];
+  document.getElementById('flowerMsg').textContent = label;
   document.getElementById('flowerSub').textContent = m[1];
 })();
 
-// 庭の花
+// 庭の花（日ごとに色が異なる）
 document.querySelectorAll('.garden-flower').forEach(el => {
   const stage = parseInt(el.dataset.stage) || 0;
-  el.innerHTML = getFlowerSVG(stage, 36);
+  let svg = getFlowerSVG(stage, 36);
+  if (stage >= 4) {
+    const p = el.dataset.colorPrimary;
+    const s = el.dataset.colorSecondary;
+    const c = el.dataset.colorCenter;
+    if (p && s && c) svg = recolorFlower(svg, p, s, c);
+  }
+  el.innerHTML = svg;
 });
+
+// ============================================================
+// 音声読み上げ (Web Speech API)
+// ============================================================
+const TTS_KEY = 'tablet_tts_enabled';
+const ttsSupported = 'speechSynthesis' in window;
+
+function isTTSEnabled() {
+  const v = localStorage.getItem(TTS_KEY);
+  return v === null ? true : v === '1';  // デフォルトON
+}
+
+function setTTSEnabled(on) {
+  localStorage.setItem(TTS_KEY, on ? '1' : '0');
+  updateTTSButton();
+  if (!on) speechSynthesis.cancel();
+}
+
+function updateTTSButton() {
+  const btn = document.getElementById('tts-toggle');
+  if (!btn) return;
+  btn.textContent = isTTSEnabled() ? '🔊 音声ON' : '🔇 音声OFF';
+  btn.style.background = isTTSEnabled() ? '#E8F5E9' : '#FAFAFA';
+  btn.style.color = isTTSEnabled() ? '#2E7D32' : '#999';
+}
+
+function speak(text, opts = {}) {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ja-JP';
+  u.rate = opts.rate || 0.9;  // 祖母向けに少し遅め
+  u.pitch = opts.pitch || 1.0;
+  u.volume = opts.volume || 1.0;
+  speechSynthesis.speak(u);
+}
+
+function speakAlerts() {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  speechSynthesis.cancel();  // 既存キューをクリア
+
+  // 家族からのメッセージ優先
+  const famMsgs = document.querySelectorAll('.alert-card .alert-message');
+  const alertTexts = Array.from(famMsgs).map(el => el.textContent.trim()).filter(Boolean);
+  if (alertTexts.length === 0) return;
+
+  // 重要: ユーザー操作由来でないとブラウザが抑制する場合がある
+  // → 画面タップ後に読み上げる方針
+  alertTexts.forEach((t, i) => {
+    setTimeout(() => speak(t), i * 300);
+  });
+}
+
+// 初回タップで音声読み上げ（ブラウザのautoplay制約対策）
+let ttsInitialized = false;
+function initTTSOnInteraction() {
+  if (ttsInitialized) return;
+  ttsInitialized = true;
+  speakAlerts();
+}
+document.addEventListener('click', initTTSOnInteraction, { once: true });
+document.addEventListener('touchstart', initTTSOnInteraction, { once: true });
+
+window.addEventListener('DOMContentLoaded', () => {
+  updateTTSButton();
+});
+
+// 家族メッセージ確認
+async function dismissPrompt(id, btn) {
+  try {
+    await fetch(`/api/dismiss-prompt/${id}`, { method: 'POST' });
+    btn.closest('.alert-card').style.transition = 'opacity 0.3s';
+    btn.closest('.alert-card').style.opacity = '0';
+    setTimeout(() => btn.closest('.alert-card').remove(), 300);
+  } catch(e) {}
+}
+
+// 祖母「できた」ボタン処理
+async function tabletRecord(activity, btn) {
+  btn.disabled = true;
+  btn.textContent = '確認中...';
+  try {
+    const resp = await fetch('/api/tablet-record', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ activity, person_id: 1 })
+    });
+    const data = await resp.json();
+    const area = document.getElementById('verify-alert-area');
+    if (data.verified) {
+      btn.classList.add('pressed');
+      btn.textContent = '✓';
+      setTimeout(() => location.reload(), 1500);
+    } else {
+      btn.disabled = false;
+      btn.textContent = 'できた';
+      let msg = '';
+      if (data.reason === 'cooldown') {
+        msg = `<div class="va-title">さっき押しましたよ</div>
+               <div class="va-sub">しばらく待ってからもう一度押してください。</div>`;
+        btn.disabled = true;
+        btn.textContent = '待って';
+      } else if (data.reason === 'no_sensor') {
+        msg = `<div class="va-title">「${activity}」はセンサーで確認できません</div>
+               <div class="va-sub">家族に「${activity}した」と伝えてください。<br>家族が記録してくれます。</div>`;
+      } else {
+        msg = `<div class="va-title">「${activity}」の記録が見つかりません</div>
+               <div class="va-sub">本当にやりましたか？<br>やった場合は家族に伝えてください。</div>`;
+      }
+      area.innerHTML = `<div class="verify-alert fail">${msg}</div>`;
+      setTimeout(() => { area.innerHTML = ''; }, 10000);
+    }
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = 'できた';
+  }
+}
 
 // WebSocket
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -544,8 +750,32 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') requestWakeLock();
 });
 
-// 5分ごとにページ自動リロード（データ鮮度維持）
-setTimeout(() => location.reload(), 5 * 60 * 1000);
+// 3分ごとにページ自動リロード（データ鮮度維持）
+setTimeout(() => location.reload(), 3 * 60 * 1000);
+
+// Service Worker 登録（オフラインキャッシュ）
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  });
+}
+
+// オンライン/オフラインバナー
+const offlineBanner = document.createElement('div');
+offlineBanner.id = 'offline-banner';
+offlineBanner.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;background:#FFC107;color:#5D4037;text-align:center;padding:8px;font-weight:700;font-size:14px;z-index:9999;';
+offlineBanner.textContent = '⚠️ 接続が切れています。表示は最後の記録です。';
+document.body.appendChild(offlineBanner);
+
+function updateOnlineStatus() {
+  offlineBanner.style.display = navigator.onLine ? 'none' : 'block';
+}
+window.addEventListener('online', () => {
+  updateOnlineStatus();
+  setTimeout(() => location.reload(), 500);  // 復活したら再読み込み
+});
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
 </script>
 </body>
 </html>

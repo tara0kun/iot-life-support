@@ -89,6 +89,46 @@
   .quick-btn .qb-label { font-size: 11px; font-weight: 700; color: var(--text); }
   .quick-btn .qb-status { font-size: 10px; color: var(--success); font-weight: 500; min-height: 14px; }
 
+  /* 炊飯量設定 */
+  .rice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .rice-item {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 14px; border: 2px solid #E8E8E8; border-radius: 12px; background: #FAFAFA;
+  }
+  .rice-item.set { border-color: var(--success); background: #E8F8F0; }
+  .rice-meal { font-size: 13px; font-weight: 700; color: var(--text); }
+  .rice-amount { font-size: 18px; font-weight: 700; color: var(--primary); min-height: 24px; }
+  .rice-input {
+    width: 80px; padding: 6px 8px; border: 2px solid #E0E0E0; border-radius: 8px;
+    font-size: 13px; font-family: inherit; text-align: center;
+  }
+  .rice-input:focus { border-color: var(--primary); outline: none; }
+  .rice-btn-group { display: flex; gap: 4px; }
+  .rice-save-btn {
+    padding: 4px 12px; border: none; border-radius: 6px; font-size: 11px;
+    font-family: inherit; cursor: pointer; font-weight: 700;
+  }
+  .rice-save-btn.save { background: var(--success); color: white; }
+  .rice-save-btn.delete { background: #EEE; color: var(--text-light); }
+  .rice-save-btn:hover { opacity: 0.85; }
+
+  /* 日付ナビ */
+  .date-nav {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+    background: var(--card); border-radius: var(--radius); padding: 12px 16px; box-shadow: var(--shadow);
+  }
+  .date-nav input[type="date"] {
+    padding: 8px 12px; border: 2px solid #E0E0E0; border-radius: 8px;
+    font-size: 14px; font-family: inherit; font-weight: 500;
+  }
+  .date-nav-btn {
+    padding: 8px 14px; border: 2px solid #E0E0E0; border-radius: 8px;
+    background: white; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500;
+  }
+  .date-nav-btn:hover { border-color: var(--primary); background: #F0F4F8; }
+  .date-nav-btn.today { background: var(--primary); color: white; border-color: var(--primary); }
+  .date-label { font-size: 13px; color: var(--text-light); font-weight: 500; }
+
   /* フィルタ */
   .filters { display: flex; gap: 8px; margin-bottom: 16px; }
   .filter-btn {
@@ -122,6 +162,7 @@
   .source-family_report { background: #FFF8E1; color: #F57F17; }
   .source-family_override { background: #FFEBEE; color: #C62828; }
   .source-toilet { background: #EFEBE9; color: #5D4037; }
+  .source-tablet_report { background: #E8EAF6; color: #283593; }
 
   .person-select {
     padding: 4px 8px; border: 1px solid #E0E0E0; border-radius: 6px; font-size: 12px;
@@ -129,6 +170,21 @@
   }
   .person-select.changed { border-color: var(--success); background: #E8F8F0; }
   .save-msg { font-size: 10px; color: var(--success); display: none; margin-left: 4px; }
+
+  /* 時刻編集 */
+  .time-display { cursor: pointer; padding: 2px 6px; border-radius: 4px; border: 1px solid transparent; }
+  .time-display:hover { border-color: var(--primary); background: #F0F4F8; }
+  .time-input {
+    width: 90px; padding: 4px 6px; border: 2px solid var(--primary); border-radius: 6px;
+    font-size: 13px; font-family: inherit;
+  }
+
+  /* 削除ボタン */
+  .delete-btn {
+    background: none; border: none; color: var(--text-muted); cursor: pointer;
+    font-size: 16px; padding: 4px 8px; border-radius: 6px; transition: all 0.2s;
+  }
+  .delete-btn:hover { color: var(--danger); background: #FDEDEC; }
 
   @media (max-width: 600px) {
     .status-grid { grid-template-columns: repeat(2, 1fr); }
@@ -140,7 +196,10 @@
 <div class="header">
   <h1>家族管理画面</h1>
   <div class="header-right">
-    <div class="time">{{ now.strftime("%Y/%m/%d %H:%M") }}</div>
+    {% set days = ["月","火","水","木","金","土","日"] %}
+    <div class="time">{{ now.strftime("%-m/%-d") }}（{{ days[now.weekday()] }}）{{ now.strftime("%H:%M") }}</div>
+    <a href="/family/manual" class="logout-btn" style="margin-right:8px;">📖 マニュアル</a>
+    <a href="/family/weekly-report" class="logout-btn" style="margin-right:8px;">週次レポート</a>
     <a href="/family/logout" class="logout-btn">ログアウト</a>
   </div>
 </div>
@@ -157,6 +216,22 @@
     <button onclick="unlockDevice()">ロック解除</button>
   </div>
   {% endif %}
+
+  <!-- 機器管理（常駐） -->
+  <div class="section-card">
+    <div class="section-title">機器管理</div>
+    <div class="section-desc">炊飯器のロック状態を手動で切り替えできます</div>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;">
+      <div>
+        <span style="font-weight:500;">炊飯器:</span>
+        <span id="device-state-badge" style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:0.9em;margin-left:6px;{% if is_locked %}background:#FDECEA;color:#C62828;{% else %}background:#E8F5E9;color:#2E7D32;{% endif %}">
+          {% if is_locked %}🔒 ロック中{% else %}🔓 通常{% endif %}
+        </span>
+      </div>
+      <button id="unlock-btn" onclick="unlockDevice()" style="background:#43A047;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if not is_locked %}display:none;{% endif %}">ロック解除</button>
+      <button id="lock-btn" onclick="lockDevice()" style="background:#E65100;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if is_locked %}display:none;{% endif %}">手動ロック</button>
+    </div>
+  </div>
 
   <!-- ステータスカード -->
   <div class="status-grid">
@@ -204,6 +279,178 @@
     </div>
   </div>
 
+  <!-- タブレットに伝える -->
+  <div class="section-card">
+    <div class="section-title">タブレットに伝える</div>
+    <div class="section-desc">祖母のタブレット画面にメッセージを表示します</div>
+    <div class="quick-btns" style="grid-template-columns: repeat(4, 1fr); margin-bottom: 12px;">
+      <button class="quick-btn" onclick="sendPrompt('お薬 飲んでね')">
+        <span class="qb-icon">💊</span><span class="qb-label">お薬</span>
+      </button>
+      <button class="quick-btn" onclick="sendPrompt('お風呂 入ってね')">
+        <span class="qb-icon">🛁</span><span class="qb-label">お風呂</span>
+      </button>
+      <button class="quick-btn" onclick="sendPrompt('ご飯 食べてね')">
+        <span class="qb-icon">🍚</span><span class="qb-label">ご飯</span>
+      </button>
+      <button class="quick-btn" onclick="sendPrompt('電話してね')">
+        <span class="qb-icon">📞</span><span class="qb-label">電話</span>
+      </button>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <input type="text" id="custom-prompt" placeholder="自由にメッセージを入力" style="flex:1; padding:10px 14px; border:2px solid #E0E0E0; border-radius:8px; font-size:14px; font-family:inherit;">
+      <button onclick="sendPrompt(document.getElementById('custom-prompt').value)" style="padding:10px 20px; background:var(--primary); color:white; border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">送信</button>
+    </div>
+  </div>
+
+  <!-- 炊飯量設定 -->
+  <div class="section-card">
+    <div class="section-title">炊飯量</div>
+    <div class="section-desc">タブレットに「ご飯は○合 炊いてね」と表示されます。</div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <div class="rice-amount" style="font-size:20px; min-width:60px;">{{ rice_amount if rice_amount else "未設定" }}</div>
+      <div style="display:flex; gap:6px;">
+        {% for n in ["1合", "2合", "3合"] %}
+        <button class="rice-save-btn save" onclick="setRice('{{ n }}')" style="padding:8px 16px; font-size:13px;">{{ n }}</button>
+        {% endfor %}
+      </div>
+      <input type="text" id="rice-custom" placeholder="自由入力" style="width:80px; padding:8px; border:2px solid #E0E0E0; border-radius:8px; font-size:13px; font-family:inherit; text-align:center;">
+      <button class="rice-save-btn save" onclick="setRice(document.getElementById('rice-custom').value)" style="padding:8px 12px;">設定</button>
+      {% if rice_amount %}
+      <button class="rice-save-btn delete" onclick="clearRice()" style="padding:8px 12px;">クリア</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 7日間アクティビティヒートマップ -->
+  <div class="section-card">
+    <div class="section-title">7日間アクティビティ</div>
+    <div class="section-desc">過去7日の時間帯別イベント密度。色が濃いほど活動あり。</div>
+    <div id="heatmap-summary" style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap;">
+      <div style="background:#FFF3E0;padding:8px 14px;border-radius:6px;">
+        🍴 食事 <span id="hm-meals" style="font-weight:700;">-</span>回
+      </div>
+      <div style="background:#E1F5FE;padding:8px 14px;border-radius:6px;">
+        🛁 お風呂 <span id="hm-baths" style="font-weight:700;">-</span>回
+      </div>
+      <div style="background:#F3E5F5;padding:8px 14px;border-radius:6px;">
+        🚽 トイレ <span id="hm-toilets" style="font-weight:700;">-</span>回
+      </div>
+    </div>
+    <div id="heatmap-container" style="overflow-x:auto;">
+      <table id="heatmap-table" style="border-collapse:collapse;font-size:0.75em;font-family:monospace;">
+        <!-- JSで描画 -->
+      </table>
+    </div>
+  </div>
+
+  <!-- 家族タスク（役割分担） -->
+  <div class="section-card">
+    <div class="section-title">家族タスク（役割分担）</div>
+    <div class="section-desc">担当者と時刻を設定すると、指定時刻にLINEで担当者へリマインドされます。</div>
+
+    <table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:0.9em;">
+      <thead>
+        <tr style="background:#F5F5F5;text-align:left;">
+          <th style="padding:8px;">タスク名</th>
+          <th style="padding:8px;">担当</th>
+          <th style="padding:8px;">時刻</th>
+          <th style="padding:8px;">状態</th>
+          <th style="padding:8px;"></th>
+        </tr>
+      </thead>
+      <tbody id="care-task-rows">
+        {% for t in care_tasks %}
+        <tr style="border-bottom:1px solid #EEE;">
+          <td style="padding:8px;">{{ t.task_name }}</td>
+          <td style="padding:8px;">{{ t.assignee_name or '未割当' }}</td>
+          <td style="padding:8px;">{% if t.reminder_hour is not none %}{{ '%02d' % t.reminder_hour }}:00{% else %}--:--{% endif %}</td>
+          <td style="padding:8px;">{% if t.done_by %}<span style="color:#2E7D32;">✅ 完了</span>{% else %}<span style="color:#999;">⬜ 未対応</span>{% endif %}</td>
+          <td style="padding:8px;"><button class="delete-btn" onclick="deleteCareTask({{ t.id }}, '{{ t.task_name }}')" title="削除">&#x2715;</button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" style="padding:16px;color:#999;text-align:center;">タスクが登録されていません</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <div style="margin-top:12px;padding:12px;background:#FAFAFA;border-radius:6px;">
+      <div style="font-weight:500;margin-bottom:8px;">新規タスクを追加</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <input id="new-task-name" type="text" placeholder="タスク名（例: 朝のお薬確認）" style="flex:1;min-width:180px;padding:6px;border:1px solid #CCC;border-radius:4px;">
+        <input id="new-task-assignee" type="text" placeholder="担当（例: 母）" style="width:120px;padding:6px;border:1px solid #CCC;border-radius:4px;">
+        <input id="new-task-hour" type="number" min="0" max="23" placeholder="時" style="width:60px;padding:6px;border:1px solid #CCC;border-radius:4px;">
+        <button onclick="addCareTask()" style="background:#1976D2;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">追加</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 詳細設定（通知ON/OFF・しきい値） -->
+  <details class="section-card" style="padding:0;overflow:hidden;">
+    <summary style="cursor:pointer;padding:16px;font-weight:700;font-size:1.05em;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+      <span>⚙️ 詳細設定（通知ON/OFF・しきい値）</span>
+      <span style="font-size:0.8em;color:#999;">▼ クリックで開く</span>
+    </summary>
+    <div style="padding:0 16px 16px;">
+      <div class="section-desc">通知の有効/無効や閾値を変更できます。普段は触らなくてOKです。</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.9em;margin-top:10px;">
+        {% for s in settings %}
+        <tr style="border-bottom:1px solid #EEE;">
+          <td style="padding:8px;width:60%;">
+            <div style="font-weight:500;">{{ s.description }}</div>
+            <div style="color:#999;font-size:0.85em;">{{ s.key }}</div>
+          </td>
+          <td style="padding:8px;text-align:right;">
+            {% if s.is_bool %}
+              <select onchange="saveSetting('{{ s.key }}', this.value)" style="padding:6px;border:1px solid #CCC;border-radius:4px;">
+                <option value="1" {% if s.value == '1' %}selected{% endif %}>ON</option>
+                <option value="0" {% if s.value == '0' %}selected{% endif %}>OFF</option>
+              </select>
+            {% else %}
+              <input type="number" value="{{ s.value }}" onchange="saveSetting('{{ s.key }}', this.value)"
+                     style="width:80px;padding:6px;border:1px solid #CCC;border-radius:4px;text-align:right;">
+              <span style="color:#999;font-size:0.85em;">(default: {{ s.default }})</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </details>
+
+  <!-- お薬スケジュール -->
+  <div class="section-card">
+    <div class="section-title">お薬スケジュール</div>
+    <div class="section-desc">お薬を飲むタイミングを設定すると、タブレットにリマインドが表示されます。</div>
+    <div class="rice-grid">
+      {% for timing, default_hour in [("朝", 8), ("昼", 12), ("夜", 19)] %}
+      <div class="rice-item {{ 'set' if medicine_schedule.get(timing) is not none else '' }}">
+        <div class="rice-meal">{{ timing }}の薬</div>
+        <div class="rice-amount">{% if medicine_schedule.get(timing) is not none %}{{ medicine_schedule[timing] }}時{% else %}未設定{% endif %}</div>
+        <input class="rice-input" type="number" min="0" max="23" placeholder="{{ default_hour }}" value="{{ medicine_schedule.get(timing, '') }}" id="med-input-{{ timing }}">
+        <div style="font-size:10px;color:var(--text-muted);">時</div>
+        <div class="rice-btn-group">
+          <button class="rice-save-btn save" onclick="saveMedicine('{{ timing }}')">保存</button>
+          {% if medicine_schedule.get(timing) is not none %}
+          <button class="rice-save-btn delete" onclick="deleteMedicine('{{ timing }}')">削除</button>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- 日付ナビ -->
+  <div class="date-nav">
+    <button class="date-nav-btn" onclick="changeDate(-1)">&lt; 前日</button>
+    <input type="date" id="date-picker" value="{{ selected_date }}" onchange="goToDate(this.value)">
+    <button class="date-nav-btn" onclick="changeDate(1)">翌日 &gt;</button>
+    {% if not is_today %}
+    <button class="date-nav-btn today" onclick="goToDate('')">今日に戻る</button>
+    {% endif %}
+    <span class="date-label">{% if is_today %}今日{% else %}{{ selected_date }}{% endif %}のイベント</span>
+  </div>
+
   <!-- フィルタ -->
   <div class="filters">
     <button class="filter-btn active" onclick="filterEvents('all')">全員</button>
@@ -215,17 +462,25 @@
   <!-- イベント一覧 -->
   <table class="event-table" id="event-table">
     <thead>
-      <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th></tr>
+      <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th><th></th></tr>
     </thead>
     <tbody>
       {% for e in events %}
       <tr data-person="{{ e.person_id or '' }}" data-event-id="{{ e.id }}">
         <td>
+          {% set time_str = "" %}
           {% if e.started_at is string %}
-            {{ e.started_at.split("T")[1][:8] if "T" in e.started_at else e.started_at }}
+            {% if "T" in e.started_at %}
+              {% set time_str = e.started_at.split("T")[1][:5] %}
+            {% elif " " in e.started_at %}
+              {% set time_str = e.started_at.split(" ")[1][:5] %}
+            {% else %}
+              {% set time_str = e.started_at[:5] %}
+            {% endif %}
           {% elif e.started_at %}
-            {{ e.started_at.strftime("%H:%M:%S") }}
+            {% set time_str = e.started_at.strftime("%H:%M") %}
           {% endif %}
+          <span class="time-display" onclick="startEditTime(this, {{ e.id }}, '{{ time_str }}')">{{ time_str }}</span>
         </td>
         <td>
           <select class="person-select" onchange="editPerson({{ e.id }}, this.value, this)">
@@ -236,9 +491,11 @@
           </select>
           <span class="save-msg" id="msg-{{ e.id }}">&#10003;</span>
         </td>
-        <td><span class="source-badge source-{{ e.source }}">{{ e.source }}</span></td>
+        {% set source_names = {"rice_cooker": "炊飯器", "ih": "IH", "camera": "カメラ", "contact_sensor": "開閉センサー", "bath_door": "浴室ドア", "bath_motion": "浴室モーション", "family_report": "家族記録", "family_override": "家族操作", "toilet": "トイレ", "tablet_report": "祖母ボタン"} %}
+        <td><span class="source-badge source-{{ e.source }}">{{ source_names.get(e.source, e.source) }}</span></td>
         <td>{{ e.event_type }}</td>
         <td>{{ "%.1f" | format(e.value) if e.value else "-" }}</td>
+        <td><button class="delete-btn" onclick="deleteEvent({{ e.id }}, '{{ e.event_type }}')" title="削除">&#x2715;</button></td>
       </tr>
       {% endfor %}
     </tbody>
@@ -258,7 +515,20 @@ async function unlockDevice() {
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
+async function lockDevice() {
+  if (!confirm('炊飯器を手動でロックしますか？（電源OFFになります）')) return;
+  try {
+    const resp = await fetch('/api/lock', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ device: 'rice_cooker', reason: '家族による手動ロック' })
+    });
+    if (resp.ok) { alert('ロックしました'); location.reload(); }
+    else { const d = await resp.json(); alert('ロック失敗: ' + (d.detail || '不明')); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
 async function quickRecord(activity, btn) {
+  if (!confirm(`「${activity}」を記録しますか？`)) return;
   const status = btn.querySelector('.qb-status');
   try {
     const resp = await fetch('/api/quick-record', {
@@ -298,13 +568,233 @@ async function editPerson(eventId, newPersonId, selectEl) {
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
+function startEditTime(span, eventId, currentTime) {
+  const input = document.createElement('input');
+  input.type = 'time';
+  input.className = 'time-input';
+  input.value = currentTime;
+  span.replaceWith(input);
+  input.focus();
+
+  async function saveTime() {
+    const newTime = input.value;
+    if (!newTime || newTime === currentTime) {
+      const newSpan = document.createElement('span');
+      newSpan.className = 'time-display';
+      newSpan.textContent = currentTime;
+      newSpan.onclick = () => startEditTime(newSpan, eventId, currentTime);
+      input.replaceWith(newSpan);
+      return;
+    }
+    try {
+      const resp = await fetch(`/api/events/${eventId}/edit`, {
+        method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+        body: JSON.stringify({ started_at: newTime })
+      });
+      if (resp.ok) {
+        const newSpan = document.createElement('span');
+        newSpan.className = 'time-display';
+        newSpan.textContent = newTime;
+        newSpan.style.borderColor = 'var(--success)';
+        newSpan.style.background = '#E8F8F0';
+        newSpan.onclick = () => startEditTime(newSpan, eventId, newTime);
+        input.replaceWith(newSpan);
+      } else { alert('時刻の保存に失敗しました'); }
+    } catch(e) { alert('通信エラー: ' + e.message); }
+  }
+
+  input.addEventListener('change', saveTime);
+  input.addEventListener('blur', saveTime);
+}
+
+async function deleteEvent(eventId, eventType) {
+  if (!confirm(`「${eventType}」の記録を削除しますか？\nこの操作は元に戻せません。`)) return;
+  try {
+    const resp = await fetch(`/api/events/${eventId}`, {
+      method: 'DELETE', credentials: 'same-origin'
+    });
+    if (resp.ok) {
+      const row = document.querySelector(`tr[data-event-id="${eventId}"]`);
+      if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+    } else {
+      const d = await resp.json();
+      alert('削除失敗: ' + (d.detail || '不明'));
+    }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function sendPrompt(message) {
+  if (!message || !message.trim()) { alert('メッセージを入力してください'); return; }
+  if (!confirm(`「${message}」をタブレットに表示しますか？`)) return;
+  try {
+    const resp = await fetch('/api/family-prompt', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ message: message.trim(), minutes: 60 })
+    });
+    if (resp.ok) {
+      alert('タブレットに送信しました');
+      document.getElementById('custom-prompt').value = '';
+    } else { alert('送信に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function setRice(amount) {
+  if (!amount || !amount.trim()) { alert('量を入力してください'); return; }
+  try {
+    const resp = await fetch('/api/rice-guide', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ amount: amount.trim() })
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('設定に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function clearRice() {
+  try {
+    const resp = await fetch('/api/rice-guide', { method: 'DELETE', credentials: 'same-origin' });
+    if (resp.ok) { location.reload(); }
+    else { alert('クリアに失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function saveMedicine(timing) {
+  const input = document.getElementById(`med-input-${timing}`);
+  const hour = parseInt(input.value);
+  if (isNaN(hour) || hour < 0 || hour > 23) { alert('0〜23の時刻を入力してください'); return; }
+  try {
+    const resp = await fetch('/api/medicine-schedule', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ timing, hour })
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('保存に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function loadHeatmap() {
+  try {
+    const resp = await fetch('/api/heatmap?days=7', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    document.getElementById('hm-meals').textContent = data.summary.meals;
+    document.getElementById('hm-baths').textContent = data.summary.baths;
+    document.getElementById('hm-toilets').textContent = data.summary.toilets;
+
+    const table = document.getElementById('heatmap-table');
+    table.innerHTML = '';
+    // ヘッダー: 時間
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    hr.appendChild(document.createElement('th'));
+    for (let h = 0; h < 24; h++) {
+      const th = document.createElement('th');
+      th.textContent = h;
+      th.style.cssText = 'padding:2px 4px;color:#999;font-weight:400;';
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const max = Math.max(data.max, 1);
+    data.dates.forEach((dateLabel, i) => {
+      const tr = document.createElement('tr');
+      const th = document.createElement('th');
+      th.textContent = dateLabel;
+      th.style.cssText = 'padding:4px 8px;text-align:right;font-weight:500;color:#666;white-space:nowrap;';
+      tr.appendChild(th);
+      data.matrix[i].forEach(cnt => {
+        const td = document.createElement('td');
+        const intensity = cnt / max;
+        const alpha = intensity === 0 ? 0.05 : 0.15 + intensity * 0.85;
+        td.style.cssText = `width:18px;height:22px;background:rgba(76,175,80,${alpha});text-align:center;color:${intensity > 0.5 ? '#fff' : '#333'};border:1px solid #fff;`;
+        td.textContent = cnt > 0 ? cnt : '';
+        td.title = `${cnt}件`;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+  } catch(e) {
+    console.error('heatmap load error', e);
+  }
+}
+window.addEventListener('DOMContentLoaded', loadHeatmap);
+
+async function saveSetting(key, value) {
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ key, value })
+    });
+    if (!resp.ok) {
+      const d = await resp.json();
+      alert('設定保存失敗: ' + (d.detail || '不明'));
+    }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function addCareTask() {
+  const name = document.getElementById('new-task-name').value.trim();
+  const assignee = document.getElementById('new-task-assignee').value.trim();
+  const hourStr = document.getElementById('new-task-hour').value.trim();
+  if (!name) { alert('タスク名を入力してください'); return; }
+  const hour = hourStr === '' ? null : parseInt(hourStr);
+  if (hour !== null && (isNaN(hour) || hour < 0 || hour > 23)) { alert('時刻は0〜23'); return; }
+  try {
+    const resp = await fetch('/api/care-tasks', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ task_name: name, assignee_name: assignee || null, reminder_hour: hour })
+    });
+    if (resp.ok) { location.reload(); }
+    else { const d = await resp.json(); alert('追加失敗: ' + (d.detail || '不明')); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function deleteCareTask(id, name) {
+  if (!confirm(`「${name}」を削除しますか？`)) return;
+  try {
+    const resp = await fetch(`/api/care-tasks/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+    if (resp.ok) { location.reload(); }
+    else { alert('削除失敗'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function deleteMedicine(timing) {
+  if (!confirm(`${timing}の薬スケジュールを削除しますか？`)) return;
+  try {
+    const resp = await fetch(`/api/medicine-schedule/${encodeURIComponent(timing)}`, {
+      method: 'DELETE', credentials: 'same-origin'
+    });
+    if (resp.ok) { location.reload(); }
+    else { alert('削除に失敗しました'); }
+  } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+function goToDate(dateStr) {
+  if (!dateStr) { window.location.href = '/family'; return; }
+  window.location.href = `/family?date=${dateStr}`;
+}
+function changeDate(delta) {
+  const picker = document.getElementById('date-picker');
+  const d = new Date(picker.value);
+  d.setDate(d.getDate() + delta);
+  const str = d.toISOString().split('T')[0];
+  goToDate(str);
+}
+
 const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 const ws = new WebSocket(`${wsProto}//${location.host}/ws/events`);
+const isToday = {{ 'true' if is_today else 'false' }};
 ws.onmessage = (e) => {
   const data = JSON.parse(e.data);
   if (data.source && data.event_type === 'power_reading') {
     document.getElementById('live-power').textContent = data.value ? data.value.toFixed(1) : '0';
-  } else { setTimeout(() => location.reload(), 1000); }
+  } else if (isToday) {
+    // 今日の画面のみ自動リロード（過去日はリロードしない）
+    setTimeout(() => location.reload(), 1000);
+  }
 };
 </script>
 </body>
