@@ -106,3 +106,21 @@ def get_recent_events(limit: int = 50) -> list[dict]:
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+def get_events_by_date(target_date: str, limit: int = 200) -> list[dict]:
+    """指定日のイベントを取得する。target_date は 'YYYY-MM-DD' 形式。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT e.id, e.person_id, p.name as person_name,
+                      e.source, e.event_type, e.started_at, e.value
+                 FROM events e
+                 LEFT JOIN persons p ON p.id = e.person_id
+                 WHERE date(e.started_at) = ?
+                 ORDER BY e.started_at DESC LIMIT ?""",
+            (target_date, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()

@@ -8,6 +8,7 @@ Type=simple
 User=tara0
 WorkingDirectory=/home/tara0/IoT
 ExecStart=/home/tara0/IoT/venv/bin/uvicorn src.web.app:app --host 0.0.0.0 --port 8000
+ExecStartPost=/bin/bash -c 'sleep 3 && /home/tara0/IoT/scripts/notify_url.sh &'
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=5
