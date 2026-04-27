@@ -101,6 +101,23 @@ CREATE TABLE IF NOT EXISTS notify_targets (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS family_prompts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message TEXT NOT NULL,
+    sent_by TEXT DEFAULT '家族',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMP NOT NULL,              -- 表示期限
+    dismissed INTEGER NOT NULL DEFAULT 0        -- 祖母が確認済みか
+);
+
+CREATE TABLE IF NOT EXISTS medicine_schedule (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timing TEXT NOT NULL UNIQUE,                -- 朝/昼/夜
+    hour INTEGER NOT NULL,                      -- リマインド開始時刻（時）
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS rice_guide (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     meal TEXT NOT NULL UNIQUE,              -- 朝食/昼食/夕食
@@ -118,6 +135,32 @@ CREATE TABLE IF NOT EXISTS daily_scores (
     details TEXT,                               -- JSON: どのスタンプを達成したか
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(person_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS care_tasks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_name TEXT NOT NULL UNIQUE,             -- 例: 朝のお薬確認、夜の様子見
+    assignee_name TEXT,                         -- 例: 母、孫（NULLなら未割当）
+    reminder_hour INTEGER,                      -- リマインダー送信時刻 (0-23)
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS care_task_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL REFERENCES care_tasks(id),
+    date TEXT NOT NULL,                         -- YYYY-MM-DD
+    done_by TEXT,                               -- 誰が対応したか (LINE sender ID or 名前)
+    done_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    note TEXT,
+    UNIQUE(task_id, date)
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    description TEXT,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 """
 

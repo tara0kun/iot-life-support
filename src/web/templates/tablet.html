@@ -77,21 +77,21 @@
   .flower-stage svg { animation: grow-in 1s ease forwards; }
   .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 
-  /* スタンプカード */
-  .stamps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+  /* スタンプカード（高齢者向けに拡大） */
+  .stamps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0; }
   @media (min-width: 600px) { .stamps-grid { grid-template-columns: repeat(7, 1fr); } }
   .stamp {
-    background: var(--bg); border-radius: var(--radius-sm); padding: 14px 4px 12px;
+    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 4px 14px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
-    border: 2px solid transparent; min-height: 90px; transition: all 0.3s ease;
+    border: 2px solid transparent; min-height: 110px; transition: all 0.3s ease;
   }
   .stamp.done { background: linear-gradient(135deg, #E8F8F0, #D5F5E3); border-color: var(--success); }
   .stamp.current { border-color: var(--accent-light); background: #FFF8EE; animation: stamp-pulse 2.5s infinite; }
   @keyframes stamp-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(243,156,18,0.2); } 50% { box-shadow: 0 0 0 6px rgba(243,156,18,0); } }
-  .stamp-icon { width: 32px; height: 32px; }
-  .stamp-name { font-size: 11px; font-weight: 700; color: var(--text-light); margin-top: 6px; }
-  .stamp-check { font-size: 12px; color: var(--success); font-weight: 700; margin-top: 4px; }
-  .stamp-time { font-size: 10px; color: var(--text-muted); font-weight: 500; }
+  .stamp-icon { width: 40px; height: 40px; }
+  .stamp-name { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 6px; }
+  .stamp-check { font-size: 14px; color: var(--success); font-weight: 700; margin-top: 4px; }
+  .stamp-time { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 
   /* 庭 */
   .garden-card { background: linear-gradient(180deg, #E8F5E9 0%, #C8E6C9 40%, #A5D6A7 100%); position: relative; overflow: hidden; padding: 28px 20px 20px; }
@@ -123,11 +123,12 @@
   .garden-row-label { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
   .garden-row-label span { font-size: 12px; color: #558B2F; font-weight: 500; }
 
-  /* できたボタン */
+  /* できたボタン（タッチ領域を拡大） */
   .stamp-btn {
-    margin-top: 6px; padding: 6px 16px; border: 2px solid var(--success); border-radius: 10px;
-    background: white; color: var(--success); font-size: 12px; font-weight: 700;
+    margin-top: 8px; padding: 10px 22px; border: 2px solid var(--success); border-radius: 12px;
+    background: white; color: var(--success); font-size: 16px; font-weight: 700;
     cursor: pointer; font-family: inherit; transition: all 0.2s;
+    min-width: 80px; min-height: 44px;
   }
   .stamp-btn:hover { background: var(--success); color: white; }
   .stamp-btn:active { transform: scale(0.95); }
@@ -220,16 +221,31 @@
     <div class="clock" id="clock">{{ now.strftime("%H:%M") }}</div>
     <div class="date">{{ now.strftime("%Y年%-m月%-d日") }}
       {% set days = ["月","火","水","木","金","土","日"] %}（{{ days[now.weekday()] }}曜日）</div>
+    <button id="tts-toggle" onclick="setTTSEnabled(!isTTSEnabled())"
+            style="margin-top:12px;border:2px solid #BDBDBD;border-radius:24px;padding:10px 20px;font-size:15px;font-family:inherit;cursor:pointer;background:#E8F5E9;color:#2E7D32;font-weight:700;min-height:44px;">
+      🔊 音声ON
+    </button>
   </div>
 
   <div class="time-guide">
     <div class="label">今は</div>
     <div class="activity">{{ current_activity.text }}</div>
     {% if current_activity.rice %}<div class="sub">{{ current_activity.rice }}</div>{% endif %}
-    {% if next_meal %}
-    <div class="sub">次は {{ next_meal.name }}（{{ next_meal.time }}）あと{{ next_meal.minutes }}分{% if next_meal.rice %} ── ご飯は {{ next_meal.rice }}{% endif %}</div>
-    {% endif %}
   </div>
+
+  <!-- 家族からのメッセージ -->
+  {% for fp in family_prompts %}
+  <div class="alert-card remind" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
+    <div class="alert-icon">
+      <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#42A5F5" opacity="0.15"/><path d="M12 16 h24 v16 q0 4 -4 4 H16 q-4 0 -4-4Z" fill="#42A5F5" opacity="0.3"/><path d="M12 16 L24 26 L36 16" fill="none" stroke="#1565C0" stroke-width="2.5"/></svg>
+    </div>
+    <div class="alert-text">
+      <div class="alert-message" style="color: #1565C0">{{ fp.message }}</div>
+      <div class="alert-sub" style="color: #5D4037; font-size: 11px;">家族より</div>
+    </div>
+    <button onclick="dismissPrompt({{ fp.id }}, this)" style="background:none;border:2px solid #90CAF9;color:#1565C0;border-radius:12px;padding:12px 24px;font-size:18px;cursor:pointer;font-family:inherit;font-weight:700;min-height:48px;min-width:100px;">わかった</button>
+  </div>
+  {% endfor %}
 
   <!-- 注意喚起 -->
   {% for a in alerts %}
@@ -281,7 +297,7 @@
   <div class="card">
     <div class="card-label">今日の 記録</div>
     <div class="stamps-grid">
-      {% set button_activities = ["起床", "お薬", "お風呂", "トイレ", "就寝"] %}
+      {% set button_activities = ["起床", "お薬", "お風呂", "就寝"] %}
       {% for s in stamps %}
       <div class="stamp {{ 'done' if s.done else '' }} {{ 'current' if s.current else '' }}">
         <div class="stamp-icon">{{ s.icon }}</div>
@@ -596,6 +612,82 @@ document.querySelectorAll('.garden-flower').forEach(el => {
   el.innerHTML = svg;
 });
 
+// ============================================================
+// 音声読み上げ (Web Speech API)
+// ============================================================
+const TTS_KEY = 'tablet_tts_enabled';
+const ttsSupported = 'speechSynthesis' in window;
+
+function isTTSEnabled() {
+  const v = localStorage.getItem(TTS_KEY);
+  return v === null ? true : v === '1';  // デフォルトON
+}
+
+function setTTSEnabled(on) {
+  localStorage.setItem(TTS_KEY, on ? '1' : '0');
+  updateTTSButton();
+  if (!on) speechSynthesis.cancel();
+}
+
+function updateTTSButton() {
+  const btn = document.getElementById('tts-toggle');
+  if (!btn) return;
+  btn.textContent = isTTSEnabled() ? '🔊 音声ON' : '🔇 音声OFF';
+  btn.style.background = isTTSEnabled() ? '#E8F5E9' : '#FAFAFA';
+  btn.style.color = isTTSEnabled() ? '#2E7D32' : '#999';
+}
+
+function speak(text, opts = {}) {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  if (!text) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = 'ja-JP';
+  u.rate = opts.rate || 0.9;  // 祖母向けに少し遅め
+  u.pitch = opts.pitch || 1.0;
+  u.volume = opts.volume || 1.0;
+  speechSynthesis.speak(u);
+}
+
+function speakAlerts() {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  speechSynthesis.cancel();  // 既存キューをクリア
+
+  // 家族からのメッセージ優先
+  const famMsgs = document.querySelectorAll('.alert-card .alert-message');
+  const alertTexts = Array.from(famMsgs).map(el => el.textContent.trim()).filter(Boolean);
+  if (alertTexts.length === 0) return;
+
+  // 重要: ユーザー操作由来でないとブラウザが抑制する場合がある
+  // → 画面タップ後に読み上げる方針
+  alertTexts.forEach((t, i) => {
+    setTimeout(() => speak(t), i * 300);
+  });
+}
+
+// 初回タップで音声読み上げ（ブラウザのautoplay制約対策）
+let ttsInitialized = false;
+function initTTSOnInteraction() {
+  if (ttsInitialized) return;
+  ttsInitialized = true;
+  speakAlerts();
+}
+document.addEventListener('click', initTTSOnInteraction, { once: true });
+document.addEventListener('touchstart', initTTSOnInteraction, { once: true });
+
+window.addEventListener('DOMContentLoaded', () => {
+  updateTTSButton();
+});
+
+// 家族メッセージ確認
+async function dismissPrompt(id, btn) {
+  try {
+    await fetch(`/api/dismiss-prompt/${id}`, { method: 'POST' });
+    btn.closest('.alert-card').style.transition = 'opacity 0.3s';
+    btn.closest('.alert-card').style.opacity = '0';
+    setTimeout(() => btn.closest('.alert-card').remove(), 300);
+  } catch(e) {}
+}
+
 // 祖母「できた」ボタン処理
 async function tabletRecord(activity, btn) {
   btn.disabled = true;
@@ -658,13 +750,32 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') requestWakeLock();
 });
 
-// 5分ごとにページ自動リロード（データ鮮度維持）
-setTimeout(() => location.reload(), 5 * 60 * 1000);
+// 3分ごとにページ自動リロード（データ鮮度維持）
+setTimeout(() => location.reload(), 3 * 60 * 1000);
 
-// Service Worker登録（オフライン対応）
+// Service Worker 登録（オフラインキャッシュ）
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  });
 }
+
+// オンライン/オフラインバナー
+const offlineBanner = document.createElement('div');
+offlineBanner.id = 'offline-banner';
+offlineBanner.style.cssText = 'display:none;position:fixed;top:0;left:0;right:0;background:#FFC107;color:#5D4037;text-align:center;padding:8px;font-weight:700;font-size:14px;z-index:9999;';
+offlineBanner.textContent = '⚠️ 接続が切れています。表示は最後の記録です。';
+document.body.appendChild(offlineBanner);
+
+function updateOnlineStatus() {
+  offlineBanner.style.display = navigator.onLine ? 'none' : 'block';
+}
+window.addEventListener('online', () => {
+  updateOnlineStatus();
+  setTimeout(() => location.reload(), 500);  // 復活したら再読み込み
+});
+window.addEventListener('offline', updateOnlineStatus);
+updateOnlineStatus();
 </script>
 </body>
 </html>

@@ -8,14 +8,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
+import hmac
 import json
+import logging
 import secrets
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -24,7 +27,7 @@ from ..db import get_conn, init_db, transaction
 from ..event_bus import get_events_today, get_recent_events, get_events_by_date, subscribe, unsubscribe
 from ..sessions import sessions_today, last_session
 from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
-from ..lock_manager import get_device_state, unlock_device
+from ..lock_manager import get_device_state, lock_device, unlock_device
 
 app = FastAPI(title="IoT生活サポート")
 app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
@@ -111,7 +114,6 @@ async def tablet_view(request: Request):
             last_meal = s
             break
 
-    next_meal = _guess_next_meal(now, sessions)
     minutes_since_last_meal = None
     if last_meal:
         last_time = last_meal.get("started_at")
@@ -150,7 +152,6 @@ async def tablet_view(request: Request):
         "last_session": last,
         "last_meal": last_meal,
         "minutes_since_last_meal": minutes_since_last_meal,
-        "next_meal": next_meal,
         "stamps": stamps,
         "garden": garden,
         "time_greeting": _greeting(now),
@@ -158,6 +159,7 @@ async def tablet_view(request: Request):
         "alerts": alerts,
         "today_flower_color": today_flower_color,
         "done_count": done_count,
+        "family_prompts": _get_active_prompts(),
     })
 
 
@@ -196,31 +198,61 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
             "color": "#E67E22",
         })
 
-    # お薬未服用（朝9時以降で未服用）
-    if h >= 9 and "お薬" not in done_labels:
-        if h < 12:
-            alerts.append({
-                "type": "medicine",
-                "level": "remind",
-                "message": "お薬 飲みましたか？",
-                "sub": "",
-                "color": "#EC407A",
-            })
-        elif h >= 12:
-            alerts.append({
-                "type": "medicine",
-                "level": "warn",
-                "message": "お薬 まだですよ",
-                "sub": "",
-                "color": "#EC407A",
-            })
+    # お薬リマインド（家族が設定したスケジュールに基づく）
+    if "お薬" not in done_labels:
+        med_schedule = _load_medicine_schedule()
+        for med in med_schedule:
+            if h >= med["hour"]:
+                delay = h - med["hour"]
+                if delay <= 1:
+                    alerts.append({
+                        "type": "medicine",
+                        "level": "remind",
+                        "message": f"{med['timing']}のお薬 飲みましたか？",
+                        "sub": "",
+                        "color": "#EC407A",
+                    })
+                else:
+                    alerts.append({
+                        "type": "medicine",
+                        "level": "warn",
+                        "message": f"{med['timing']}のお薬 まだですよ",
+                        "sub": "",
+                        "color": "#EC407A",
+                    })
+                break  # 最も近いスケジュールのみ表示
 
-    # お風呂未入浴（17時以降）
-    if h >= 17 and "お風呂" not in done_labels:
+    # 一般的な時間帯での促し（指定ではなく、やさしい確認）
+    if 7 <= h < 10 and "朝食" not in done_labels:
         alerts.append({
-            "type": "bath",
-            "level": "remind",
-            "message": "お風呂 入りましたか？",
+            "type": "meal_remind",
+            "level": "gentle",
+            "message": "朝ごはんは食べましたか？",
+            "sub": "",
+            "color": "#FF9800",
+        })
+    elif 11 <= h < 14 and "昼食" not in done_labels:
+        alerts.append({
+            "type": "meal_remind",
+            "level": "gentle",
+            "message": "お昼ごはんは食べましたか？",
+            "sub": "",
+            "color": "#FF9800",
+        })
+    elif 17 <= h < 21 and "夕食" not in done_labels:
+        alerts.append({
+            "type": "meal_remind",
+            "level": "gentle",
+            "message": "夕ごはんは食べましたか？",
+            "sub": "",
+            "color": "#FF9800",
+        })
+
+    if 16 <= h < 22 and "お風呂" not in done_labels:
+        alerts.append({
+            "type": "bath_remind",
+            "level": "gentle",
+            "message": "お風呂は入りましたか？",
             "sub": "",
             "color": "#29B6F6",
         })
@@ -268,71 +300,48 @@ def _greeting(now: datetime) -> str:
     return "こんばんは"
 
 
-def _load_rice_guide() -> dict:
-    """炊飯量ガイドをDBから読み込み。未登録なら空dictを返す。"""
+def _load_rice_guide() -> str:
+    """現在の炊飯量設定を返す。未設定なら空文字。"""
     conn = get_conn()
     try:
-        rows = conn.execute("SELECT meal, amount FROM rice_guide").fetchall()
-        return {r["meal"]: r["amount"] for r in rows}
+        row = conn.execute("SELECT amount FROM rice_guide WHERE meal = 'next' LIMIT 1").fetchone()
+        return row["amount"] if row else ""
     finally:
         conn.close()
 
 
-def _guess_next_meal(now: datetime, sessions: list) -> dict | None:
-    rice_guide = _load_rice_guide()
-    schedule = [
-        ("朝ごはん", time(7, 0)),
-        ("お昼ごはん", time(12, 0)),
-        ("夕ごはん", time(18, 0)),
-    ]
-    done_labels = {s.get("label", "") for s in sessions}
-    label_map = {"朝ごはん": "朝食", "お昼ごはん": "昼食", "夕ごはん": "夕食"}
-    for name, t in schedule:
-        meal_dt = datetime.combine(now.date(), t)
-        meal_label = label_map.get(name, "")
-        if meal_label not in done_labels and meal_dt > now:
-            minutes = int((meal_dt - now).total_seconds() / 60)
-            rice = rice_guide.get(meal_label, "")
-            return {"name": name, "time": t.strftime("%H:%M"), "minutes": minutes, "rice": rice}
-    return None
+def _load_medicine_schedule() -> list[dict]:
+    """薬の服用スケジュールをDBから読み込み。"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT timing, hour, enabled FROM medicine_schedule WHERE enabled = 1 ORDER BY hour"
+        ).fetchall()
+        return [{"timing": r["timing"], "hour": r["hour"]} for r in rows]
+    finally:
+        conn.close()
+
+
+def _get_rice_info() -> str:
+    """現在設定されている炊飯量を返す。"""
+    amount = _load_rice_guide()
+    if not amount:
+        return ""
+    return f"ご飯は {amount} 炊いてね"
 
 
 def _current_activity(now: datetime, sessions: list) -> dict:
-    """今の時間帯に応じた活動ガイドを返す。"""
+    """時間帯に応じた挨拶を返す（活動の指定はしない）。"""
     h = now.hour
-    done_labels = {s.get("label", "") for s in sessions}
-    rice_guide = _load_rice_guide()
+    rice_info = _get_rice_info()
 
-    def _meal_activity(label, display, rice_key):
-        rice = rice_guide.get(rice_key, "")
-        rice_text = f"（ご飯は {rice}）" if rice else ""
-        return {"text": f"{display}の 時間 🍚", "rice": rice_text}
-
-    if 5 <= h < 7:
-        return {"text": "朝の 時間 🌅", "rice": ""}
-    if 7 <= h < 9:
-        if "朝食" not in done_labels:
-            return _meal_activity("朝食", "朝ごはん", "朝食")
-        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
-    if 9 <= h < 11:
-        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
-    if 11 <= h < 13:
-        if "昼食" not in done_labels:
-            return _meal_activity("昼食", "お昼ごはん", "昼食")
-        return {"text": "ゆっくり過ごす 時間 ☕", "rice": ""}
-    if 13 <= h < 16:
-        return {"text": "お昼の 時間 ☀️", "rice": ""}
-    if 16 <= h < 18:
-        if "お風呂" not in done_labels:
-            return {"text": "お風呂の 時間 🛁", "rice": ""}
-        return {"text": "夕方の 時間 🌇", "rice": ""}
-    if 18 <= h < 20:
-        if "夕食" not in done_labels:
-            return _meal_activity("夕食", "夕ごはん", "夕食")
-        return {"text": "夜の 時間 🌙", "rice": ""}
-    if 20 <= h < 22:
-        return {"text": "そろそろ寝る 時間 🌙", "rice": ""}
-    return {"text": "おやすみの 時間 😴", "rice": ""}
+    if 5 <= h < 10:
+        return {"text": "おはようございます 🌅", "rice": rice_info}
+    if 10 <= h < 17:
+        return {"text": "良い一日を ☀️", "rice": rice_info}
+    if 17 <= h < 21:
+        return {"text": "お疲れさまです 🌇", "rice": rice_info}
+    return {"text": "おやすみなさい 🌙", "rice": ""}
 
 
 def _build_stamps(sessions: list) -> list[dict]:
@@ -357,24 +366,6 @@ def _build_stamps(sessions: list) -> list[dict]:
                     t = t.split("T")[1][:5]
                 stamp["done"] = True
                 stamp["time"] = str(t)
-                break
-
-    # 今の時間帯に対応するスタンプを current にする（未完了のもの）
-    h = now.hour
-    current_label = None
-    if 5 <= h < 9:
-        current_label = "朝食"
-    elif 11 <= h < 13:
-        current_label = "昼食"
-    elif 16 <= h < 18:
-        current_label = "お風呂"
-    elif 18 <= h < 20:
-        current_label = "夕食"
-
-    if current_label:
-        for stamp in all_stamps:
-            if stamp["label"] == current_label and not stamp["done"]:
-                stamp["current"] = True
                 break
 
     return all_stamps
@@ -462,13 +453,8 @@ async def api_unlock(request: Request):
     reason = body.get("reason", "家族による手動解除")
     node_id = 1  # rice_cooker のMatter node_id
 
-    state = get_device_state(device_name)
-    if not state or not state["is_locked"]:
-        return {"ok": True, "message": "ロックされていません"}
-
     success = await unlock_device(device_name, node_id, reason=reason)
     if success:
-        # 解除ログを記録
         now = datetime.now()
         with transaction() as conn:
             conn.execute(
@@ -481,12 +467,35 @@ async def api_unlock(request: Request):
         raise HTTPException(status_code=500, detail="Matter通信に失敗しました")
 
 
+@app.post("/api/lock")
+async def api_lock(request: Request):
+    """家族が手動でロックをかける（予防的措置）。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    device_name = body.get("device", "rice_cooker")
+    reason = body.get("reason", "家族による手動ロック")
+    node_id = 1
+
+    success = await lock_device(device_name, node_id, reason=reason)
+    if success:
+        now = datetime.now()
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO events(person_id, source, event_type, started_at, raw_meta)
+                   VALUES(NULL, 'family_override', 'lock', ?, ?)""",
+                (now, json.dumps({"device": device_name, "reason": reason}, ensure_ascii=False)),
+            )
+        return {"ok": True, "message": "ロックしました"}
+    else:
+        raise HTTPException(status_code=500, detail="Matter通信に失敗しました")
+
+
 # センサー照合マッピング: ボタン→どのセンサーを確認するか
 SENSOR_VERIFY = {
     "起床": {"sources": ["camera"], "event_types": ["person_detected"], "window_minutes": 60},
     "お薬": None,  # センサーなし → 常に家族確認
     "お風呂": {"sources": ["bath_door", "bath_motion"], "event_types": ["close", "open", "motion", "bath_end"], "window_minutes": 120},
-    "トイレ": {"sources": ["toilet"], "event_types": ["open", "close"], "window_minutes": 60},
     "就寝": None,  # センサーなし → 常に家族確認
 }
 
@@ -560,7 +569,7 @@ async def api_tablet_record(request: Request):
     activity = body.get("activity", "")
     person_id = body.get("person_id", 1)
 
-    valid = {"起床", "お薬", "お風呂", "トイレ", "就寝"}
+    valid = {"起床", "お薬", "お風呂", "就寝"}
     if activity not in valid:
         raise HTTPException(status_code=400, detail=f"無効な活動: {activity}")
 
@@ -684,40 +693,538 @@ async def api_weekly_summary(request: Request):
 
 @app.get("/api/rice-guide")
 async def api_get_rice_guide(request: Request):
-    """炊飯量ガイドを取得。"""
+    """炊飯量ガイドを取得（GET）。"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
-    return _load_rice_guide()
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT amount FROM rice_guide WHERE meal = 'next' LIMIT 1").fetchone()
+        return {"amount": row["amount"] if row else ""}
+    finally:
+        conn.close()
+
+
+@app.post("/api/family-prompt")
+async def api_send_prompt(request: Request):
+    """家族から祖母タブレットにメッセージを送る。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    message = body.get("message", "").strip()
+    minutes = body.get("minutes", 60)  # 表示時間（デフォルト60分）
+    if not message:
+        raise HTTPException(status_code=400, detail="メッセージを入力してください")
+    now = datetime.now()
+    expires = now + timedelta(minutes=int(minutes))
+    now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    expires_str = expires.strftime("%Y-%m-%d %H:%M:%S")
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO family_prompts(message, sent_by, created_at, expires_at) VALUES(?, ?, ?, ?)",
+            (message, "家族", now_str, expires_str),
+        )
+    return {"ok": True, "message": message, "expires_at": expires_str}
+
+
+@app.post("/api/dismiss-prompt/{prompt_id}")
+async def api_dismiss_prompt(request: Request, prompt_id: int):
+    """祖母がメッセージを確認済みにする。"""
+    with transaction() as conn:
+        conn.execute("UPDATE family_prompts SET dismissed = 1 WHERE id = ?", (prompt_id,))
+    return {"ok": True}
+
+
+def _get_active_prompts() -> list[dict]:
+    """有効な家族メッセージを取得。"""
+    conn = get_conn()
+    try:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        rows = conn.execute(
+            """SELECT id, message, sent_by, created_at FROM family_prompts
+               WHERE dismissed = 0 AND expires_at > ?
+               ORDER BY created_at DESC""",
+            (now,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+# ============================================================
+# LINE Webhook (「リンクが欲しい」等のメッセージで現URLを返信)
+# ============================================================
+
+_webhook_log = logging.getLogger("line_webhook")
+
+LINE_URL_TRIGGERS = (
+    "リンク", "url", "URL", "Url",
+    "つながらない", "繋がらない", "つながらん",
+    "見れない", "みれない", "見られない", "みられない",
+    "アクセス", "開けない", "あけない",
+    "接続",
+)
+
+
+def _load_line_secret() -> str:
+    env_path = BASE.parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("LINE_CHANNEL_SECRET="):
+                return line.split("=", 1)[1].strip()
+    return ""
+
+
+def _load_line_allowed_senders() -> set[str]:
+    """許可された送信者ID。未設定ならLINE_USER_IDをフォールバック。"""
+    env_path = BASE.parent.parent / ".env"
+    allowed: set[str] = set()
+    line_user_id = ""
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("LINE_ALLOWED_SENDERS="):
+                raw = line.split("=", 1)[1].strip()
+                allowed.update(x.strip() for x in raw.split(",") if x.strip())
+            elif line.startswith("LINE_USER_ID="):
+                line_user_id = line.split("=", 1)[1].strip()
+    if not allowed and line_user_id:
+        allowed.add(line_user_id)
+    return allowed
+
+
+def _current_tunnel_url() -> str:
+    url_file = BASE.parent.parent / "data" / "tunnel_url.txt"
+    if url_file.exists():
+        return url_file.read_text().strip()
+    return ""
+
+
+def _build_url_reply() -> str:
+    url = _current_tunnel_url()
+    if not url:
+        return "⚠️ 現在公開URLが未発行です。ラズパイ側で `bash scripts/start_tunnel.sh` を実行してください。"
+    token = _load_tablet_token()
+    tablet_url = f"{url}/tablet?token={token}" if token else f"{url}/tablet"
+    return (
+        "🌐 最新の公開URL\n\n"
+        "📱 タブレット画面:\n"
+        f"{tablet_url}\n\n"
+        "👨‍👩‍👧 家族管理画面:\n"
+        f"{url}/family"
+    )
+
+
+def _is_url_request(text: str) -> bool:
+    if not text:
+        return False
+    lower = text.lower()
+    for kw in LINE_URL_TRIGGERS:
+        if kw.lower() in lower:
+            return True
+    return False
+
+
+def _extract_sender_id(source: dict) -> str:
+    """LINE event.source からIDを取り出す（group/room/user のいずれか）。"""
+    return source.get("groupId") or source.get("roomId") or source.get("userId", "")
+
+
+@app.get("/line/webhook")
+async def line_webhook_get():
+    """LINE Developersコンソールからの疎通確認用（GETには200で応答）。"""
+    return PlainTextResponse("OK")
+
+
+@app.post("/line/webhook")
+async def line_webhook(request: Request):
+    """LINE Messaging APIからのwebhookを受信する。
+
+    「リンク」「URL」等のキーワードを含むメッセージを受けたら、現在の公開URLを返信する。
+    """
+    body = await request.body()
+    signature = request.headers.get("x-line-signature", "")
+    secret = _load_line_secret()
+
+    # 署名検証（シークレット未設定なら検証スキップ＝自己責任）
+    if secret:
+        expected = base64.b64encode(
+            hmac.new(secret.encode("utf-8"), body, hashlib.sha256).digest()
+        ).decode("utf-8")
+        if not hmac.compare_digest(expected, signature):
+            _webhook_log.warning("LINE webhook署名不一致")
+            raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        payload = json.loads(body.decode("utf-8") or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+
+    allowed = _load_line_allowed_senders()
+
+    from ..notifier import reply_line_message
+    from ..line_commands import dispatch
+    events = payload.get("events", [])
+    for ev in events:
+        if ev.get("type") != "message":
+            continue
+        msg = ev.get("message", {})
+        if msg.get("type") != "text":
+            continue
+        text = msg.get("text", "")
+        reply_token = ev.get("replyToken", "")
+        sender_id = _extract_sender_id(ev.get("source", {}))
+
+        # 許可リストチェック（allowedが空なら全拒否＝未設定の不正アクセス防止）
+        if allowed and sender_id not in allowed:
+            _webhook_log.info("未許可送信者: %s", sender_id)
+            continue
+
+        # コマンドディスパッチ（リンク以外すべて）
+        reply = await dispatch(text, sender_id)
+        if reply is None and _is_url_request(text):
+            reply = _build_url_reply()
+
+        if reply:
+            try:
+                await asyncio.to_thread(reply_line_message, reply_token, reply)
+            except Exception as e:
+                _webhook_log.error("LINE返信失敗: %s", e)
+
+    # 常に200を返す（LINEの再送を防ぐ）
+    return {"ok": True}
+
+
+# ============================================================
+# 家族タスク管理（役割分担）
+# ============================================================
+
+@app.get("/family/manual", response_class=HTMLResponse)
+async def family_manual(request: Request):
+    """家族向け説明書＋操作マニュアル（ブラウザ印刷でPDF化可）。"""
+    if not _is_family_authenticated(request):
+        return RedirectResponse("/family/login", status_code=303)
+    return templates.TemplateResponse(request, "family_manual.html", {})
+
+
+@app.get("/family/weekly-report", response_class=HTMLResponse)
+async def family_weekly_report(request: Request):
+    """週次レポートをブラウザで表示。Chrome等の「PDFに保存」で出力できる。"""
+    if not _is_family_authenticated(request):
+        return RedirectResponse("/family/login", status_code=303)
+    end_date_str = request.query_params.get("end", "")
+    days = int(request.query_params.get("days", "7"))
+    days = max(1, min(days, 30))
+    if end_date_str:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d").date()
+    else:
+        end_date = datetime.now().date()
+    start_date = end_date - timedelta(days=days - 1)
+    date_strs = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
+
+    grandma_id = 1
+    meal_labels = {"朝食", "昼食", "夕食", "間食", "おやつ"}
+    stamp_labels = ["起床", "お薬", "朝食", "昼食", "お風呂", "夕食", "就寝"]
+
+    conn = get_conn()
+    try:
+        ph = ",".join("?" * len(date_strs))
+        # 食事
+        meal_rows = conn.execute(
+            f"""SELECT DATE(started_at) as d, label, started_at FROM meal_sessions
+                WHERE person_id = ? AND DATE(started_at) IN ({ph})
+                AND label IN ('朝食','昼食','夕食','間食','おやつ')
+                ORDER BY started_at""",
+            (grandma_id, *date_strs),
+        ).fetchall()
+        # スタンプ
+        stamp_rows = conn.execute(
+            f"""SELECT date, done_count, total_count, details FROM daily_scores
+                WHERE person_id = ? AND date IN ({ph})""",
+            (grandma_id, *date_strs),
+        ).fetchall()
+        # お薬
+        med_taken = conn.execute(
+            f"""SELECT DATE(started_at) as d, COUNT(*) as cnt FROM events
+                WHERE source IN ('family_report', 'tablet_report')
+                AND event_type = 'お薬'
+                AND DATE(started_at) IN ({ph})
+                GROUP BY d""",
+            date_strs,
+        ).fetchall()
+        med_sched = conn.execute(
+            "SELECT COUNT(*) as cnt FROM medicine_schedule WHERE enabled = 1"
+        ).fetchone()["cnt"]
+        # ロック発動
+        lock_count = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM events
+                WHERE source = 'lock_manager' AND event_type = 'auto_lock'
+                AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()["cnt"]
+    finally:
+        conn.close()
+
+    # 集計
+    by_date = {ds: {"meals": [], "stamps": 0, "med_taken": 0} for ds in date_strs}
+    for r in meal_rows:
+        t = r["started_at"]
+        if isinstance(t, str):
+            try:
+                t = datetime.fromisoformat(t.replace("T", " "))
+            except ValueError:
+                continue
+        by_date.setdefault(r["d"], {"meals": [], "stamps": 0, "med_taken": 0})
+        by_date[r["d"]]["meals"].append({"label": r["label"], "time": t.strftime("%H:%M")})
+    for r in stamp_rows:
+        if r["date"] in by_date:
+            by_date[r["date"]]["stamps"] = r["done_count"]
+    for r in med_taken:
+        if r["d"] in by_date:
+            by_date[r["d"]]["med_taken"] = r["cnt"]
+
+    daily_data = [{"date": ds, **by_date[ds]} for ds in date_strs]
+
+    meal_counts = [len(d["meals"]) for d in daily_data]
+    stamp_counts = [d["stamps"] for d in daily_data]
+    med_counts = [d["med_taken"] for d in daily_data]
+
+    summary = {
+        "meal_avg": sum(meal_counts) / len(meal_counts) if meal_counts else 0,
+        "meal_max": max(meal_counts) if meal_counts else 0,
+        "overeat_days": sum(1 for c in meal_counts if c >= 3),
+        "stamp_avg": sum(stamp_counts) / len(stamp_counts) if stamp_counts else 0,
+        "stamp_pct": int(100 * sum(stamp_counts) / (len(stamp_labels) * len(date_strs))) if date_strs else 0,
+        "med_pct": int(100 * sum(med_counts) / (med_sched * len(date_strs))) if med_sched else 0,
+        "lock_count": lock_count,
+    }
+
+    return templates.TemplateResponse(request, "weekly_report.html", {
+        "start_date": start_date,
+        "end_date": end_date,
+        "days": days,
+        "daily_data": daily_data,
+        "summary": summary,
+        "stamp_labels": stamp_labels,
+    })
+
+
+@app.get("/api/heatmap")
+async def api_heatmap(request: Request, days: int = 7):
+    """過去N日×24時間のイベント密度を返す（家族UIヒートマップ用）。
+
+    返却形式: {
+        "dates": ["04-18", "04-19", ...],
+        "matrix": [[h0_count, h1_count, ..., h23_count], ...],
+        "max": 最大カウント,
+        "summary": {"meals": int, "baths": int, "toilets": int}
+    }
+    """
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    days = max(1, min(days, 30))
+    today = datetime.now().date()
+    dates = [(today - timedelta(days=i)) for i in range(days - 1, -1, -1)]
+    date_strs = [d.strftime("%Y-%m-%d") for d in dates]
+
+    matrix = [[0] * 24 for _ in range(days)]
+    summary = {"meals": 0, "baths": 0, "toilets": 0}
+
+    conn = get_conn()
+    try:
+        # 全イベントを集計
+        ph = ",".join("?" * len(date_strs))
+        rows = conn.execute(
+            f"""SELECT DATE(started_at) as d, CAST(strftime('%H', started_at) AS INTEGER) as h, COUNT(*) as cnt
+                FROM events
+                WHERE DATE(started_at) IN ({ph})
+                GROUP BY d, h""",
+            date_strs,
+        ).fetchall()
+        date_idx = {ds: i for i, ds in enumerate(date_strs)}
+        for r in rows:
+            i = date_idx.get(r["d"])
+            if i is None or r["h"] is None:
+                continue
+            matrix[i][r["h"]] = r["cnt"]
+
+        # サマリー
+        meals_row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM meal_sessions
+                WHERE label IN ('朝食','昼食','夕食','間食','おやつ')
+                AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()
+        summary["meals"] = meals_row["cnt"] if meals_row else 0
+        baths_row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM meal_sessions
+                WHERE label = 'お風呂' AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()
+        summary["baths"] = baths_row["cnt"] if baths_row else 0
+        toilets_row = conn.execute(
+            f"""SELECT COUNT(*) as cnt FROM events
+                WHERE source = 'toilet' AND event_type = 'open'
+                AND DATE(started_at) IN ({ph})""",
+            date_strs,
+        ).fetchone()
+        summary["toilets"] = toilets_row["cnt"] if toilets_row else 0
+    finally:
+        conn.close()
+
+    max_cnt = max((max(row) for row in matrix), default=0)
+    return {
+        "dates": [d.strftime("%m-%d (%a)") for d in dates],
+        "matrix": matrix,
+        "max": max_cnt,
+        "summary": summary,
+    }
+
+
+@app.get("/api/care-tasks")
+async def api_list_care_tasks(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    conn = get_conn()
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT t.id, t.task_name, t.assignee_name, t.reminder_hour, t.enabled,
+                      l.done_by, l.done_at
+               FROM care_tasks t
+               LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
+               ORDER BY t.reminder_hour""",
+            (today,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+@app.post("/api/care-tasks")
+async def api_create_care_task(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    name = (body.get("task_name") or "").strip()
+    assignee = (body.get("assignee_name") or "").strip() or None
+    hour = body.get("reminder_hour")
+    if not name:
+        raise HTTPException(status_code=400, detail="task_nameは必須")
+    if hour is not None and not (0 <= int(hour) <= 23):
+        raise HTTPException(status_code=400, detail="reminder_hourは0〜23")
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO care_tasks(task_name, assignee_name, reminder_hour)
+               VALUES(?, ?, ?)
+               ON CONFLICT(task_name) DO UPDATE SET
+                   assignee_name = excluded.assignee_name,
+                   reminder_hour = excluded.reminder_hour,
+                   updated_at = CURRENT_TIMESTAMP""",
+            (name, assignee, int(hour) if hour is not None else None),
+        )
+    return {"ok": True}
+
+
+@app.delete("/api/care-tasks/{task_id}")
+async def api_delete_care_task(request: Request, task_id: int):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    with transaction() as conn:
+        conn.execute("DELETE FROM care_task_logs WHERE task_id = ?", (task_id,))
+        conn.execute("DELETE FROM care_tasks WHERE id = ?", (task_id,))
+    return {"ok": True}
+
+
+# ============================================================
+# 動的設定（通知ON/OFF・しきい値）
+# ============================================================
+
+@app.get("/api/settings")
+async def api_list_settings(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    from ..settings import list_settings
+    return list_settings()
+
+
+@app.post("/api/settings")
+async def api_set_setting(request: Request):
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    from ..settings import set_setting, SETTING_DEFAULTS
+    body = await request.json()
+    key = body.get("key", "")
+    value = body.get("value", "")
+    if key not in SETTING_DEFAULTS:
+        raise HTTPException(status_code=400, detail=f"未知の設定キー: {key}")
+    set_setting(key, str(value))
+    return {"ok": True, "key": key, "value": value}
+
+
+@app.get("/api/medicine-schedule")
+async def api_get_medicine_schedule(request: Request):
+    """薬スケジュールを取得。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    return _load_medicine_schedule()
+
+
+@app.post("/api/medicine-schedule")
+async def api_set_medicine_schedule(request: Request):
+    """薬スケジュールを登録・更新。body: {"timing": "朝", "hour": 8}"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    timing = body.get("timing", "")
+    hour = body.get("hour")
+    if timing not in {"朝", "昼", "夜"}:
+        raise HTTPException(status_code=400, detail=f"無効なタイミング: {timing}")
+    if hour is None or not (0 <= int(hour) <= 23):
+        raise HTTPException(status_code=400, detail="時刻は0〜23で指定してください")
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO medicine_schedule(timing, hour, updated_at) VALUES(?, ?, ?)
+               ON CONFLICT(timing) DO UPDATE SET hour = excluded.hour, updated_at = excluded.updated_at""",
+            (timing, int(hour), datetime.now()),
+        )
+    return {"ok": True, "timing": timing, "hour": int(hour)}
+
+
+@app.delete("/api/medicine-schedule/{timing}")
+async def api_delete_medicine_schedule(request: Request, timing: str):
+    """薬スケジュールを削除。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    with transaction() as conn:
+        conn.execute("DELETE FROM medicine_schedule WHERE timing = ?", (timing,))
+    return {"ok": True}
 
 
 @app.post("/api/rice-guide")
 async def api_set_rice_guide(request: Request):
-    """炊飯量ガイドを登録・更新。body: {"meal": "朝食", "amount": "1合"}"""
+    """炊飯量を設定。body: {"amount": "2合"}"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     body = await request.json()
-    meal = body.get("meal", "")
-    amount = body.get("amount", "")
-    if meal not in {"朝食", "昼食", "夕食"}:
-        raise HTTPException(status_code=400, detail=f"無効な食事: {meal}")
+    amount = body.get("amount", "").strip()
     if not amount:
         raise HTTPException(status_code=400, detail="量を入力してください")
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with transaction() as conn:
+        conn.execute("DELETE FROM rice_guide")
         conn.execute(
-            """INSERT INTO rice_guide(meal, amount, updated_at) VALUES(?, ?, ?)
-               ON CONFLICT(meal) DO UPDATE SET amount = excluded.amount, updated_at = excluded.updated_at""",
-            (meal, amount, datetime.now()),
+            "INSERT INTO rice_guide(meal, amount, updated_at) VALUES('next', ?, ?)",
+            (amount, now_str),
         )
-    return {"ok": True, "meal": meal, "amount": amount}
+    return {"ok": True, "amount": amount}
 
 
-@app.delete("/api/rice-guide/{meal}")
-async def api_delete_rice_guide(request: Request, meal: str):
-    """炊飯量ガイドを削除。"""
+@app.delete("/api/rice-guide")
+async def api_clear_rice_guide(request: Request):
+    """炊飯量設定をクリア。"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     with transaction() as conn:
-        conn.execute("DELETE FROM rice_guide WHERE meal = ?", (meal,))
+        conn.execute("DELETE FROM rice_guide")
     return {"ok": True}
 
 
@@ -845,6 +1352,25 @@ async def family_view(request: Request):
         is_locked = rice_cooker_state["is_locked"] if rice_cooker_state else False
     except Exception:
         is_locked = False
+
+    # 家族タスク一覧
+    care_tasks_data: list[dict] = []
+    conn = get_conn()
+    try:
+        today = now.strftime("%Y-%m-%d")
+        rows = conn.execute(
+            """SELECT t.id, t.task_name, t.assignee_name, t.reminder_hour, t.enabled,
+                      l.done_by, l.done_at
+               FROM care_tasks t
+               LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
+               ORDER BY t.reminder_hour""",
+            (today,),
+        ).fetchall()
+        care_tasks_data = [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+    from ..settings import list_settings
     return templates.TemplateResponse(request, "family.html", {
         "events": events,
         "persons": persons,
@@ -853,7 +1379,10 @@ async def family_view(request: Request):
         "is_locked": is_locked,
         "selected_date": selected_date,
         "is_today": is_today,
-        "rice_guide": _load_rice_guide(),
+        "rice_amount": _load_rice_guide(),
+        "medicine_schedule": {m["timing"]: m["hour"] for m in _load_medicine_schedule()},
+        "care_tasks": care_tasks_data,
+        "settings": list_settings(),
     })
 
 
