@@ -117,6 +117,34 @@
     .rice-save-btn { padding: 6px 4px; }
   }
 
+  /* 炊飯量セクション（横並び→狭幅で折り返し） */
+  .rice-config {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  }
+  .rice-current {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 6px 14px; border: 2px solid #E8E8E8; border-radius: 10px;
+    background: #FAFAFA; min-width: 100px;
+  }
+  .rice-current-label { font-size: 10px; color: var(--text-muted); }
+  .rice-current-value { font-size: 18px; font-weight: 700; color: var(--primary); white-space: nowrap; }
+  .rice-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .rice-preset-btn { padding: 8px 14px; font-size: 13px; white-space: nowrap; }
+  .rice-custom-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .rice-custom-input {
+    width: 110px; padding: 8px; border: 2px solid #E0E0E0; border-radius: 8px;
+    font-size: 13px; font-family: inherit; text-align: center; box-sizing: border-box;
+  }
+  .rice-custom-row .rice-save-btn { padding: 8px 12px; white-space: nowrap; }
+  @media (max-width: 480px) {
+    .rice-config { gap: 10px; }
+    .rice-current { width: 100%; flex-direction: row; align-items: center; gap: 10px; }
+    .rice-presets { width: 100%; justify-content: space-between; }
+    .rice-preset-btn { flex: 1; min-width: 0; padding: 10px 4px; }
+    .rice-custom-row { width: 100%; }
+    .rice-custom-input { flex: 1; min-width: 0; }
+  }
+
   /* 日付ナビ */
   .date-nav {
     display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
@@ -319,18 +347,23 @@
   <div class="section-card">
     <div class="section-title">炊飯量</div>
     <div class="section-desc">タブレットに「ご飯は○合 炊いてね」と表示されます。</div>
-    <div style="display:flex; align-items:center; gap:10px;">
-      <div class="rice-amount" style="font-size:20px; min-width:60px;">{{ rice_amount if rice_amount else "未設定" }}</div>
-      <div style="display:flex; gap:6px;">
+    <div class="rice-config">
+      <div class="rice-current">
+        <span class="rice-current-label">いまの設定</span>
+        <span class="rice-current-value">{{ rice_amount if rice_amount else "未設定" }}</span>
+      </div>
+      <div class="rice-presets">
         {% for n in ["1合", "2合", "3合"] %}
-        <button class="rice-save-btn save" onclick="setRice('{{ n }}')" style="padding:8px 16px; font-size:13px;">{{ n }}</button>
+        <button class="rice-save-btn save rice-preset-btn" onclick="setRice('{{ n }}')">{{ n }}</button>
         {% endfor %}
       </div>
-      <input type="text" id="rice-custom" placeholder="自由入力" style="width:80px; padding:8px; border:2px solid #E0E0E0; border-radius:8px; font-size:13px; font-family:inherit; text-align:center;">
-      <button class="rice-save-btn save" onclick="setRice(document.getElementById('rice-custom').value)" style="padding:8px 12px;">設定</button>
-      {% if rice_amount %}
-      <button class="rice-save-btn delete" onclick="clearRice()" style="padding:8px 12px;">クリア</button>
-      {% endif %}
+      <div class="rice-custom-row">
+        <input type="text" id="rice-custom" class="rice-custom-input" placeholder="自由入力">
+        <button class="rice-save-btn save" onclick="setRice(document.getElementById('rice-custom').value)">設定</button>
+        {% if rice_amount %}
+        <button class="rice-save-btn delete" onclick="clearRice()">クリア</button>
+        {% endif %}
+      </div>
     </div>
   </div>
 
