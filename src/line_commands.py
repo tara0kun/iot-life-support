@@ -323,6 +323,8 @@ def handle_register_family(text: str, sender_id: str) -> str:
     msg = f"✅ 「{name}」として登録しました。\n以降このLINEに通知が届きます。"
     if existing:
         msg += "\n（前の登録を上書きしました）"
+    # 登録直後はヘルプも自動表示
+    msg += "\n\n----------\n" + handle_help()
     return msg
 
 
