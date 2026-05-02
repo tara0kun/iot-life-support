@@ -689,6 +689,8 @@ async function dismissPrompt(id, btn) {
 }
 
 // 祖母「できた」ボタン処理
+// 祖母には常に肯定的なフィードバック（✓）のみを返す。
+// センサー未確認のケースは家族側UI＋LINEで通知され、祖母には見せない。
 async function tabletRecord(activity, btn) {
   btn.disabled = true;
   btn.textContent = '確認中...';
@@ -699,29 +701,18 @@ async function tabletRecord(activity, btn) {
     });
     const data = await resp.json();
     const area = document.getElementById('verify-alert-area');
-    if (data.verified) {
+    if (area) area.innerHTML = '';
+
+    if (data.reason === 'cooldown') {
       btn.classList.add('pressed');
       btn.textContent = '✓';
-      setTimeout(() => location.reload(), 1500);
-    } else {
-      btn.disabled = false;
-      btn.textContent = 'できた';
-      let msg = '';
-      if (data.reason === 'cooldown') {
-        msg = `<div class="va-title">さっき押しましたよ</div>
-               <div class="va-sub">しばらく待ってからもう一度押してください。</div>`;
-        btn.disabled = true;
-        btn.textContent = '待って';
-      } else if (data.reason === 'no_sensor') {
-        msg = `<div class="va-title">「${activity}」はセンサーで確認できません</div>
-               <div class="va-sub">家族に「${activity}した」と伝えてください。<br>家族が記録してくれます。</div>`;
-      } else {
-        msg = `<div class="va-title">「${activity}」の記録が見つかりません</div>
-               <div class="va-sub">本当にやりましたか？<br>やった場合は家族に伝えてください。</div>`;
-      }
-      area.innerHTML = `<div class="verify-alert fail">${msg}</div>`;
-      setTimeout(() => { area.innerHTML = ''; }, 10000);
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'できた'; btn.classList.remove('pressed'); }, 2000);
+      return;
     }
+
+    btn.classList.add('pressed');
+    btn.textContent = '✓';
+    setTimeout(() => location.reload(), 1500);
   } catch(e) {
     btn.disabled = false;
     btn.textContent = 'できた';
