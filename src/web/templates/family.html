@@ -117,6 +117,33 @@
     .rice-save-btn { padding: 6px 4px; }
   }
 
+  /* 機器管理セクション */
+  .device-control-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    justify-content: space-between; margin-top: 12px;
+    padding: 14px 18px; background: #FAFAFA; border-radius: 12px; border: 2px solid #E8E8E8;
+  }
+  .device-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .device-label { font-weight: 700; font-size: 15px; color: var(--text); white-space: nowrap; }
+  .device-badge {
+    display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+  }
+  .device-badge.locked { background: #FDECEA; color: #C62828; border: 1px solid #F8BBD0; }
+  .device-badge.normal { background: #E8F5E9; color: #2E7D32; border: 1px solid #C8E6C9; }
+  .device-action-btn {
+    border: none; padding: 10px 22px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; font-weight: 700; font-family: inherit; white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .device-action-btn:hover { opacity: 0.85; }
+  .device-action-btn.unlock { background: #43A047; color: #fff; }
+  .device-action-btn.lock { background: #E65100; color: #fff; }
+  @media (max-width: 480px) {
+    .device-control-row { gap: 10px; padding: 12px 14px; }
+    .device-action-btn { width: 100%; padding: 12px; }
+  }
+
   /* 炊飯量セクション（横並び→狭幅で折り返し） */
   .rice-config {
     display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
@@ -261,15 +288,15 @@
   <div class="section-card">
     <div class="section-title">機器管理</div>
     <div class="section-desc">炊飯器のロック状態を手動で切り替えできます</div>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;">
-      <div>
-        <span style="font-weight:500;">炊飯器:</span>
-        <span id="device-state-badge" style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:0.9em;margin-left:6px;{% if is_locked %}background:#FDECEA;color:#C62828;{% else %}background:#E8F5E9;color:#2E7D32;{% endif %}">
+    <div class="device-control-row">
+      <div class="device-info">
+        <span class="device-label">炊飯器</span>
+        <span id="device-state-badge" class="device-badge {% if is_locked %}locked{% else %}normal{% endif %}">
           {% if is_locked %}🔒 ロック中{% else %}🔓 通常{% endif %}
         </span>
       </div>
-      <button id="unlock-btn" onclick="unlockDevice()" style="background:#43A047;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if not is_locked %}display:none;{% endif %}">ロック解除</button>
-      <button id="lock-btn" onclick="lockDevice()" style="background:#E65100;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if is_locked %}display:none;{% endif %}">手動ロック</button>
+      <button id="unlock-btn" onclick="unlockDevice()" class="device-action-btn unlock" {% if not is_locked %}style="display:none;"{% endif %}>ロック解除</button>
+      <button id="lock-btn" onclick="lockDevice()" class="device-action-btn lock" {% if is_locked %}style="display:none;"{% endif %}>手動ロック</button>
     </div>
   </div>
 
