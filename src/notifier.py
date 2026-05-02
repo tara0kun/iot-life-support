@@ -74,15 +74,35 @@ def send_line_message(message: str, user_id: str | None = None) -> bool:
 
 
 def _load_recipients() -> list[str]:
-    """通知先LINE user_id 一覧。LINE_ALLOWED_SENDERS優先、なければLINE_USER_ID。"""
+    """通知先LINE user_id 一覧。.env (LINE_ALLOWED_SENDERS / LINE_USER_ID) と
+    DBの family_line_users テーブルの両方を統合（重複排除）。
+    """
+    ids: list[str] = []
+    seen: set[str] = set()
+
+    def add(uid: str) -> None:
+        uid = (uid or "").strip()
+        if uid and uid not in seen:
+            seen.add(uid)
+            ids.append(uid)
+
     env = _load_env()
-    senders = env.get("LINE_ALLOWED_SENDERS", "").strip()
-    if senders:
-        ids = [s.strip() for s in senders.split(",") if s.strip()]
-        if ids:
-            return ids
-    fallback = env.get("LINE_USER_ID", "").strip()
-    return [fallback] if fallback else []
+    for s in env.get("LINE_ALLOWED_SENDERS", "").split(","):
+        add(s)
+    add(env.get("LINE_USER_ID", ""))
+
+    # DB登録家族も追加
+    try:
+        from .db import get_conn
+        conn = get_conn()
+        try:
+            for r in conn.execute("SELECT line_user_id FROM family_line_users").fetchall():
+                add(r["line_user_id"])
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("family_line_users 読み込み失敗: %s", e)
+    return ids
 
 
 def broadcast_line_message(message: str) -> int:

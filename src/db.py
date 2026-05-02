@@ -154,6 +154,14 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS family_line_users (
+    line_user_id TEXT PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES persons(id),
+    display_name TEXT,
+    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS pending_notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     notification_type TEXT NOT NULL,            -- 'attribute_session', 'anomaly_*' 等

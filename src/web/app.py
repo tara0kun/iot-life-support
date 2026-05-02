@@ -728,7 +728,11 @@ def _load_line_secret() -> str:
 
 
 def _load_line_allowed_senders() -> set[str]:
-    """許可された送信者ID。未設定ならLINE_USER_IDをフォールバック。"""
+    """許可された送信者ID。.env と DB(family_line_users) の両方を統合。
+
+    家族登録機能 (登録 母 等) で増えるDB上のIDもここで読まれて、
+    iot-web 再起動なしに即座に許可送信者として扱われる。
+    """
     env_path = BASE.parent.parent / ".env"
     allowed: set[str] = set()
     line_user_id = ""
@@ -739,8 +743,20 @@ def _load_line_allowed_senders() -> set[str]:
                 allowed.update(x.strip() for x in raw.split(",") if x.strip())
             elif line.startswith("LINE_USER_ID="):
                 line_user_id = line.split("=", 1)[1].strip()
-    if not allowed and line_user_id:
+    if line_user_id:
         allowed.add(line_user_id)
+    # DBから家族登録者も追加
+    try:
+        from ..db import get_conn
+        conn = get_conn()
+        try:
+            for r in conn.execute("SELECT line_user_id FROM family_line_users").fetchall():
+                if r["line_user_id"]:
+                    allowed.add(r["line_user_id"])
+        finally:
+            conn.close()
+    except Exception:
+        pass
     return allowed
 
 
@@ -821,8 +837,19 @@ async def line_webhook(request: Request):
         sender_id = _extract_sender_id(ev.get("source", {}))
         reply_token = ev.get("replyToken", "")
 
-        # 許可リストチェック
-        if allowed and sender_id not in allowed:
+        # 全受信メッセージのsender_idをログ（家族追加時のID取得用）
+        print(f"RECV type={ev_type} sender={sender_id}", flush=True)
+
+        # メッセージ本文を先に取得（登録コマンド判定のため）
+        text_for_check = ""
+        if ev_type == "message":
+            m = ev.get("message", {})
+            if m.get("type") == "text":
+                text_for_check = m.get("text", "").strip()
+        is_register_command = text_for_check.startswith("登録")
+
+        # 許可リストチェック（登録コマンドだけは未登録者でも通す）
+        if allowed and sender_id not in allowed and not is_register_command:
             _webhook_log.info("未許可送信者: %s", sender_id)
             continue
 

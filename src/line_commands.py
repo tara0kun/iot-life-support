@@ -43,6 +43,12 @@ def match_command(text: str) -> str:
     t = (text or "").strip()
     lower = t.lower()
 
+    if t.startswith("登録 ") or t.startswith("登録　") or t == "登録":
+        return "register_family"
+    if t.startswith("登録解除") or t == "解除登録":
+        return "unregister_family"
+    if t in ("登録一覧", "メンバー", "誰が登録"):
+        return "list_registered"
     if any(kw in t for kw in ("ロック解除", "解除", "アンロック")):
         return "unlock_request"
     if re.fullmatch(r"\d{4}", t):
@@ -196,6 +202,9 @@ def handle_last_meal() -> str:
 def handle_help() -> str:
     return (
         "📖 使えるコマンド\n\n"
+        "「登録 <名前>」— 家族として登録（例: 登録 母）\n"
+        "「登録解除」— 自分の登録を解除\n"
+        "「登録一覧」— 登録済み家族を確認\n"
         "「状況」— 今日の様子まとめ\n"
         "「最後の食事」— 直近の食事時刻\n"
         "「リンク」— 最新の公開URL\n"
@@ -261,6 +270,99 @@ async def handle_unlock_confirm(text: str, sender_id: str) -> str:
     if success:
         return "✅ 炊飯器のロックを解除しました。"
     return "⚠️ 解除処理に失敗しました（Matter通信エラー）。"
+
+
+def handle_register_family(text: str, sender_id: str) -> str:
+    """「登録 <名前>」で家族メンバーを登録する。
+
+    例: 登録 母 / 登録 祖父 / 登録 孫
+    """
+    parts = text.replace("　", " ").split()
+    if len(parts) < 2:
+        return (
+            "📝 家族登録\n\n"
+            "「登録 <名前>」の形式で送ってください。\n"
+            "例: 登録 母\n\n"
+            "登録できる名前は「登録一覧」で確認できます。"
+        )
+    name = parts[1].strip()
+    conn = get_conn()
+    try:
+        person = conn.execute(
+            "SELECT id, name FROM persons WHERE name = ? AND id > 0",
+            (name,),
+        ).fetchone()
+        if not person:
+            valid_names = [
+                r["name"]
+                for r in conn.execute("SELECT name FROM persons WHERE id > 0 ORDER BY id").fetchall()
+            ]
+            return (
+                f"❌ 「{name}」は登録できる名前ではありません。\n"
+                f"使える名前: {', '.join(valid_names)}"
+            )
+    finally:
+        conn.close()
+
+    # 既存登録上書きを許容（家族の機種変更等に対応）
+    with transaction() as c:
+        existing = c.execute(
+            "SELECT person_id FROM family_line_users WHERE line_user_id = ?",
+            (sender_id,),
+        ).fetchone()
+        c.execute(
+            """INSERT INTO family_line_users(line_user_id, person_id, display_name, registered_at, last_seen_at)
+               VALUES(?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+               ON CONFLICT(line_user_id) DO UPDATE SET
+                   person_id = excluded.person_id,
+                   display_name = excluded.display_name,
+                   last_seen_at = CURRENT_TIMESTAMP""",
+            (sender_id, person["id"], name),
+        )
+
+    msg = f"✅ 「{name}」として登録しました。\n以降このLINEに通知が届きます。"
+    if existing:
+        msg += "\n（前の登録を上書きしました）"
+    return msg
+
+
+def handle_unregister_family(sender_id: str) -> str:
+    """登録解除"""
+    conn = get_conn()
+    try:
+        existing = conn.execute(
+            """SELECT f.line_user_id, p.name FROM family_line_users f
+               LEFT JOIN persons p ON p.id = f.person_id
+               WHERE f.line_user_id = ?""",
+            (sender_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not existing:
+        return "ℹ️ あなたはまだ登録されていません。"
+    with transaction() as c:
+        c.execute("DELETE FROM family_line_users WHERE line_user_id = ?", (sender_id,))
+    return f"✅ 「{existing['name']}」としての登録を解除しました。\n通知は届かなくなります。"
+
+
+def handle_list_registered() -> str:
+    """登録メンバー一覧"""
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT f.line_user_id, p.name, f.registered_at FROM family_line_users f
+               LEFT JOIN persons p ON p.id = f.person_id
+               ORDER BY f.registered_at"""
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return "📋 登録済み家族はいません。\n「登録 <名前>」で登録できます。"
+    lines = ["📋 登録済み家族:"]
+    for r in rows:
+        masked = r["line_user_id"][:6] + "..." + r["line_user_id"][-3:]
+        lines.append(f"  • {r['name']} ({masked})")
+    return "\n".join(lines)
 
 
 async def handle_merge_postback(data: str, sender_id: str) -> str | None:
@@ -414,6 +516,12 @@ async def dispatch(text: str, sender_id: str) -> str | None:
     "link" はここでは処理せず、webhook側でURLを組み立てる。
     """
     cmd = match_command(text)
+    if cmd == "register_family":
+        return handle_register_family(text, sender_id)
+    if cmd == "unregister_family":
+        return handle_unregister_family(sender_id)
+    if cmd == "list_registered":
+        return handle_list_registered()
     if cmd == "unlock_request":
         return handle_unlock_request(sender_id)
     if cmd == "unlock_confirm":
