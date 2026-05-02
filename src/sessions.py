@@ -54,6 +54,9 @@ class EventRow:
     value: float | None
 
 
+UNASSIGNED_PERSON_ID = 0  # 未確定セッションの person_id
+
+
 def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
     cur = conn.execute(
         """
@@ -61,17 +64,16 @@ def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
           FROM events e
           LEFT JOIN session_events se ON se.event_id = e.id
          WHERE se.event_id IS NULL
-           AND e.person_id IS NOT NULL
            AND e.started_at >= ?
            AND e.source NOT IN ('family_report', 'tablet_report', 'family_override')
-         ORDER BY e.person_id, e.started_at
+         ORDER BY COALESCE(e.person_id, 0), e.started_at
         """,
         (since,),
     )
     return [
         EventRow(
             id=r["id"],
-            person_id=r["person_id"],
+            person_id=r["person_id"] if r["person_id"] is not None else UNASSIGNED_PERSON_ID,
             source=r["source"],
             event_type=r["event_type"],
             started_at=_to_dt(r["started_at"]),

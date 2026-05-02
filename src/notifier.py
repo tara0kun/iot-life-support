@@ -73,6 +73,69 @@ def send_line_message(message: str, user_id: str | None = None) -> bool:
         return False
 
 
+def send_line_with_quick_reply(message: str, quick_items: list[dict], user_id: str | None = None) -> bool:
+    """Quick Reply 付きメッセージを送信する。
+
+    quick_items: [{"label": "祖母", "data": "attribute:S:1"}, ...]
+        label: ボタンに表示するテキスト（最大20文字）
+        data: postback として送信されるデータ文字列
+    """
+    try:
+        from .settings import get_bool
+        if not get_bool("notify_master_enabled", default=True):
+            log.info("LINE通知マスタースイッチOFF → Quick Reply送信スキップ")
+            return False
+    except Exception:
+        pass
+
+    env = _load_env()
+    token = env.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    uid = user_id or env.get("LINE_USER_ID", "")
+    if not token or not uid:
+        log.warning("LINE設定未完了 (Quick Reply)")
+        return False
+
+    items = []
+    for it in quick_items[:13]:  # LINEは最大13個まで
+        items.append({
+            "type": "action",
+            "action": {
+                "type": "postback",
+                "label": it["label"][:20],
+                "data": it["data"],
+                "displayText": it.get("display_text", it["label"]),
+            },
+        })
+
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {token}",
+    }
+    data = {
+        "to": uid,
+        "messages": [{
+            "type": "text",
+            "text": message,
+            "quickReply": {"items": items},
+        }],
+    }
+    try:
+        resp = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers=headers,
+            json=data,
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            log.info("LINE Quick Reply送信: %s", message[:50])
+            return True
+        log.warning("LINE Quick Reply失敗: %d %s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as e:
+        log.error("LINE Quick Replyエラー: %s", e)
+        return False
+
+
 def reply_line_message(reply_token: str, message: str) -> bool:
     """LINE Reply API でメッセージを返信する（webhook応答用）。"""
     env = _load_env()

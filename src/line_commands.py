@@ -11,7 +11,7 @@ import re
 import time
 from datetime import datetime
 
-from .db import get_conn
+from .db import get_conn, transaction
 from .lock_manager import get_device_state, unlock_device
 from .sessions import sessions_today
 
@@ -260,6 +260,91 @@ async def handle_unlock_confirm(text: str, sender_id: str) -> str:
     if success:
         return "✅ 炊飯器のロックを解除しました。"
     return "⚠️ 解除処理に失敗しました（Matter通信エラー）。"
+
+
+async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
+    """Quick Reply の postback データを処理してセッションの person_id を確定する。
+
+    data形式: "attribute:<session_id>:<person_id>"
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "attribute":
+        return None
+    try:
+        session_id = int(parts[1])
+        new_person_id = int(parts[2])
+    except ValueError:
+        return None
+
+    # personsの存在チェック
+    conn = get_conn()
+    try:
+        person = conn.execute(
+            "SELECT id, name FROM persons WHERE id = ?", (new_person_id,)
+        ).fetchone()
+        session = conn.execute(
+            "SELECT id, person_id, started_at, label FROM meal_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not person:
+        return f"⚠️ person_id={new_person_id} は登録されていません。"
+    if not session:
+        return f"⚠️ セッション #{session_id} は見つかりません。"
+
+    old_person_id = session["person_id"]
+
+    # 既に確定済みなら上書き確認
+    if old_person_id and old_person_id != 0 and old_person_id != new_person_id:
+        old_name = "?"
+        try:
+            conn = get_conn()
+            r = conn.execute("SELECT name FROM persons WHERE id = ?", (old_person_id,)).fetchone()
+            if r:
+                old_name = r["name"]
+            conn.close()
+        except Exception:
+            pass
+        log.info("セッション #%d: %s → %s に変更", session_id, old_name, person["name"])
+
+    # セッションと紐づくイベントの person_id を更新
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE meal_sessions SET person_id = ? WHERE id = ?",
+            (new_person_id, session_id),
+        )
+        conn.execute(
+            """UPDATE events SET person_id = ?
+               WHERE id IN (SELECT event_id FROM session_events WHERE session_id = ?)""",
+            (new_person_id, session_id),
+        )
+
+    # ロック判定（祖母確定の場合のみ再評価）
+    lock_msg = ""
+    if new_person_id == 1:  # 祖母
+        try:
+            from .lock_manager import lock_device, should_warn_recent_meal, RECENT_MEAL_MINUTES
+            from .notifier import notify_meal_alert
+            grandma_sessions = sessions_today(1)
+            meal_sessions = [s for s in grandma_sessions if s.get("label") in MEAL_LABELS]
+            if len(meal_sessions) >= 2:
+                # 直近90分以内に2回以上の食事 → ロック
+                state = get_device_state("rice_cooker")
+                if not (state and state["is_locked"]):
+                    warn = should_warn_recent_meal(1)
+                    if warn:
+                        success = await lock_device("rice_cooker", 1, reason="人物割当後の自動ロック")
+                        if success:
+                            lock_msg = "\n🔒 直近食事が確認されたため炊飯器をロックしました"
+        except Exception as e:
+            log.warning("ロック再評価失敗: %s", e)
+
+    return (
+        f"✅ {session.get('label') or 'セッション'} #{session_id} を「{person['name']}」として記録しました。"
+        + lock_msg
+    )
 
 
 async def dispatch(text: str, sender_id: str) -> str | None:

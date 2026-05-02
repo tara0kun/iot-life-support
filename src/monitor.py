@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import sys
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -135,8 +136,66 @@ GRANDMA_ID = 1
 RICE_COOKER_NODE_ID = 1
 MAX_MEALS_BEFORE_ALERT = 3
 
+async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
+    """未確定セッション (person_id=0) に対して家族にLINE Quick Reply通知を送る。
+
+    一度通知したセッションIDは notified_session_ids に記憶して重複通知しない。
+    起動直後に古い未確定セッションを大量通知しないよう、過去30分以内のものに限定。
+    """
+    from .db import get_conn
+    from .notifier import send_line_with_quick_reply
+
+    cutoff = (datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT id, started_at, ended_at, label, event_count
+                 FROM meal_sessions
+                WHERE person_id = 0 AND started_at >= ?
+                ORDER BY started_at""",
+            (cutoff,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for r in rows:
+        sid = r["id"]
+        if sid in notified_session_ids:
+            continue
+        started = r["started_at"]
+        if isinstance(started, str):
+            try:
+                started_dt = datetime.fromisoformat(started)
+                t_str = started_dt.strftime("%H:%M")
+            except ValueError:
+                t_str = str(started)[:16]
+        else:
+            t_str = started.strftime("%H:%M")
+
+        label = r["label"] or "活動"
+        msg = (
+            f"❓ {t_str} に「{label}」を検知しました\n"
+            f"（センサー反応 {r['event_count']}件）\n\n"
+            "誰の行動ですか？下のボタンから選んでください。"
+        )
+        items = [
+            {"label": "祖母", "data": f"attribute:{sid}:1"},
+            {"label": "母", "data": f"attribute:{sid}:2"},
+            {"label": "祖父", "data": f"attribute:{sid}:3"},
+            {"label": "不明", "data": f"attribute:{sid}:0"},
+        ]
+        try:
+            sent = await asyncio.to_thread(send_line_with_quick_reply, msg, items)
+            if sent:
+                notified_session_ids.add(sid)
+                log.info("未確定セッション#%d の人物確認をLINE通知", sid)
+        except Exception as e:
+            log.warning("未確定セッション通知失敗 #%d: %s", sid, e)
+
+
 async def session_aggregator(interval: int = 60) -> None:
     prev_session_count: int | None = None
+    notified_session_ids: set[int] = set()
 
     while True:
         await asyncio.sleep(interval)
@@ -145,6 +204,9 @@ async def session_aggregator(interval: int = 60) -> None:
             if not created:
                 continue
             log.info("セッション集約: %d 件作成", created)
+
+            # 未確定セッション(person_id=0)を検出して家族にLINE Quick Reply通知
+            await _notify_unattributed_sessions(notified_session_ids)
 
             # 祖母の今日のセッション数を確認
             grandma_sessions = sessions_today(GRANDMA_ID)

@@ -186,8 +186,15 @@ def init_db() -> None:
         conn.close()
 
 
+UNASSIGNED_PERSON_ID = 0
+
+
 def _seed_default_persons(conn: sqlite3.Connection) -> None:
-    existing = conn.execute("SELECT COUNT(*) FROM persons").fetchone()[0]
+    # id=0 を「未確定」用のセンチネル行として確保（role='family' は CHECK 制約適合のため）
+    conn.execute(
+        "INSERT OR IGNORE INTO persons(id, name, role) VALUES(0, '未確定', 'family')"
+    )
+    existing = conn.execute("SELECT COUNT(*) FROM persons WHERE id > 0").fetchone()[0]
     if existing == 0:
         conn.executemany(
             "INSERT INTO persons(name, role) VALUES(?, ?)",
