@@ -315,13 +315,42 @@ def record_pending_notification(notification_type: str, context_key: str,
         return None
 
 
+def resolve_confirmer_name(line_user_id: str) -> str:
+    """LINE user_id から家族登録名（祖母/母/etc）を解決する。
+
+    family_line_users テーブルに登録があればその person.name を返す。
+    なければ「誰か」（未登録）を返す。
+    """
+    if not line_user_id:
+        return "誰か"
+    try:
+        from .db import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                """SELECT p.name FROM family_line_users f
+                   LEFT JOIN persons p ON p.id = f.person_id
+                   WHERE f.line_user_id = ?""",
+                (line_user_id,),
+            ).fetchone()
+            if row and row["name"]:
+                return row["name"]
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("confirmer_name 解決失敗: %s", e)
+    return "誰か"
+
+
 def mark_notification_completed(notification_type: str, context_key: str,
                                  completed_by: str, action_summary: str) -> bool:
     """未完了の通知を完了マーク + 全家族にブロードキャスト通知。
 
+    対応者の名前を family_line_users から解決し、broadcastの先頭に表示する。
     既に完了済みなら何もしない（重複実行ガード）。
     """
     from .db import get_conn, transaction
+    confirmer = resolve_confirmer_name(completed_by)
     try:
         with transaction() as conn:
             row = conn.execute(
@@ -344,8 +373,8 @@ def mark_notification_completed(notification_type: str, context_key: str,
                     (completed_by[:64], action_summary, row["id"]),
                 )
 
-        # 全家族に「対応済み」ブロードキャスト
-        broadcast_line_message(f"☑️ 対応済み\n{action_summary}")
+        # 全家族に「対応済み」ブロードキャスト（対応者の名前付き）
+        broadcast_line_message(f"☑️ {confirmer}さんが対応しました\n{action_summary}")
         return True
     except Exception as e:
         log.error("pending_notification 完了処理失敗: %s", e)
