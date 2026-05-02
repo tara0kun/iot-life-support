@@ -324,11 +324,15 @@ async def main() -> None:
         )
 
     async def _on_bath_alert(elapsed_min: float):
+        from .notifier import send_actionable_notification
         msg = (
             f"🚨 緊急: 浴室で{int(elapsed_min)}分間動きがありません!\n"
             f"すぐに確認してください。"
         )
-        await asyncio.to_thread(send_line_message, msg)
+        ctx = datetime.now().strftime("%Y-%m-%d_%H%M")
+        await asyncio.to_thread(
+            send_actionable_notification, "bath_emergency", ctx, msg
+        )
 
     _bath_monitor = BathMonitor(
         alert_minutes=30,

@@ -583,17 +583,29 @@ async def api_tablet_record(request: Request):
     # センサー照合
     verify = _verify_sensor(activity, person_id)
 
-    # LINE通知（常に送信）
+    # LINE通知（常に送信、確認不要なケースは情報通知のみ）
     try:
-        from ..notifier import send_line_message
+        from ..notifier import send_line_message, send_actionable_notification
         import asyncio
+        ctx_key = f"{now.strftime('%Y-%m-%d_%H%M%S')}_{activity}"
         if verify["verified"]:
+            # センサー確認済み = 家族の対応不要、情報通知のみ
             msg = f"📋 祖母が「{activity}」ボタンを押しました\n✅ センサー確認済み\n時刻: {now.strftime('%H:%M')}"
+            await asyncio.to_thread(send_line_message, msg)
         elif verify["reason"] == "no_sensor":
+            # センサーなし（お薬・就寝） → 家族確認必要 = アクション付き
             msg = f"📋 祖母が「{activity}」ボタンを押しました\n⚠️ センサーなし（家族確認が必要）\n時刻: {now.strftime('%H:%M')}"
+            await asyncio.to_thread(
+                send_actionable_notification,
+                "tablet_unverified", ctx_key, msg,
+            )
         else:
+            # センサー記録なし → 家族確認必要 = アクション付き
             msg = f"📋 祖母が「{activity}」ボタンを押しました\n❌ センサー記録なし（確認してください）\n時刻: {now.strftime('%H:%M')}"
-        await asyncio.to_thread(send_line_message, msg)
+            await asyncio.to_thread(
+                send_actionable_notification,
+                "tablet_unverified", ctx_key, msg,
+            )
     except Exception:
         pass  # LINE通知失敗は無視
 
@@ -830,7 +842,7 @@ async def line_webhook(request: Request):
     allowed = _load_line_allowed_senders()
 
     from ..notifier import reply_line_message
-    from ..line_commands import dispatch, handle_attribute_postback, handle_merge_postback
+    from ..line_commands import dispatch, handle_attribute_postback, handle_merge_postback, handle_confirm_postback
     events = payload.get("events", [])
     for ev in events:
         ev_type = ev.get("type", "")
@@ -862,6 +874,8 @@ async def line_webhook(request: Request):
                     reply = await handle_attribute_postback(data, sender_id)
                 elif data.startswith("merge:"):
                     reply = await handle_merge_postback(data, sender_id)
+                elif data.startswith("confirm:"):
+                    reply = await handle_confirm_postback(data, sender_id)
             except Exception as e:
                 _webhook_log.error("postback処理エラー: %s", e)
                 reply = "⚠️ 処理に失敗しました"

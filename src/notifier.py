@@ -247,6 +247,34 @@ def reply_line_message(reply_token: str, message: str) -> bool:
 # Pending notification 管理（応答未済の追跡＋再通知＋完了ブロードキャスト）
 # ============================================================
 
+def send_actionable_notification(category: str, context_key: str, message: str,
+                                  extra_items: list[dict] | None = None) -> int:
+    """確認ボタン付きで全家族にbroadcast、pending_notificationsに記録する。
+
+    家族の誰かが「✓ 確認した」を押すと:
+      - pending_notifications.completed_at が記録される
+      - 全家族に「☑️ 対応済み」がbroadcastされる
+      - recheck_pending.pyによる再通知が止まる
+
+    誰も応答しない場合は recheck_pending.py が30分間隔で最大2回再通知し、
+    最終的に「⏰ 応答なし」をbroadcastして諦める。
+
+    引数:
+      category: 通知の種類識別子（例 "meal_alert", "anomaly_night_rice"）
+      context_key: 同一文脈を一意に識別するキー（例 "2026-05-02_meal_3"）
+      message: 通知文
+      extra_items: 「✓ 確認した」以外に追加したいQuick Replyボタン
+    """
+    items: list[dict] = [{"label": "✓ 確認した", "data": f"confirm:{category}:{context_key}"}]
+    if extra_items:
+        items.extend(extra_items)
+    items = items[:13]  # LINE Quick Reply は最大13個
+
+    sent = broadcast_with_quick_reply(message, items)
+    if sent > 0:
+        record_pending_notification(category, context_key, message, items)
+    return sent
+
 def record_pending_notification(notification_type: str, context_key: str,
                                  message: str, quick_items: list[dict]) -> int | None:
     """ブロードキャスト送信時にDBに記録。戻り値=記録ID。
@@ -353,14 +381,17 @@ def update_webhook_url(url: str) -> bool:
 
 
 def notify_meal_alert(person_name: str, meal_count: int, last_meal_time: str) -> bool:
-    now = datetime.now().strftime("%H:%M")
+    now = datetime.now()
     message = (
         f"🍚 {person_name}さんが食事行動を検知しました\n"
         f"本日{meal_count}回目（前回: {last_meal_time}）\n"
-        f"検知時刻: {now}\n"
+        f"検知時刻: {now.strftime('%H:%M')}\n"
         f"\nさりげなく声をかけてあげてください"
     )
-    return send_line_message(message)
+    today = now.strftime("%Y-%m-%d")
+    return send_actionable_notification(
+        "meal_alert", f"{today}_{meal_count}", message
+    ) > 0
 
 
 def notify_device_locked(device_name: str) -> bool:
@@ -369,5 +400,11 @@ def notify_device_locked(device_name: str) -> bool:
         "ih": "IHコンロ",
     }
     label = device_labels.get(device_name, device_name)
-    message = f"🔒 {label}を自動ロックしました（食事後の安全措置）"
-    return send_line_message(message)
+    now = datetime.now()
+    message = f"🔒 {label}を自動ロックしました（食事後の安全措置）\n時刻: {now.strftime('%H:%M')}"
+    message += "\n（解除するには「ロック解除」と送信）"
+    return send_actionable_notification(
+        "device_locked",
+        f"{now.strftime('%Y-%m-%d_%H%M')}_{device_name}",
+        message,
+    ) > 0

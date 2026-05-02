@@ -378,6 +378,44 @@ def handle_list_registered() -> str:
     return "\n".join(lines)
 
 
+async def handle_confirm_postback(data: str, sender_id: str) -> str | None:
+    """「✓ 確認した」ボタン押下を処理する。
+
+    data形式: "confirm:<category>:<context_key>"
+    既に他の家族が対応済みなら何もしない（先勝ちで競合ガード）。
+    対応成立した場合は全家族に「☑️ 対応済み」をbroadcast。
+    """
+    parts = data.split(":", 2)
+    if len(parts) != 3 or parts[0] != "confirm":
+        return None
+    category, context_key = parts[1], parts[2]
+
+    # 押した人の表示名を取得
+    confirmer = "誰か"
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT p.name FROM family_line_users f
+               LEFT JOIN persons p ON p.id = f.person_id
+               WHERE f.line_user_id = ?""",
+            (sender_id,),
+        ).fetchone()
+        if row and row["name"]:
+            confirmer = row["name"]
+    finally:
+        conn.close()
+
+    from .notifier import mark_notification_completed
+    success = await asyncio.to_thread(
+        mark_notification_completed,
+        category, context_key, sender_id,
+        f"{confirmer}さんが確認しました",
+    )
+    if success:
+        return f"✅ 確認を記録しました。家族全員に共有します。"
+    return "ℹ️ この通知は既に対応済みです。"
+
+
 async def handle_merge_postback(data: str, sender_id: str) -> str | None:
     """「前と同じ食事」ボタン押下を処理してセッションを統合する。
 

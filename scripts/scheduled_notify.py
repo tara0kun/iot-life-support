@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn
 from src.sessions import sessions_today
-from src.notifier import send_line_message
+from src.notifier import send_line_message, send_actionable_notification
 from src.garden import save_daily_score, FLOWER_TYPES
 from src.settings import get_bool
 
@@ -45,21 +45,24 @@ def check_medicine():
             print("薬スケジュール未設定 → スキップ")
             return
         # 現在時刻を過ぎているスケジュールがあれば通知
+        today = now.strftime("%Y-%m-%d")
         for s in schedules:
             if h >= s["hour"]:
                 delay = h - s["hour"]
                 if delay >= 2:
-                    send_line_message(
+                    send_actionable_notification(
+                        "medicine_reminder", f"{today}_{s['timing']}",
                         f"💊 お薬リマインド（{s['timing']}）\n"
                         f"祖母がまだ{s['timing']}のお薬を飲んでいないようです。\n"
-                        "確認をお願いします。"
+                        "確認をお願いします。",
                     )
                     print(f"お薬リマインド送信（{s['timing']}）")
                 else:
-                    send_line_message(
+                    send_actionable_notification(
+                        "medicine_reminder", f"{today}_{s['timing']}",
                         f"💊 お薬チェック（{s['timing']}）\n"
                         f"祖母がまだ{s['timing']}のお薬を飲んでいません。\n"
-                        "声かけをお願いします。"
+                        "声かけをお願いします。",
                     )
                     print(f"お薬チェック送信（{s['timing']}）")
                 return  # 1通知のみ
@@ -76,10 +79,12 @@ def check_bath():
     sessions = sessions_today(GRANDMA_ID)
     labels = {s.get("label") for s in sessions}
     if "お風呂" not in labels:
-        send_line_message(
+        today = datetime.now().strftime("%Y-%m-%d")
+        send_actionable_notification(
+            "bath_reminder", today,
             "🛁 お風呂リマインド\n"
             "祖母がまだお風呂に入っていないようです。\n"
-            "声かけをお願いします。"
+            "声かけをお願いします。",
         )
         print("お風呂リマインド送信")
     else:
