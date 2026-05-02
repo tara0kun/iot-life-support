@@ -231,6 +231,7 @@ async def main() -> None:
             node_id=1,
             threshold_w=float(env.get("RICE_COOKER_THRESHOLD_W", "600")),
             poll_interval=float(env.get("POLL_INTERVAL", "5")),
+            idle_confirm_seconds=float(env.get("RICE_COOKER_IDLE_CONFIRM", "600")),
         ),
         on_start=on_plug_start,
         on_stop=on_plug_stop,
