@@ -167,7 +167,7 @@ async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
     直前に近い食事セッションがあれば「前と同じ食事」ボタンも追加。
     """
     from .db import get_conn
-    from .notifier import send_line_with_quick_reply
+    from .notifier import broadcast_with_quick_reply, record_pending_notification
 
     cutoff = (datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn()
@@ -225,10 +225,15 @@ async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
             if prev:
                 items.append({"label": "前と同じ食事", "data": f"merge:{sid}:{prev['id']}"})
             try:
-                sent = await asyncio.to_thread(send_line_with_quick_reply, msg, items)
+                sent = await asyncio.to_thread(broadcast_with_quick_reply, msg, items)
                 if sent:
                     notified_session_ids.add(sid)
-                    log.info("未確定セッション#%d の人物確認をLINE通知", sid)
+                    # 再通知用に pending_notifications にも記録
+                    await asyncio.to_thread(
+                        record_pending_notification,
+                        "attribute_session", f"session_{sid}", msg, items
+                    )
+                    log.info("未確定セッション#%d の人物確認をブロードキャスト (送信先 %d)", sid, sent)
             except Exception as e:
                 log.warning("未確定セッション通知失敗 #%d: %s", sid, e)
     finally:

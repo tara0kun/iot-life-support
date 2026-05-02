@@ -153,6 +153,24 @@ CREATE TABLE IF NOT EXISTS settings (
     description TEXT,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS pending_notifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    notification_type TEXT NOT NULL,            -- 'attribute_session', 'anomaly_*' 等
+    context_key TEXT NOT NULL,                  -- 'session_42' 等 (typeとセットで一意)
+    message TEXT NOT NULL,
+    quick_reply_json TEXT,                      -- Quick Replyボタン定義（再通知用）
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_notified_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    notify_count INTEGER NOT NULL DEFAULT 1,
+    completed_at TIMESTAMP,
+    completed_by TEXT,                          -- LINE sender_id
+    completed_action TEXT                       -- 結果説明（"祖母として記録" 等）
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_notif_context
+    ON pending_notifications(notification_type, context_key);
+CREATE INDEX IF NOT EXISTS idx_pending_notif_pending
+    ON pending_notifications(completed_at, last_notified_at);
 """
 
 

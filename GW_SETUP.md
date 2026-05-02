@@ -460,6 +460,9 @@ crontab -e
 
 # 異常検知（10分おき）
 */10 * * * * cd /home/tara0/IoT && venv/bin/python scripts/anomaly_check.py
+
+# 未対応LINE通知の再通知（5分おき）
+*/5 * * * * cd /home/tara0/IoT && venv/bin/python scripts/recheck_pending.py
 ```
 
 確認：

@@ -73,6 +73,54 @@ def send_line_message(message: str, user_id: str | None = None) -> bool:
         return False
 
 
+def _load_recipients() -> list[str]:
+    """通知先LINE user_id 一覧。LINE_ALLOWED_SENDERS優先、なければLINE_USER_ID。"""
+    env = _load_env()
+    senders = env.get("LINE_ALLOWED_SENDERS", "").strip()
+    if senders:
+        ids = [s.strip() for s in senders.split(",") if s.strip()]
+        if ids:
+            return ids
+    fallback = env.get("LINE_USER_ID", "").strip()
+    return [fallback] if fallback else []
+
+
+def broadcast_line_message(message: str) -> int:
+    """登録済みの全家族LINE宛先にプッシュ通知。戻り値=送信成功数。
+
+    マスタースイッチがOFFなら何もしない。
+    """
+    try:
+        from .settings import get_bool
+        if not get_bool("notify_master_enabled", default=True):
+            log.info("LINE通知マスタースイッチOFF → broadcast送信スキップ")
+            return 0
+    except Exception:
+        pass
+
+    recipients = _load_recipients()
+    if not recipients:
+        log.warning("LINE通知先が設定されていません")
+        return 0
+    sent = 0
+    for uid in recipients:
+        if send_line_message(message, user_id=uid):
+            sent += 1
+    return sent
+
+
+def broadcast_with_quick_reply(message: str, quick_items: list[dict]) -> int:
+    """登録済みの全家族LINE宛先にQuick Reply付きでプッシュ通知。戻り値=成功数。"""
+    recipients = _load_recipients()
+    if not recipients:
+        return 0
+    sent = 0
+    for uid in recipients:
+        if send_line_with_quick_reply(message, quick_items, user_id=uid):
+            sent += 1
+    return sent
+
+
 def send_line_with_quick_reply(message: str, quick_items: list[dict], user_id: str | None = None) -> bool:
     """Quick Reply 付きメッセージを送信する。
 
@@ -165,6 +213,87 @@ def reply_line_message(reply_token: str, message: str) -> bool:
         return False
     except Exception as e:
         log.error("LINE返信エラー: %s", e)
+        return False
+
+
+# ============================================================
+# Pending notification 管理（応答未済の追跡＋再通知＋完了ブロードキャスト）
+# ============================================================
+
+def record_pending_notification(notification_type: str, context_key: str,
+                                 message: str, quick_items: list[dict]) -> int | None:
+    """ブロードキャスト送信時にDBに記録。戻り値=記録ID。
+
+    既存レコードがあれば更新（last_notified_at, notify_count++）。
+    未完了のレコードは recheck cronによって再通知される。
+    """
+    import json as _json
+    from .db import get_conn, transaction
+    try:
+        with transaction() as conn:
+            existing = conn.execute(
+                "SELECT id, completed_at FROM pending_notifications WHERE notification_type = ? AND context_key = ?",
+                (notification_type, context_key),
+            ).fetchone()
+            if existing:
+                if existing["completed_at"]:
+                    return existing["id"]  # 既に完了済みなら何もしない
+                conn.execute(
+                    """UPDATE pending_notifications
+                          SET last_notified_at = CURRENT_TIMESTAMP,
+                              notify_count = notify_count + 1,
+                              message = ?, quick_reply_json = ?
+                        WHERE id = ?""",
+                    (message, _json.dumps(quick_items, ensure_ascii=False), existing["id"]),
+                )
+                return existing["id"]
+            cur = conn.execute(
+                """INSERT INTO pending_notifications
+                       (notification_type, context_key, message, quick_reply_json)
+                   VALUES(?, ?, ?, ?)""",
+                (notification_type, context_key, message,
+                 _json.dumps(quick_items, ensure_ascii=False)),
+            )
+            return cur.lastrowid
+    except Exception as e:
+        log.error("pending_notification 記録失敗: %s", e)
+        return None
+
+
+def mark_notification_completed(notification_type: str, context_key: str,
+                                 completed_by: str, action_summary: str) -> bool:
+    """未完了の通知を完了マーク + 全家族にブロードキャスト通知。
+
+    既に完了済みなら何もしない（重複実行ガード）。
+    """
+    from .db import get_conn, transaction
+    try:
+        with transaction() as conn:
+            row = conn.execute(
+                "SELECT id, completed_at FROM pending_notifications WHERE notification_type = ? AND context_key = ?",
+                (notification_type, context_key),
+            ).fetchone()
+            if not row:
+                # pending未登録（古い通知 or テーブル新規導入前）でもブロードキャストはする
+                pass
+            elif row["completed_at"]:
+                # 既に他の家族が対応済み → 競合ガード
+                log.info("pending_notification は既に完了済み: %s/%s", notification_type, context_key)
+                return False
+            else:
+                conn.execute(
+                    """UPDATE pending_notifications
+                          SET completed_at = CURRENT_TIMESTAMP,
+                              completed_by = ?, completed_action = ?
+                        WHERE id = ?""",
+                    (completed_by[:64], action_summary, row["id"]),
+                )
+
+        # 全家族に「対応済み」ブロードキャスト
+        broadcast_line_message(f"☑️ 対応済み\n{action_summary}")
+        return True
+    except Exception as e:
+        log.error("pending_notification 完了処理失敗: %s", e)
         return False
 
 

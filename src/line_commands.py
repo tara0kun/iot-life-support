@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
@@ -292,13 +293,22 @@ async def handle_merge_postback(data: str, sender_id: str) -> str | None:
     finally:
         conn.close()
 
-    if merged:
-        person = merged["person_name"] or "未確定"
-        return (
-            f"✅ 「前と同じ食事」として統合しました。\n"
-            f"#{prev_sid} {merged['label']} ({person}) に新セッションを吸収。"
+    person = (merged["person_name"] if merged else None) or "未確定"
+    label = merged["label"] if merged else "セッション"
+    action_summary = f"#{new_sid} を #{prev_sid} ({label} / {person}) に統合"
+
+    # 通知完了マーク + 全家族へのブロードキャスト
+    try:
+        from .notifier import mark_notification_completed
+        await asyncio.to_thread(
+            mark_notification_completed,
+            "attribute_session", f"session_{new_sid}",
+            sender_id, action_summary,
         )
-    return f"✅ セッションを統合しました（#{prev_sid}）。"
+    except Exception as e:
+        log.warning("完了ブロードキャスト失敗: %s", e)
+
+    return f"✅ 「前と同じ食事」として統合しました。\n{action_summary}"
 
 
 async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
@@ -380,10 +390,22 @@ async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
         except Exception as e:
             log.warning("ロック再評価失敗: %s", e)
 
-    return (
-        f"✅ {session.get('label') or 'セッション'} #{session_id} を「{person['name']}」として記録しました。"
+    action_summary = (
+        f"{session.get('label') or 'セッション'} #{session_id} を「{person['name']}」として記録"
         + lock_msg
     )
+    # 全家族に完了をブロードキャスト（自動でpending_notification完了マークも）
+    try:
+        from .notifier import mark_notification_completed
+        await asyncio.to_thread(
+            mark_notification_completed,
+            "attribute_session", f"session_{session_id}",
+            sender_id, action_summary,
+        )
+    except Exception as e:
+        log.warning("完了ブロードキャスト失敗: %s", e)
+
+    return f"✅ {action_summary}"
 
 
 async def dispatch(text: str, sender_id: str) -> str | None:
