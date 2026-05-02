@@ -13,7 +13,7 @@ from datetime import datetime
 
 from .db import get_conn, transaction
 from .lock_manager import get_device_state, unlock_device
-from .sessions import sessions_today
+from .sessions import sessions_today, merge_sessions_manual
 
 log = logging.getLogger("line_commands")
 
@@ -260,6 +260,45 @@ async def handle_unlock_confirm(text: str, sender_id: str) -> str:
     if success:
         return "✅ 炊飯器のロックを解除しました。"
     return "⚠️ 解除処理に失敗しました（Matter通信エラー）。"
+
+
+async def handle_merge_postback(data: str, sender_id: str) -> str | None:
+    """「前と同じ食事」ボタン押下を処理してセッションを統合する。
+
+    data形式: "merge:<new_session_id>:<prev_session_id>"
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "merge":
+        return None
+    try:
+        new_sid = int(parts[1])
+        prev_sid = int(parts[2])
+    except ValueError:
+        return None
+
+    success = merge_sessions_manual(new_sid, prev_sid)
+    if not success:
+        return f"⚠️ 統合に失敗しました（セッション #{new_sid} または #{prev_sid} が見つかりません）。"
+
+    # 統合後のセッション情報を返信
+    conn = get_conn()
+    try:
+        merged = conn.execute(
+            """SELECT m.id, m.label, m.started_at, m.ended_at, p.name as person_name
+                 FROM meal_sessions m LEFT JOIN persons p ON p.id = m.person_id
+                WHERE m.id = ?""",
+            (prev_sid,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if merged:
+        person = merged["person_name"] or "未確定"
+        return (
+            f"✅ 「前と同じ食事」として統合しました。\n"
+            f"#{prev_sid} {merged['label']} ({person}) に新セッションを吸収。"
+        )
+    return f"✅ セッションを統合しました（#{prev_sid}）。"
 
 
 async def handle_attribute_postback(data: str, sender_id: str) -> str | None:

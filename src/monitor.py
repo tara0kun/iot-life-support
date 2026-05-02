@@ -136,11 +136,35 @@ GRANDMA_ID = 1
 RICE_COOKER_NODE_ID = 1
 MAX_MEALS_BEFORE_ALERT = 3
 
+PREV_SESSION_LOOKUP_MINUTES = 90  # 「前と同じ食事」ボタン提示の上限
+
+
+def _find_previous_meal_session(conn, before_time: datetime, exclude_session_id: int) -> dict | None:
+    """新セッションの直前に発生した食事セッションを返す（PREV_SESSION_LOOKUP_MINUTES以内）。
+
+    自動統合（60分）で漏れた60〜90分前の食事セッションを「前と同じ食事」候補として返す。
+    """
+    cutoff = before_time - timedelta(minutes=PREV_SESSION_LOOKUP_MINUTES)
+    row = conn.execute(
+        """SELECT id, person_id, started_at, label
+             FROM meal_sessions
+            WHERE id != ?
+              AND ended_at < ?
+              AND ended_at >= ?
+              AND label IN ('朝食','昼食','夕食','間食','夜食','おやつ')
+            ORDER BY ended_at DESC
+            LIMIT 1""",
+        (exclude_session_id, before_time, cutoff),
+    ).fetchone()
+    return dict(row) if row else None
+
+
 async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
     """未確定セッション (person_id=0) に対して家族にLINE Quick Reply通知を送る。
 
     一度通知したセッションIDは notified_session_ids に記憶して重複通知しない。
     起動直後に古い未確定セッションを大量通知しないよう、過去30分以内のものに限定。
+    直前に近い食事セッションがあれば「前と同じ食事」ボタンも追加。
     """
     from .db import get_conn
     from .notifier import send_line_with_quick_reply
@@ -155,42 +179,60 @@ async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
                 ORDER BY started_at""",
             (cutoff,),
         ).fetchall()
+
+        for r in rows:
+            sid = r["id"]
+            if sid in notified_session_ids:
+                continue
+            started = r["started_at"]
+            if isinstance(started, str):
+                try:
+                    started_dt = datetime.fromisoformat(started)
+                except ValueError:
+                    started_dt = datetime.now()
+            else:
+                started_dt = started
+            t_str = started_dt.strftime("%H:%M")
+
+            # 直前の食事セッションを探す
+            prev = _find_previous_meal_session(conn, started_dt, sid)
+            prev_info = ""
+            if prev:
+                prev_started = prev["started_at"]
+                if isinstance(prev_started, str):
+                    try:
+                        prev_dt = datetime.fromisoformat(prev_started)
+                        prev_t = prev_dt.strftime("%H:%M")
+                    except ValueError:
+                        prev_t = str(prev_started)[:16]
+                else:
+                    prev_t = prev_started.strftime("%H:%M")
+                prev_info = f"\n\n（直前 {prev_t} の {prev['label']} あり）"
+
+            label = r["label"] or "活動"
+            msg = (
+                f"❓ {t_str} に「{label}」を検知しました\n"
+                f"（センサー反応 {r['event_count']}件）"
+                f"{prev_info}\n\n"
+                "誰の行動ですか？下のボタンから選んでください。"
+            )
+            items = [
+                {"label": "祖母", "data": f"attribute:{sid}:1"},
+                {"label": "母", "data": f"attribute:{sid}:2"},
+                {"label": "祖父", "data": f"attribute:{sid}:3"},
+                {"label": "不明", "data": f"attribute:{sid}:0"},
+            ]
+            if prev:
+                items.append({"label": "前と同じ食事", "data": f"merge:{sid}:{prev['id']}"})
+            try:
+                sent = await asyncio.to_thread(send_line_with_quick_reply, msg, items)
+                if sent:
+                    notified_session_ids.add(sid)
+                    log.info("未確定セッション#%d の人物確認をLINE通知", sid)
+            except Exception as e:
+                log.warning("未確定セッション通知失敗 #%d: %s", sid, e)
     finally:
         conn.close()
-
-    for r in rows:
-        sid = r["id"]
-        if sid in notified_session_ids:
-            continue
-        started = r["started_at"]
-        if isinstance(started, str):
-            try:
-                started_dt = datetime.fromisoformat(started)
-                t_str = started_dt.strftime("%H:%M")
-            except ValueError:
-                t_str = str(started)[:16]
-        else:
-            t_str = started.strftime("%H:%M")
-
-        label = r["label"] or "活動"
-        msg = (
-            f"❓ {t_str} に「{label}」を検知しました\n"
-            f"（センサー反応 {r['event_count']}件）\n\n"
-            "誰の行動ですか？下のボタンから選んでください。"
-        )
-        items = [
-            {"label": "祖母", "data": f"attribute:{sid}:1"},
-            {"label": "母", "data": f"attribute:{sid}:2"},
-            {"label": "祖父", "data": f"attribute:{sid}:3"},
-            {"label": "不明", "data": f"attribute:{sid}:0"},
-        ]
-        try:
-            sent = await asyncio.to_thread(send_line_with_quick_reply, msg, items)
-            if sent:
-                notified_session_ids.add(sid)
-                log.info("未確定セッション#%d の人物確認をLINE通知", sid)
-        except Exception as e:
-            log.warning("未確定セッション通知失敗 #%d: %s", sid, e)
 
 
 async def session_aggregator(interval: int = 60) -> None:

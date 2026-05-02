@@ -814,7 +814,7 @@ async def line_webhook(request: Request):
     allowed = _load_line_allowed_senders()
 
     from ..notifier import reply_line_message
-    from ..line_commands import dispatch, handle_attribute_postback
+    from ..line_commands import dispatch, handle_attribute_postback, handle_merge_postback
     events = payload.get("events", [])
     for ev in events:
         ev_type = ev.get("type", "")
@@ -829,17 +829,20 @@ async def line_webhook(request: Request):
         # postback (Quick Reply ボタン押下) の処理
         if ev_type == "postback":
             data = ev.get("postback", {}).get("data", "")
-            if data.startswith("attribute:"):
-                try:
+            reply: str | None = None
+            try:
+                if data.startswith("attribute:"):
                     reply = await handle_attribute_postback(data, sender_id)
+                elif data.startswith("merge:"):
+                    reply = await handle_merge_postback(data, sender_id)
+            except Exception as e:
+                _webhook_log.error("postback処理エラー: %s", e)
+                reply = "⚠️ 処理に失敗しました"
+            if reply:
+                try:
+                    await asyncio.to_thread(reply_line_message, reply_token, reply)
                 except Exception as e:
-                    _webhook_log.error("postback処理エラー: %s", e)
-                    reply = "⚠️ 割当処理に失敗しました"
-                if reply:
-                    try:
-                        await asyncio.to_thread(reply_line_message, reply_token, reply)
-                    except Exception as e:
-                        _webhook_log.error("LINE返信失敗: %s", e)
+                    _webhook_log.error("LINE返信失敗: %s", e)
             continue
 
         # message タイプの処理

@@ -12,11 +12,14 @@
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from typing import Iterable
 
 from .db import get_conn, transaction
+
+log = logging.getLogger("sessions")
 
 SESSION_GAP_MINUTES = 15
 MIN_PRESENCE_SECONDS = 180
@@ -55,6 +58,8 @@ class EventRow:
 
 
 UNASSIGNED_PERSON_ID = 0  # 未確定セッションの person_id
+MEAL_LABELS_FOR_MERGE = {"朝食", "昼食", "夕食", "間食", "夜食", "おやつ"}
+MERGE_WINDOW_MINUTES = 60
 
 
 def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
@@ -122,6 +127,108 @@ def _qualifies_as_session(events: list[EventRow]) -> bool:
     return False
 
 
+def _merge_close_meal_sessions(conn, lookback_hours: int = 6) -> int:
+    """同じ人物の食事ラベルセッションが MERGE_WINDOW_MINUTES 以内に並んでいたら統合する。
+
+    認知症で短時間に何度も炊飯器を操作するパターンを1食事として扱うための後処理。
+    person_id=0（未確定）は同じ未確定同士でのみ統合（人物確定済みのセッションとは混ぜない）。
+
+    戻り値: 統合した数（吸収された側のセッション数）。
+    """
+    since = datetime.now() - timedelta(hours=lookback_hours)
+    placeholders = ",".join("?" * len(MEAL_LABELS_FOR_MERGE))
+    rows = conn.execute(
+        f"""SELECT id, person_id, started_at, ended_at, event_count, label
+              FROM meal_sessions
+             WHERE started_at >= ? AND label IN ({placeholders})
+             ORDER BY person_id, started_at""",
+        (since, *MEAL_LABELS_FOR_MERGE),
+    ).fetchall()
+    by_person: dict[int, list[dict]] = {}
+    for r in rows:
+        by_person.setdefault(r["person_id"], []).append(dict(r))
+
+    merged = 0
+    gap_threshold = timedelta(minutes=MERGE_WINDOW_MINUTES)
+    for person_id, sess_list in by_person.items():
+        sess_list.sort(key=lambda s: _to_dt(s["started_at"]))
+        i = 0
+        while i < len(sess_list) - 1:
+            a = sess_list[i]
+            b = sess_list[i + 1]
+            a_end = _to_dt(a["ended_at"])
+            b_start = _to_dt(b["started_at"])
+            if (b_start - a_end) <= gap_threshold:
+                # bをaに吸収
+                b_end = _to_dt(b["ended_at"])
+                new_end = max(a_end, b_end)
+                new_count = (a["event_count"] or 0) + (b["event_count"] or 0)
+                conn.execute(
+                    "UPDATE meal_sessions SET ended_at = ?, event_count = ? WHERE id = ?",
+                    (new_end, new_count, a["id"]),
+                )
+                # session_eventsを移動（PK衝突は無視）
+                conn.execute(
+                    "UPDATE OR IGNORE session_events SET session_id = ? WHERE session_id = ?",
+                    (a["id"], b["id"]),
+                )
+                conn.execute(
+                    "DELETE FROM session_events WHERE session_id = ?", (b["id"],)
+                )
+                conn.execute("DELETE FROM meal_sessions WHERE id = ?", (b["id"],))
+                a["ended_at"] = new_end
+                a["event_count"] = new_count
+                sess_list.pop(i + 1)
+                merged += 1
+            else:
+                i += 1
+    return merged
+
+
+def merge_sessions_manual(new_session_id: int, prev_session_id: int) -> bool:
+    """手動でセッションを統合する（LINE「前と同じ食事」ボタン用）。
+
+    new_session を prev_session に吸収させる。person_id は prev のものを優先、
+    prev が未確定で new が確定済みなら new のものを採用。
+    """
+    if new_session_id == prev_session_id:
+        return False
+    with transaction() as conn:
+        prev = conn.execute(
+            "SELECT id, person_id, started_at, ended_at, event_count FROM meal_sessions WHERE id = ?",
+            (prev_session_id,),
+        ).fetchone()
+        new = conn.execute(
+            "SELECT id, person_id, started_at, ended_at, event_count FROM meal_sessions WHERE id = ?",
+            (new_session_id,),
+        ).fetchone()
+        if not prev or not new:
+            return False
+        # 統合後の person_id（確定済みを優先）
+        target_person = prev["person_id"] if prev["person_id"] != 0 else new["person_id"]
+        # 時刻範囲を統合
+        merged_start = min(_to_dt(prev["started_at"]), _to_dt(new["started_at"]))
+        merged_end = max(_to_dt(prev["ended_at"]), _to_dt(new["ended_at"]))
+        merged_count = (prev["event_count"] or 0) + (new["event_count"] or 0)
+        conn.execute(
+            "UPDATE meal_sessions SET person_id = ?, started_at = ?, ended_at = ?, event_count = ? WHERE id = ?",
+            (target_person, merged_start, merged_end, merged_count, prev["id"]),
+        )
+        conn.execute(
+            "UPDATE OR IGNORE session_events SET session_id = ? WHERE session_id = ?",
+            (prev["id"], new["id"]),
+        )
+        conn.execute("DELETE FROM session_events WHERE session_id = ?", (new["id"],))
+        # newに紐づくeventsもtarget_personで上書き（必要に応じて）
+        conn.execute(
+            """UPDATE events SET person_id = ?
+               WHERE id IN (SELECT event_id FROM session_events WHERE session_id = ?)""",
+            (target_person, prev["id"]),
+        )
+        conn.execute("DELETE FROM meal_sessions WHERE id = ?", (new["id"],))
+    return True
+
+
 def aggregate_sessions(lookback_hours: int = 24) -> int:
     """未割当イベントをセッションにまとめる。戻り値=新規作成セッション数。"""
     since = datetime.now() - timedelta(hours=lookback_hours)
@@ -181,6 +288,11 @@ def aggregate_sessions(lookback_hours: int = 24) -> int:
                     [(sid, c.id) for c in cluster],
                 )
                 created += 1
+
+        # 近接食事セッションの自動統合（認知症パターン対策）
+        merged_count = _merge_close_meal_sessions(conn)
+        if merged_count:
+            log.info("近接食事セッションを統合: %d件", merged_count)
 
     return created
 
