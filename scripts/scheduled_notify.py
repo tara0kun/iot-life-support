@@ -3,7 +3,6 @@
 cronで定期実行し、条件に応じて家族にLINE通知を送る。
 
 crontab設定例:
-  */30 7-22 * * *  cd ~/IoT && venv/bin/python scripts/scheduled_notify.py care_tasks  # 30分おきに担当通知
   0 9,12 * * *  cd ~/IoT && venv/bin/python scripts/scheduled_notify.py medicine
   0 18   * * *  cd ~/IoT && venv/bin/python scripts/scheduled_notify.py bath
   0 22   * * *  cd ~/IoT && venv/bin/python scripts/scheduled_notify.py summary
@@ -156,62 +155,12 @@ def daily_summary():
     print(f"  スコア: {done_count}/{total} {flower['emoji']}")
 
 
-def check_care_tasks():
-    """家族タスクのリマインダー通知。
-
-    各タスクの reminder_hour になったら担当者を通知。
-    当該の時刻〜30分以内の1回だけ送る（重複防止）。
-    """
-    if not get_bool("notify_care_tasks_enabled"):
-        print("家族タスク通知OFF → スキップ")
-        return
-    now = datetime.now()
-    today = now.strftime("%Y-%m-%d")
-
-    conn = get_conn()
-    try:
-        rows = conn.execute(
-            """SELECT t.id, t.task_name, t.assignee_name, t.reminder_hour,
-                      l.id as log_id
-               FROM care_tasks t
-               LEFT JOIN care_task_logs l ON l.task_id = t.id AND l.date = ?
-               WHERE t.enabled = 1""",
-            (today,),
-        ).fetchall()
-    finally:
-        conn.close()
-
-    sent = 0
-    for r in rows:
-        if r["log_id"] is not None:
-            continue  # 既に完了済み
-        rh = r["reminder_hour"]
-        if rh is None:
-            continue
-        # reminder_hour と一致する時刻の、分=0〜29なら送る（30分cron想定）
-        if now.hour != rh or now.minute >= 30:
-            continue
-        assignee = r["assignee_name"] or "未割当"
-        msg = (
-            f"🔔 タスクリマインダー\n\n"
-            f"📋 {r['task_name']}\n"
-            f"👤 担当: {assignee}\n"
-            f"🕐 {rh:02d}:00〜\n\n"
-            f"完了したら「済 {r['task_name']}」と返信してください。"
-        )
-        send_line_message(msg)
-        sent += 1
-        print(f"タスク通知送信: {r['task_name']} → {assignee}")
-    if sent == 0:
-        print("送信対象なし（時刻外 or 完了済み）")
-
-
 def main():
     parser = argparse.ArgumentParser(description="定期LINE通知")
     parser.add_argument(
         "type",
-        choices=["medicine", "bath", "summary", "care_tasks"],
-        help="medicine: お薬, bath: お風呂, summary: 1日まとめ, care_tasks: 家族タスク",
+        choices=["medicine", "bath", "summary"],
+        help="medicine: お薬, bath: お風呂, summary: 1日まとめ",
     )
     args = parser.parse_args()
 
@@ -223,8 +172,6 @@ def main():
         check_bath()
     elif args.type == "summary":
         daily_summary()
-    elif args.type == "care_tasks":
-        check_care_tasks()
 
 
 if __name__ == "__main__":

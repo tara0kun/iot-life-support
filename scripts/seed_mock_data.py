@@ -224,7 +224,6 @@ def scenario_demo_full(conn):
     - 食事/トイレ/入浴のセンサーイベント
     - 祖母の「できた」ボタン記録（センサー検証済）
     - 家族の証言記録（family_report）
-    - 家族タスクの完了ログ
     - 家族からタブレットへの伝言（active prompt 1件）
     - 自動ロック発動 1回（夕食後）
     """
@@ -336,14 +335,6 @@ def scenario_demo_full(conn):
                VALUES(?, ?, ?, 1, '就寝')""",
             (G, t(21, 35), t(21, 35)),
         )
-
-    # 家族タスク完了（朝のお薬確認 - 母が完了）
-    today = (_target_date or datetime.now().date()).strftime("%Y-%m-%d")
-    conn.execute(
-        """INSERT OR IGNORE INTO care_task_logs(task_id, date, done_by)
-           SELECT id, ?, '母（家族デモ）' FROM care_tasks WHERE task_name LIKE '%朝のお薬%' LIMIT 1""",
-        (today,),
-    )
 
     # 家族からの伝言（active）
     expires = (datetime.now() + timedelta(minutes=45)).strftime("%Y-%m-%d %H:%M:%S")

@@ -455,9 +455,6 @@ crontab -e
 # 1日のまとめ
 0 22 * * * cd /home/tara0/IoT && venv/bin/python scripts/scheduled_notify.py summary
 
-# 家族タスクリマインダー（時刻に担当者へ）
-0 7-22 * * * cd /home/tara0/IoT && venv/bin/python scripts/scheduled_notify.py care_tasks
-
 # 週次レポート（毎週日曜22時）
 0 22 * * 0 cd /home/tara0/IoT && venv/bin/python scripts/weekly_report.py
 
