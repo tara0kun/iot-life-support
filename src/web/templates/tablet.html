@@ -297,7 +297,7 @@
   <div class="card">
     <div class="card-label">今日の 記録</div>
     <div class="stamps-grid">
-      {% set button_activities = ["起床", "お薬", "お風呂", "就寝"] %}
+      {% set button_activities = ["起床", "お薬", "お風呂", "髪洗った", "就寝"] %}
       {% for s in stamps %}
       <div class="stamp {{ 'done' if s.done else '' }} {{ 'current' if s.current else '' }}">
         <div class="stamp-icon">{{ s.icon }}</div>

@@ -60,6 +60,9 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
         event_type="power_on",
         value=r.power_w,
     )
+    # ドライヤー稼働開始 → 直近30分以内にお風呂が終わっていれば「髪洗った」と推定
+    if name == "hair_dryer":
+        await _maybe_record_hair_wash()
 
 
 async def on_plug_stop(name: str, r: PlugReading) -> None:
@@ -68,6 +71,63 @@ async def on_plug_stop(name: str, r: PlugReading) -> None:
         event_type="power_off",
         value=r.power_w,
     )
+
+
+HAIR_WASH_AFTER_BATH_MINUTES = 30
+
+
+async def _maybe_record_hair_wash() -> None:
+    """ドライヤー稼働開始時に呼ばれる。直近30分以内に入浴終了があれば髪洗いを記録。
+
+    1日に1回までに制限（朝乾かし直し等で連発しないよう）。
+    """
+    from datetime import datetime, timedelta
+    from src.db import get_conn, transaction
+    today = datetime.now().strftime("%Y-%m-%d")
+    conn = get_conn()
+    try:
+        # 今日既に hair_wash 記録があれば何もしない
+        already = conn.execute(
+            """SELECT 1 FROM events
+                WHERE source = 'hair_dryer' AND event_type = 'hair_wash'
+                  AND started_at >= ?""",
+            (today + " 00:00:00",),
+        ).fetchone()
+        if already:
+            log.info("[hair_dryer] 本日既に髪洗い記録あり → 重複記録スキップ")
+            return
+        # 直近30分以内の入浴終了を探す（bath_end イベント）
+        cutoff = (datetime.now() - timedelta(minutes=HAIR_WASH_AFTER_BATH_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+        bath_end = conn.execute(
+            """SELECT started_at FROM events
+                WHERE source = 'bath_door' AND event_type = 'bath_end'
+                  AND started_at >= ?
+                ORDER BY started_at DESC LIMIT 1""",
+            (cutoff,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not bath_end:
+        log.info("[hair_dryer] 直近30分の入浴終了なし → 髪洗い判定保留")
+        return
+
+    await event_bus.record_event(
+        source="hair_dryer",
+        event_type="hair_wash",
+        person_id=GRANDMA_ID,
+        confidence=0.9,
+    )
+    log.info("[hair_dryer] 髪洗い検知（入浴後ドライヤー使用）")
+    # LINE通知（情報のみ、確認不要）
+    try:
+        from src.notifier import send_line_message
+        await asyncio.to_thread(
+            send_line_message,
+            "💇 祖母が髪を洗ったようです\n（入浴後にドライヤー使用を検知）",
+        )
+    except Exception as e:
+        log.warning("髪洗い通知失敗: %s", e)
 
 
 _bath_monitor: BathMonitor | None = None
@@ -157,6 +217,70 @@ def _find_previous_meal_session(conn, before_time: datetime, exclude_session_id:
         (exclude_session_id, before_time, cutoff),
     ).fetchone()
     return dict(row) if row else None
+
+
+async def _dryer_reminder_loop():
+    """入浴終了後30分経ってもドライヤー使用が無い場合、家族に確認通知。
+
+    1日1回のみ通知（重複防止）。
+    """
+    from datetime import datetime, timedelta
+    from src.db import get_conn
+    from src.notifier import send_actionable_notification
+
+    notified_today: set[str] = set()  # date string
+    while True:
+        await asyncio.sleep(15 * 60)  # 15分おき
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            if today in notified_today:
+                continue
+
+            conn = get_conn()
+            try:
+                # 直近の入浴終了
+                bath_end = conn.execute(
+                    """SELECT started_at FROM events
+                        WHERE source = 'bath_door' AND event_type = 'bath_end'
+                          AND started_at >= ?
+                        ORDER BY started_at DESC LIMIT 1""",
+                    (today + " 00:00:00",),
+                ).fetchone()
+                # 今日の髪洗い記録
+                hair_wash = conn.execute(
+                    """SELECT 1 FROM events
+                        WHERE source = 'hair_dryer' AND event_type = 'hair_wash'
+                          AND started_at >= ?""",
+                    (today + " 00:00:00",),
+                ).fetchone()
+            finally:
+                conn.close()
+
+            if not bath_end or hair_wash:
+                continue
+
+            be_time = bath_end["started_at"]
+            if isinstance(be_time, str):
+                try:
+                    be_time = datetime.fromisoformat(be_time)
+                except ValueError:
+                    continue
+
+            elapsed = (datetime.now() - be_time).total_seconds() / 60
+            if elapsed < HAIR_WASH_AFTER_BATH_MINUTES:
+                continue  # まだ猶予内
+
+            await asyncio.to_thread(
+                send_actionable_notification,
+                "hair_dryer_missing", today,
+                f"💇 祖母がお風呂後にドライヤーを使った形跡がありません\n"
+                f"入浴終了: {be_time.strftime('%H:%M')} から {int(elapsed)}分経過\n\n"
+                "髪を洗ったか、ドライヤーで乾かすよう声かけしてください。",
+            )
+            notified_today.add(today)
+            log.info("ドライヤー未使用の確認通知を送信")
+        except Exception as e:
+            log.warning("ドライヤー確認ループエラー: %s", e)
 
 
 async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
@@ -357,6 +481,28 @@ async def main() -> None:
     )
     tasks.append(asyncio.create_task(plug.run()))
     log.info("P110M電力監視を開始")
+
+    # ドライヤー監視（HAIR_DRYER_NODE_ID > 0 のときのみ稼働）
+    hair_dryer_node = int(env.get("HAIR_DRYER_NODE_ID", "0"))
+    if hair_dryer_node > 0:
+        dryer = MatterPlugMonitor(
+            cfg=MatterPlugConfig(
+                name="hair_dryer",
+                node_id=hair_dryer_node,
+                threshold_w=float(env.get("HAIR_DRYER_THRESHOLD_W", "300")),
+                poll_interval=float(env.get("POLL_INTERVAL", "5")),
+                idle_confirm_seconds=float(env.get("HAIR_DRYER_IDLE_CONFIRM", "30")),
+            ),
+            on_start=on_plug_start,
+            on_stop=on_plug_stop,
+        )
+        tasks.append(asyncio.create_task(dryer.run()))
+        log.info("ドライヤー P110M監視を開始 (node=%d)", hair_dryer_node)
+    else:
+        log.info("HAIR_DRYER_NODE_ID 未設定 → ドライヤー監視は無効")
+
+    # 入浴後ドライヤー未使用の促し（15分おきにチェック）
+    tasks.append(asyncio.create_task(_dryer_reminder_loop()))
 
     # T110 開閉センサー (H100ハブ経由)
     hub_ip = env.get("HUB_IP", "")

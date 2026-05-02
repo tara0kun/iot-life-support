@@ -352,6 +352,7 @@ def _build_stamps(sessions: list) -> list[dict]:
         {"icon": "🍚", "label": "朝食", "done": False, "time": "", "current": False},
         {"icon": "🍚", "label": "昼食", "done": False, "time": "", "current": False},
         {"icon": "🛁", "label": "お風呂", "done": False, "time": "", "current": False},
+        {"icon": "💇", "label": "髪洗った", "done": False, "time": "", "current": False},
         {"icon": "🍚", "label": "夕食", "done": False, "time": "", "current": False},
         {"icon": "🌙", "label": "就寝", "done": False, "time": "", "current": False},
     ]
@@ -364,6 +365,29 @@ def _build_stamps(sessions: list) -> list[dict]:
                     t = t.strftime("%H:%M")
                 elif isinstance(t, str) and "T" in t:
                     t = t.split("T")[1][:5]
+                stamp["done"] = True
+                stamp["time"] = str(t)
+                break
+
+    # ドライヤーによる髪洗い検知（events テーブルから直接取得）
+    today = now.strftime("%Y-%m-%d")
+    conn = get_conn()
+    try:
+        hw = conn.execute(
+            """SELECT started_at FROM events
+                WHERE source = 'hair_dryer' AND event_type = 'hair_wash'
+                  AND started_at >= ?
+                ORDER BY started_at DESC LIMIT 1""",
+            (today + " 00:00:00",),
+        ).fetchone()
+    finally:
+        conn.close()
+    if hw:
+        for stamp in all_stamps:
+            if stamp["label"] == "髪洗った" and not stamp["done"]:
+                t = hw["started_at"]
+                if isinstance(t, str) and " " in t:
+                    t = t.split(" ")[1][:5]
                 stamp["done"] = True
                 stamp["time"] = str(t)
                 break
@@ -496,6 +520,7 @@ SENSOR_VERIFY = {
     "起床": {"sources": ["camera"], "event_types": ["person_detected"], "window_minutes": 60},
     "お薬": None,  # センサーなし → 常に家族確認
     "お風呂": {"sources": ["bath_door", "bath_motion"], "event_types": ["close", "open", "motion", "bath_end"], "window_minutes": 120},
+    "髪洗った": {"sources": ["hair_dryer"], "event_types": ["power_on", "hair_wash"], "window_minutes": 120},
     "就寝": None,  # センサーなし → 常に家族確認
 }
 
@@ -569,7 +594,7 @@ async def api_tablet_record(request: Request):
     activity = body.get("activity", "")
     person_id = body.get("person_id", 1)
 
-    valid = {"起床", "お薬", "お風呂", "就寝"}
+    valid = {"起床", "お薬", "お風呂", "髪洗った", "就寝"}
     if activity not in valid:
         raise HTTPException(status_code=400, detail=f"無効な活動: {activity}")
 
