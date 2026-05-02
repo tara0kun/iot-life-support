@@ -216,14 +216,19 @@ async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
                 f"{prev_info}\n\n"
                 "誰の行動ですか？下のボタンから選んでください。"
             )
+            # 登録済み人物（id>0）を Quick Reply ボタンに展開
+            person_rows = conn.execute(
+                "SELECT id, name FROM persons WHERE id > 0 ORDER BY id"
+            ).fetchall()
             items = [
-                {"label": "祖母", "data": f"attribute:{sid}:1"},
-                {"label": "母", "data": f"attribute:{sid}:2"},
-                {"label": "祖父", "data": f"attribute:{sid}:3"},
-                {"label": "不明", "data": f"attribute:{sid}:0"},
+                {"label": p["name"], "data": f"attribute:{sid}:{p['id']}"}
+                for p in person_rows
             ]
+            items.append({"label": "不明", "data": f"attribute:{sid}:0"})
             if prev:
                 items.append({"label": "前と同じ食事", "data": f"merge:{sid}:{prev['id']}"})
+            # LINEのQuick Replyは最大13個
+            items = items[:13]
             try:
                 sent = await asyncio.to_thread(broadcast_with_quick_reply, msg, items)
                 if sent:

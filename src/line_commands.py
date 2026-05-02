@@ -273,38 +273,48 @@ async def handle_unlock_confirm(text: str, sender_id: str) -> str:
 
 
 def handle_register_family(text: str, sender_id: str) -> str:
-    """「登録 <名前>」で家族メンバーを登録する。
+    """「登録 <名前>」で家族メンバーを登録する。自由な名前OK。
 
-    例: 登録 母 / 登録 祖父 / 登録 孫
+    既存persons（祖母・母・祖父など）と一致すればそれにリンク、
+    新しい名前ならpersonsに新規行を追加してリンクする。
     """
     parts = text.replace("　", " ").split()
     if len(parts) < 2:
         return (
             "📝 家族登録\n\n"
             "「登録 <名前>」の形式で送ってください。\n"
-            "例: 登録 母\n\n"
-            "登録できる名前は「登録一覧」で確認できます。"
+            "例: 登録 母 / 登録 叔父 / 登録 たろう\n\n"
+            "好きな呼び名でOKです。"
         )
     name = parts[1].strip()
+    if not name:
+        return "❌ 名前が空です。「登録 <名前>」と送ってください。"
+    if len(name) > 20:
+        return "❌ 名前は20文字以内にしてください。"
+    if name == "未確定":
+        return "❌ 「未確定」は予約名なので使えません。"
+
+    # 既存personsを検索、なければ新規作成
+    person_id: int
+    is_new_person = False
     conn = get_conn()
     try:
-        person = conn.execute(
-            "SELECT id, name FROM persons WHERE name = ? AND id > 0",
-            (name,),
+        row = conn.execute(
+            "SELECT id FROM persons WHERE name = ? AND id > 0", (name,)
         ).fetchone()
-        if not person:
-            valid_names = [
-                r["name"]
-                for r in conn.execute("SELECT name FROM persons WHERE id > 0 ORDER BY id").fetchall()
-            ]
-            return (
-                f"❌ 「{name}」は登録できる名前ではありません。\n"
-                f"使える名前: {', '.join(valid_names)}"
-            )
     finally:
         conn.close()
+    if row:
+        person_id = row["id"]
+    else:
+        with transaction() as c:
+            cur = c.execute(
+                "INSERT INTO persons(name, role) VALUES(?, 'family')", (name,)
+            )
+            person_id = cur.lastrowid
+        is_new_person = True
 
-    # 既存登録上書きを許容（家族の機種変更等に対応）
+    # LINE登録（既存LINE-userの上書き許容）
     with transaction() as c:
         existing = c.execute(
             "SELECT person_id FROM family_line_users WHERE line_user_id = ?",
@@ -317,13 +327,14 @@ def handle_register_family(text: str, sender_id: str) -> str:
                    person_id = excluded.person_id,
                    display_name = excluded.display_name,
                    last_seen_at = CURRENT_TIMESTAMP""",
-            (sender_id, person["id"], name),
+            (sender_id, person_id, name),
         )
 
     msg = f"✅ 「{name}」として登録しました。\n以降このLINEに通知が届きます。"
+    if is_new_person:
+        msg += "\n（新しい人物として作成しました）"
     if existing:
         msg += "\n（前の登録を上書きしました）"
-    # 登録直後はヘルプも自動表示
     msg += "\n\n----------\n" + handle_help()
     return msg
 
