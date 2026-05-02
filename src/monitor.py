@@ -77,16 +77,20 @@ HAIR_WASH_AFTER_BATH_MINUTES = 30
 
 
 async def _maybe_record_hair_wash() -> None:
-    """ドライヤー稼働開始時に呼ばれる。直近30分以内に入浴終了があれば髪洗いを記録。
+    """ドライヤー稼働開始時に呼ばれる。
 
-    1日に1回までに制限（朝乾かし直し等で連発しないよう）。
+    判定根拠（多層）:
+    - 直近30分以内に bath_end あり → 「入浴後ドライヤー使用」（信頼度0.9）
+    - 直近30分以内に shower_start もあれば信頼度↑（0.95）
+    - 入浴記録なくドライヤー単独 → 髪洗いとは判定しない
+
+    1日1回までに制限。
     """
     from datetime import datetime, timedelta
-    from src.db import get_conn, transaction
+    from src.db import get_conn
     today = datetime.now().strftime("%Y-%m-%d")
     conn = get_conn()
     try:
-        # 今日既に hair_wash 記録があれば何もしない
         already = conn.execute(
             """SELECT 1 FROM events
                 WHERE source = 'hair_dryer' AND event_type = 'hair_wash'
@@ -96,13 +100,19 @@ async def _maybe_record_hair_wash() -> None:
         if already:
             log.info("[hair_dryer] 本日既に髪洗い記録あり → 重複記録スキップ")
             return
-        # 直近30分以内の入浴終了を探す（bath_end イベント）
         cutoff = (datetime.now() - timedelta(minutes=HAIR_WASH_AFTER_BATH_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
         bath_end = conn.execute(
             """SELECT started_at FROM events
                 WHERE source = 'bath_door' AND event_type = 'bath_end'
                   AND started_at >= ?
                 ORDER BY started_at DESC LIMIT 1""",
+            (cutoff,),
+        ).fetchone()
+        # SwitchBot温湿度計の shower_start もあれば信頼度UP
+        shower = conn.execute(
+            """SELECT 1 FROM events
+                WHERE source = 'bathroom_meter' AND event_type = 'shower_start'
+                  AND started_at >= ?""",
             (cutoff,),
         ).fetchone()
     finally:
@@ -112,19 +122,20 @@ async def _maybe_record_hair_wash() -> None:
         log.info("[hair_dryer] 直近30分の入浴終了なし → 髪洗い判定保留")
         return
 
+    confidence = 0.95 if shower else 0.9
+    extra = "（湿度急上昇も検知）" if shower else ""
     await event_bus.record_event(
         source="hair_dryer",
         event_type="hair_wash",
         person_id=GRANDMA_ID,
-        confidence=0.9,
+        confidence=confidence,
     )
-    log.info("[hair_dryer] 髪洗い検知（入浴後ドライヤー使用）")
-    # LINE通知（情報のみ、確認不要）
+    log.info("[hair_dryer] 髪洗い検知（信頼度=%.2f）%s", confidence, extra)
     try:
         from src.notifier import send_line_message
         await asyncio.to_thread(
             send_line_message,
-            "💇 祖母が髪を洗ったようです\n（入浴後にドライヤー使用を検知）",
+            f"💇 祖母が髪を洗ったようです\n（入浴後にドライヤー使用を検知）{extra}",
         )
     except Exception as e:
         log.warning("髪洗い通知失敗: %s", e)
@@ -481,6 +492,54 @@ async def main() -> None:
     )
     tasks.append(asyncio.create_task(plug.run()))
     log.info("P110M電力監視を開始")
+
+    # SwitchBot 温湿度計（浴室）監視（SWITCHBOT_METER_ENABLED=1 のときのみ稼働）
+    sb_enabled = env.get("SWITCHBOT_METER_ENABLED", "0") == "1"
+    sb_mac = env.get("SWITCHBOT_METER_MAC", "").strip()
+    if sb_enabled and sb_mac:
+        from src.sensors.switchbot_meter import SwitchBotMeterMonitor, MeterReading
+        from src.bath_humidity_detector import BathHumidityDetector
+        _humidity_detector = BathHumidityDetector()
+
+        async def _on_meter_reading(r: "MeterReading") -> None:
+            await event_bus.record_event(
+                source="bathroom_meter",
+                event_type="reading",
+                value=float(r.humidity_pct),
+            )
+            events_out = _humidity_detector.feed(r.humidity_pct, r.temperature_c, r.timestamp)
+            for ev_type, payload in events_out:
+                await event_bus.record_event(
+                    source="bathroom_meter",
+                    event_type=ev_type,
+                    person_id=GRANDMA_ID if ev_type in ("shower_start", "shower_end") else None,
+                    value=float(r.humidity_pct),
+                )
+                if ev_type == "abnormal_temp":
+                    from src.notifier import send_actionable_notification
+                    msg = (
+                        f"🚨 浴室の温度が異常です\n"
+                        f"室温: {payload['temperature']:.1f}℃ / 湿度: {payload['humidity']}%\n"
+                        "ヒートショックの危険があります。確認してください。"
+                    )
+                    ctx = datetime.now().strftime("%Y-%m-%d_%H%M")
+                    await asyncio.to_thread(
+                        send_actionable_notification, "bath_abnormal_temp", ctx, msg
+                    )
+
+        meter = SwitchBotMeterMonitor(
+            target_mac=sb_mac,
+            poll_seconds=float(env.get("SWITCHBOT_METER_POLL_SECONDS", "10")),
+            on_reading=_on_meter_reading,
+        )
+        tasks.append(asyncio.create_task(meter.run()))
+        log.info("SwitchBot 温湿度計 BLE 監視を開始（MAC=%s）", sb_mac)
+    else:
+        log.info(
+            "SwitchBot 温湿度計監視は無効（SWITCHBOT_METER_ENABLED=%s, MAC=%s）",
+            env.get("SWITCHBOT_METER_ENABLED", "0"),
+            "未設定" if not sb_mac else "設定済み",
+        )
 
     # ドライヤー監視（HAIR_DRYER_NODE_ID > 0 のときのみ稼働）
     hair_dryer_node = int(env.get("HAIR_DRYER_NODE_ID", "0"))

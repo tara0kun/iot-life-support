@@ -1344,7 +1344,50 @@ async def family_view(request: Request):
         "rice_amount": _load_rice_guide(),
         "medicine_schedule": {m["timing"]: m["hour"] for m in _load_medicine_schedule()},
         "settings": list_settings(),
+        "extra_sensors": _build_extra_sensor_status(),
     })
+
+
+def _build_extra_sensor_status() -> list[dict]:
+    """追加センサーの導入状況を返す（家族UI 拡張センサー状態セクション用）。"""
+    env_path = BASE.parent.parent / ".env"
+    env: dict[str, str] = {}
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            env[k.strip()] = v.strip()
+
+    items: list[dict] = []
+
+    # ドライヤー P110M
+    dryer_node = int(env.get("HAIR_DRYER_NODE_ID", "0") or "0")
+    items.append({
+        "icon": "💇",
+        "name": "ドライヤー（P110M）",
+        "description": "入浴後のドライヤー使用で「髪を洗った」を自動記録",
+        "enabled": dryer_node > 0,
+        "disabled_reason": "未設定。P110Mペアリング後 .env の HAIR_DRYER_NODE_ID を設定してください。",
+    })
+
+    # SwitchBot 防水温湿度計
+    sb_enabled = env.get("SWITCHBOT_METER_ENABLED", "0") == "1"
+    sb_mac = env.get("SWITCHBOT_METER_MAC", "").strip()
+    sb_ok = sb_enabled and bool(sb_mac)
+    items.append({
+        "icon": "💧",
+        "name": "SwitchBot 防水温湿度計",
+        "description": "浴室内の湿度急上昇でシャワー使用を直接検知",
+        "enabled": sb_ok,
+        "disabled_reason": (
+            "センサー未購入のため記録不可。" if not sb_mac
+            else "MAC設定済みだが有効化されていません（SWITCHBOT_METER_ENABLED=1で有効化）"
+        ),
+    })
+
+    return items
 
 
 # ============================================================

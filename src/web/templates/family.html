@@ -419,6 +419,35 @@
     </div>
   </div>
 
+  <!-- 拡張センサー状態 -->
+  <details class="section-card" style="padding:0;overflow:hidden;">
+    <summary style="cursor:pointer;padding:16px;font-weight:700;font-size:1.05em;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+      <span>🔌 拡張センサー状態</span>
+      <span style="font-size:0.8em;color:#999;">▼ クリックで開く</span>
+    </summary>
+    <div style="padding:0 16px 16px;">
+      <div class="section-desc">追加で導入予定のセンサーの稼働状況。未接続のものは記録されません。</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.9em;margin-top:10px;">
+        {% for s in extra_sensors %}
+        <tr style="border-bottom:1px solid #EEE;">
+          <td style="padding:8px;width:55%;">
+            <div style="font-weight:500;">{{ s.icon }} {{ s.name }}</div>
+            <div style="color:#999;font-size:0.85em;">{{ s.description }}</div>
+          </td>
+          <td style="padding:8px;text-align:right;">
+            {% if s.enabled %}
+              <span style="background:#E8F5E9;color:#2E7D32;padding:4px 10px;border-radius:6px;font-weight:700;">✅ 稼働中</span>
+            {% else %}
+              <span style="background:#FFF3E0;color:#E65100;padding:4px 10px;border-radius:6px;font-weight:700;">⚠️ 未設定</span>
+              <div style="color:#999;font-size:0.8em;margin-top:4px;">{{ s.disabled_reason }}</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </table>
+    </div>
+  </details>
+
   <!-- 詳細設定（通知ON/OFF・しきい値） -->
   <details class="section-card" style="padding:0;overflow:hidden;">
     <summary style="cursor:pointer;padding:16px;font-weight:700;font-size:1.05em;list-style:none;display:flex;justify-content:space-between;align-items:center;">
