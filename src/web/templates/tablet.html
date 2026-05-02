@@ -67,8 +67,8 @@
 
   /* お花エリア */
   .flower-card { text-align: center; background: linear-gradient(180deg, var(--card) 0%, var(--bg-warm) 100%); }
-  .flower-stage { margin: 16px 0 20px; }
-  .flower-stage svg { max-width: 160px; height: auto; }
+  .flower-stage { margin: 16px auto 20px; display: flex; justify-content: center; }
+  .flower-stage svg { max-width: 160px; height: auto; margin: 0 auto; display: block; }
   .flower-message { font-size: 20px; color: var(--text); font-weight: 700; letter-spacing: 1px; }
   .flower-sub { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
 
@@ -78,18 +78,19 @@
   .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 
   /* スタンプカード（高齢者向けに拡大） */
-  .stamps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0; }
-  @media (min-width: 600px) { .stamps-grid { grid-template-columns: repeat(7, 1fr); } }
+  .stamps-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
+  @media (min-width: 600px) { .stamps-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
   .stamp {
-    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 4px 14px;
+    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 6px 14px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     border: 2px solid transparent; min-height: 110px; transition: all 0.3s ease;
+    min-width: 0;
   }
   .stamp.done { background: linear-gradient(135deg, #E8F8F0, #D5F5E3); border-color: var(--success); }
   .stamp.current { border-color: var(--accent-light); background: #FFF8EE; animation: stamp-pulse 2.5s infinite; }
   @keyframes stamp-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(243,156,18,0.2); } 50% { box-shadow: 0 0 0 6px rgba(243,156,18,0); } }
   .stamp-icon { width: 40px; height: 40px; }
-  .stamp-name { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 6px; }
+  .stamp-name { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 6px; white-space: nowrap; }
   .stamp-check { font-size: 14px; color: var(--success); font-weight: 700; margin-top: 4px; }
   .stamp-time { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 
@@ -125,10 +126,11 @@
 
   /* できたボタン（タッチ領域を拡大） */
   .stamp-btn {
-    margin-top: 8px; padding: 10px 22px; border: 2px solid var(--success); border-radius: 12px;
-    background: white; color: var(--success); font-size: 16px; font-weight: 700;
+    margin-top: 8px; padding: 10px 12px; border: 2px solid var(--success); border-radius: 12px;
+    background: white; color: var(--success); font-size: 15px; font-weight: 700;
     cursor: pointer; font-family: inherit; transition: all 0.2s;
-    min-width: 80px; min-height: 44px;
+    min-height: 44px; white-space: nowrap; box-sizing: border-box;
+    width: 100%; max-width: 100%;
   }
   .stamp-btn:hover { background: var(--success); color: white; }
   .stamp-btn:active { transform: scale(0.95); }
