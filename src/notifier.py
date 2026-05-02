@@ -28,8 +28,13 @@ def _load_env() -> dict[str, str]:
 
 
 def send_line_message(message: str, user_id: str | None = None) -> bool:
+    """LINEプッシュ通知を送る。
+
+    - user_id 指定なし → 登録済み家族全員へブロードキャスト
+    - user_id 指定あり → そのユーザーのみに送信
+    既存呼出側で user_id を渡していないコードは自動的に全員配信になる。
+    """
     # マスタースイッチ確認（settings.notify_master_enabled）
-    # importは関数内（循環import回避＋settings未初期化時の安全のため）
     try:
         from .settings import get_bool
         if not get_bool("notify_master_enabled", default=True):
@@ -38,11 +43,13 @@ def send_line_message(message: str, user_id: str | None = None) -> bool:
     except Exception:
         pass  # settingsが使えない状態でも通知は送る（フェイルオープン）
 
+    # user_id 未指定 → 全登録家族にブロードキャスト
+    if user_id is None:
+        return broadcast_line_message(message) > 0
+
     env = _load_env()
     token = env.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-    uid = user_id or env.get("LINE_USER_ID", "")
-
-    if not token or not uid:
+    if not token or not user_id:
         log.warning("LINE設定未完了（トークンまたはユーザーIDなし）")
         return False
 
@@ -51,7 +58,7 @@ def send_line_message(message: str, user_id: str | None = None) -> bool:
         "Authorization": f"Bearer {token}",
     }
     data = {
-        "to": uid,
+        "to": user_id,
         "messages": [{"type": "text", "text": message}],
     }
 
