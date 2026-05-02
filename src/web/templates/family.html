@@ -204,10 +204,12 @@
   }
   .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
 
-  /* テーブル */
+  /* テーブル（section-card内に配置されるので独自の枠は最小限） */
+  .event-log-card { padding: 0; overflow: hidden; }
+  .event-log-card .filters { padding: 16px 16px 0; margin-bottom: 12px; }
+  .event-table-wrap { width: 100%; overflow-x: auto; }
   .event-table {
     width: 100%; border-collapse: collapse; background: var(--card);
-    border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
   }
   .event-table th {
     background: var(--primary); color: white; padding: 12px 16px; text-align: left;
@@ -219,6 +221,7 @@
 
   .source-badge {
     display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700;
+    white-space: nowrap;
   }
   .source-rice_cooker { background: #FFF3E0; color: #E65100; }
   .source-ih { background: #FCE4EC; color: #C62828; }
@@ -482,7 +485,8 @@
     <span class="date-label">{% if is_today %}今日{% else %}{{ selected_date }}{% endif %}のイベント</span>
   </div>
 
-  <!-- フィルタ -->
+  <!-- イベント一覧 -->
+  <div class="section-card event-log-card">
   <div class="filters">
     <button class="filter-btn active" onclick="filterEvents('all')">全員</button>
     {% for p in persons %}
@@ -490,7 +494,7 @@
     {% endfor %}
   </div>
 
-  <!-- イベント一覧 -->
+  <div class="event-table-wrap">
   <table class="event-table" id="event-table">
     <thead>
       <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th><th></th></tr>
@@ -531,6 +535,8 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
+  </div>
 </div>
 
 <script>
