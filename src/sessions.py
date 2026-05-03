@@ -125,8 +125,10 @@ def _has_rice_lid_open(events: list[EventRow]) -> bool:
 def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
     """食事セッションまたはお風呂セッションとして有効か。
 
-    conn が渡される場合、蓋センサーの運用状態を確認し、運用中なら炊飯器単独
-    の power_on は食事として認めない（蓋開と組合せが必要）。
+    炊飯器/IH の単独 power_on は、蓋開イベントが同セッション内にない限り
+    食事として認めない（保温パルス・蓋開時の温度補正反応を除外）。
+    蓋センサー未設置時は「蓋開イベントが永遠に来ない」ため、結果として
+    炊飯器単独の検知は食事として集約されない（ユーザー要望通り）。
     """
     sources = {e.source for e in events}
 
@@ -134,33 +136,29 @@ def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
     if _is_bath_session(events):
         return any(e.event_type == "bath_end" for e in events)
 
-    # 以下は食事セッション判定
-    # power_off 単独は食事とみなさない（炊飯完了の残りイベント）
+    # power_off 単独は食事とみなさない
     event_types = {e.event_type for e in events}
     if event_types == {"power_off"}:
         return False
 
-    # 蓋開 + 炊飯器 → 確実に食事
+    # 蓋開 + 炊飯器/IH → 確実に食事
     if _has_rice_lid_open(events) and ("rice_cooker" in sources or "ih" in sources):
         return True
 
-    # 蓋センサーが運用中の場合: 炊飯器単独の power_on は食事と認めない
-    rice_lid_active = _is_rice_lid_in_use(conn) if conn is not None else False
-    if rice_lid_active and sources & {"rice_cooker", "ih"} and not _has_rice_lid_open(events):
-        # 炊飯器が動いたが蓋を開けてない → 炊飯中 or 保温パルス、食事ではない
-        # ただし他の強信号（複数センサー or 冷蔵庫複数回）があればそちらで判定
-        if len(sources - {"camera", "rice_cooker", "ih"}) >= 1:
-            pass  # 他のセンサーもあるので下のルールで判定
-        else:
+    # 炊飯器/IH 単独 → 蓋開なしなので食事とは認めない
+    # （他センサーとの組合せでなら下のルールで判定）
+    if sources & {"rice_cooker", "ih"} and not _has_rice_lid_open(events):
+        if len(sources - {"camera", "rice_cooker", "ih"}) == 0:
+            # 他センサーゼロ → 食事ではない（保温パルス・蓋開反応・炊飯中）
             return False
 
+    # 複数センサー（カメラ除く 2件以上）→ 食事
     if len(sources - {"camera"}) >= 2:
         return True
+    # 冷蔵庫複数回 → 食事
     if sources == {"fridge"} and len(events) >= 2:
         return True
-    # 蓋センサー未運用時のみ、炊飯器/IH単独でも食事認定（旧来挙動）
-    if sources & {"rice_cooker", "ih"} and not rice_lid_active:
-        return True
+    # カメラ単独 → 滞在時間で判定
     if sources == {"camera"}:
         total = 0.0
         for e in events:
