@@ -27,25 +27,49 @@ def _load_env() -> dict[str, str]:
     return values
 
 
+# LINE Messaging API の月200通制限対策。
+# 重要度CRITICALのカテゴリだけ全家族にbroadcast、それ以外は admin（LINE_USER_ID=孫）のみ。
+CRITICAL_CATEGORIES: set[str] = {
+    "bath_emergency",        # 浴室30分無反応（緊急）
+    "anomaly_inactivity",    # 4時間センサー無反応
+    "anomaly_night_rice",    # 深夜炊飯
+    "anomaly_fridge_open",   # 冷蔵庫開きっぱなし
+    "meal_alert",            # 食べすぎアラート
+    "device_locked",         # 自動ロック / 手動ロック
+}
+
+
+def is_critical_category(category: str) -> bool:
+    return category in CRITICAL_CATEGORIES
+
+
+def _admin_user_id() -> str:
+    """孫=LINE_USER_ID（adminアカウント）"""
+    return _load_env().get("LINE_USER_ID", "").strip()
+
+
 def send_line_message(message: str, user_id: str | None = None) -> bool:
     """LINEプッシュ通知を送る。
 
-    - user_id 指定なし → 登録済み家族全員へブロードキャスト
+    - user_id 指定なし → admin (LINE_USER_ID=孫) のみに送信（コスト最小）
     - user_id 指定あり → そのユーザーのみに送信
-    既存呼出側で user_id を渡していないコードは自動的に全員配信になる。
+    全家族にbroadcastしたい場合は明示的に broadcast_line_message を呼ぶ。
     """
-    # マスタースイッチ確認（settings.notify_master_enabled）
+    # マスタースイッチ確認
     try:
         from .settings import get_bool
         if not get_bool("notify_master_enabled", default=True):
             log.info("LINE通知マスタースイッチOFF → 送信スキップ: %s", message[:50])
             return False
     except Exception:
-        pass  # settingsが使えない状態でも通知は送る（フェイルオープン）
+        pass
 
-    # user_id 未指定 → 全登録家族にブロードキャスト
+    # user_id 未指定 → admin のみ（broadcast したいなら明示呼出）
     if user_id is None:
-        return broadcast_line_message(message) > 0
+        user_id = _admin_user_id()
+        if not user_id:
+            log.warning("LINE_USER_ID 未設定")
+            return False
 
     env = _load_env()
     token = env.get("LINE_CHANNEL_ACCESS_TOKEN", "")
@@ -270,7 +294,15 @@ def send_actionable_notification(category: str, context_key: str, message: str,
         items.extend(extra_items)
     items = items[:13]  # LINE Quick Reply は最大13個
 
-    sent = broadcast_with_quick_reply(message, items)
+    # カテゴリで送信先振り分け（CRITICAL=全員、その他=adminのみ）
+    if is_critical_category(category):
+        sent = broadcast_with_quick_reply(message, items)
+    else:
+        admin = _admin_user_id()
+        if admin and send_line_with_quick_reply(message, items, user_id=admin):
+            sent = 1
+        else:
+            sent = 0
     if sent > 0:
         record_pending_notification(category, context_key, message, items)
     return sent
@@ -373,8 +405,14 @@ def mark_notification_completed(notification_type: str, context_key: str,
                     (completed_by[:64], action_summary, row["id"]),
                 )
 
-        # 全家族に「対応済み」ブロードキャスト（対応者の名前付き）
-        broadcast_line_message(f"☑️ {confirmer}さんが対応しました\n{action_summary}")
+        # 完了通知もカテゴリで分岐（CRITICAL=全員、その他=adminのみ）
+        msg = f"☑️ {confirmer}さんが対応しました\n{action_summary}"
+        if is_critical_category(notification_type):
+            broadcast_line_message(msg)
+        else:
+            admin = _admin_user_id()
+            if admin:
+                send_line_message(msg, user_id=admin)
         return True
     except Exception as e:
         log.error("pending_notification 完了処理失敗: %s", e)
@@ -458,9 +496,10 @@ def notify_device_locked(device_name: str, manual: bool = False, reason: str = "
 
 
 def notify_device_unlocked(device_name: str, manual: bool = False, reason: str = "") -> bool:
-    """機器ロック解除時の家族全員へのLINE通知。
+    """機器ロック解除時の通知（admin=孫 のみに送信、コスト節約）。
 
-    manual=True なら家族操作 or LINEコマンドによる解除、False なら自動タイマー解除。
+    解除は情報通知のみで、対応アクション不要。CRITICAL対象外。
+    必要なら家族管理画面で履歴確認可能。
     """
     label = _DEVICE_LABELS.get(device_name, device_name)
     now = datetime.now()
@@ -469,5 +508,4 @@ def notify_device_unlocked(device_name: str, manual: bool = False, reason: str =
         message = f"🔓 {label}のロックを解除しました\n{sub}\n時刻: {now.strftime('%H:%M')}"
     else:
         message = f"🔓 {label}のロックが自動で解除されました\n時刻: {now.strftime('%H:%M')}"
-    # 情報通知のみ（確認ボタン不要）
-    return broadcast_line_message(message) > 0
+    return send_line_message(message)  # user_id=None → admin のみ
