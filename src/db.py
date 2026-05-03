@@ -98,7 +98,9 @@ CREATE TABLE IF NOT EXISTS family_prompts (
     sent_by TEXT DEFAULT '家族',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     expires_at TIMESTAMP NOT NULL,              -- 表示期限
-    dismissed INTEGER NOT NULL DEFAULT 0        -- 祖母が確認済みか
+    dismissed INTEGER NOT NULL DEFAULT 0,       -- 祖母が確認済みか
+    priority TEXT NOT NULL DEFAULT 'normal'     -- 'critical'(音声強調)/'normal'/'silent'(表示のみ)
+        CHECK(priority IN ('critical', 'normal', 'silent'))
 );
 
 CREATE TABLE IF NOT EXISTS medicine_schedule (

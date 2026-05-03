@@ -708,12 +708,21 @@ async def api_quick_record(request: Request):
 
 @app.post("/api/family-prompt")
 async def api_send_prompt(request: Request):
-    """家族から祖母タブレットにメッセージを送る。"""
+    """家族から祖母タブレットにメッセージを送る。
+
+    priority:
+      - 'critical': 音声強調＋繰り返し読み上げ
+      - 'normal'  : 通常（音声・表示）
+      - 'silent'  : 表示のみ、音声なし
+    """
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     body = await request.json()
     message = body.get("message", "").strip()
-    minutes = body.get("minutes", 60)  # 表示時間（デフォルト60分）
+    minutes = body.get("minutes", 60)
+    priority = body.get("priority", "normal")
+    if priority not in ("critical", "normal", "silent"):
+        priority = "normal"
     if not message:
         raise HTTPException(status_code=400, detail="メッセージを入力してください")
     now = datetime.now()
@@ -722,10 +731,10 @@ async def api_send_prompt(request: Request):
     expires_str = expires.strftime("%Y-%m-%d %H:%M:%S")
     with transaction() as conn:
         conn.execute(
-            "INSERT INTO family_prompts(message, sent_by, created_at, expires_at) VALUES(?, ?, ?, ?)",
-            (message, "家族", now_str, expires_str),
+            "INSERT INTO family_prompts(message, sent_by, created_at, expires_at, priority) VALUES(?, ?, ?, ?, ?)",
+            (message, "家族", now_str, expires_str, priority),
         )
-    return {"ok": True, "message": message, "expires_at": expires_str}
+    return {"ok": True, "message": message, "expires_at": expires_str, "priority": priority}
 
 
 @app.post("/api/dismiss-prompt/{prompt_id}")
@@ -742,7 +751,7 @@ def _get_active_prompts() -> list[dict]:
     try:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         rows = conn.execute(
-            """SELECT id, message, sent_by, created_at FROM family_prompts
+            """SELECT id, message, sent_by, created_at, priority FROM family_prompts
                WHERE dismissed = 0 AND expires_at > ?
                ORDER BY created_at DESC""",
             (now,),
