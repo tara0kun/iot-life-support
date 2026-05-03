@@ -154,6 +154,21 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS rice_classifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER,                              -- 関連eventsレコードID（削除済みでもOK）
+    power_w REAL NOT NULL,                         -- 検知時の電力
+    hour_of_day INTEGER NOT NULL,                  -- 0-23
+    lid_recently_opened INTEGER DEFAULT 0,         -- 蓋開30秒以内なら1
+    classification TEXT NOT NULL                   -- cook/keep_warm/lid_only/unknown
+        CHECK(classification IN ('cook', 'keep_warm', 'lid_only', 'unknown')),
+    classified_by TEXT,                            -- LINE sender_id
+    classified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    auto_decided INTEGER DEFAULT 0                 -- 0=家族手動 1=システム自動判定
+);
+CREATE INDEX IF NOT EXISTS idx_rice_cls_features
+    ON rice_classifications(power_w, hour_of_day, lid_recently_opened);
+
 CREATE TABLE IF NOT EXISTS family_line_users (
     line_user_id TEXT PRIMARY KEY,
     person_id INTEGER NOT NULL REFERENCES persons(id),

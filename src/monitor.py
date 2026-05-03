@@ -56,17 +56,109 @@ async def on_plug_reading(name: str, r: PlugReading) -> None:
 
 RICE_COOKING_CERTAIN_W = 700  # これ以上で確実に炊飯と判定（ambiguous問い合わせをスキップ）
 
+# 学習に基づく自動分類のパラメータ
+RICE_AUTO_POWER_WINDOW = 50      # 過去サンプルとの power_w 許容差
+RICE_AUTO_HOUR_WINDOW = 2        # 過去サンプルとの hour_of_day 許容差
+RICE_AUTO_MIN_SAMPLES = 3        # この件数以上の類似サンプルがあれば自動判定可
+RICE_AUTO_AGREEMENT = 0.8        # 80%以上同じ分類なら採用
+
+
+def _predict_rice_action(power_w: float, hour: int, lid_recent: bool) -> tuple[str, float] | None:
+    """過去の家族分類から、新しいイベントの分類を予測する。
+
+    戻り値: (分類, 信頼度) または None（データ不足/曖昧）。
+    'unknown' 分類は学習対象から除外。
+    """
+    from src.db import get_conn
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT classification, COUNT(*) as cnt
+                 FROM rice_classifications
+                WHERE ABS(power_w - ?) <= ?
+                  AND ABS(hour_of_day - ?) <= ?
+                  AND lid_recently_opened = ?
+                  AND classification != 'unknown'
+                  AND auto_decided = 0
+                GROUP BY classification""",
+            (power_w, RICE_AUTO_POWER_WINDOW,
+             hour, RICE_AUTO_HOUR_WINDOW,
+             1 if lid_recent else 0),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not rows:
+        return None
+    total = sum(r["cnt"] for r in rows)
+    if total < RICE_AUTO_MIN_SAMPLES:
+        return None
+    rows_sorted = sorted(rows, key=lambda r: -r["cnt"])
+    top = rows_sorted[0]
+    confidence = top["cnt"] / total
+    if confidence < RICE_AUTO_AGREEMENT:
+        return None
+    return (top["classification"], confidence)
+
+
+def _record_classification(event_id: int | None, power_w: float, hour: int,
+                            lid_recent: bool, classification: str,
+                            classified_by: str | None, auto_decided: bool) -> None:
+    """家族の分類 or 自動分類を rice_classifications に記録。"""
+    from src.db import transaction
+    try:
+        with transaction() as c:
+            c.execute(
+                """INSERT INTO rice_classifications
+                       (event_id, power_w, hour_of_day, lid_recently_opened,
+                        classification, classified_by, auto_decided)
+                   VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                (event_id, power_w, hour, 1 if lid_recent else 0,
+                 classification, classified_by, 1 if auto_decided else 0),
+            )
+    except Exception as e:
+        log.warning("rice_classifications 記録失敗: %s", e)
+
 
 async def on_plug_start(name: str, r: PlugReading) -> None:
     import time
     # 炊飯器: 蓋開直後の power_on は保温ヒーター応答として抑制
+    lid_recent = False
     if name == "rice_cooker":
         last_lid_open = _recent_lid_opens.get("rice_cooker_lid", 0.0)
         elapsed = time.time() - last_lid_open
-        if 0 < elapsed <= LID_OPEN_SUPPRESS_SECONDS:
+        lid_recent = 0 < elapsed <= LID_OPEN_SUPPRESS_SECONDS
+        if lid_recent:
             log.info(
                 "[%s] 蓋開%.0f秒後の power_on(%.0fW) → 保温応答として抑制",
                 name, elapsed, r.power_w,
+            )
+            return
+
+    # 炊飯器: 高電力なら確実に炊飯、それ以外は学習データを参照して自動判定を試みる
+    if name == "rice_cooker" and r.power_w < RICE_COOKING_CERTAIN_W:
+        hour = datetime.now().hour
+        prediction = _predict_rice_action(r.power_w, hour, lid_recent)
+        if prediction:
+            cls, conf = prediction
+            log.info(
+                "[rice_cooker] 自動分類: %s (信頼度%.0f%%, 電力%.0fW, 時刻%d時)",
+                cls, conf * 100, r.power_w, hour,
+            )
+            if cls in ("keep_warm", "lid_only"):
+                # 食事ではないのでイベント記録しない（食事カウントに影響させない）
+                _record_classification(
+                    None, r.power_w, hour, lid_recent, cls,
+                    classified_by="auto", auto_decided=True,
+                )
+                return
+            # 'cook' なら通常通り記録
+            event_id = await event_bus.record_event(
+                source=name, event_type="power_on", value=r.power_w,
+            )
+            _record_classification(
+                event_id, r.power_w, hour, lid_recent, cls,
+                classified_by="auto", auto_decided=True,
             )
             return
 
@@ -76,8 +168,7 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
         value=r.power_w,
     )
 
-    # 炊飯器の中間電力（100〜700W）→ 炊飯/保温/蓋開のいずれか曖昧
-    # 家族に LINE Quick Reply で問い合わせる
+    # 炊飯器の中間電力で予測できなかった → 家族に問い合わせ
     if name == "rice_cooker" and r.power_w < RICE_COOKING_CERTAIN_W:
         await _ask_rice_action_classification(event_id, r.power_w)
 

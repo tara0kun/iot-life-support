@@ -397,6 +397,7 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
 
     data形式: "rice_action:<event_id>:<action>"
       action: cook / keep_warm / lid_only / unknown
+    家族の判定を rice_classifications テーブルに学習データとして保存する。
     """
     parts = data.split(":")
     if len(parts) != 3 or parts[0] != "rice_action":
@@ -408,6 +409,7 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
     action = parts[2]
 
     from .notifier import resolve_confirmer_name, mark_notification_completed
+    from datetime import datetime as _dt
     confirmer = resolve_confirmer_name(sender_id)
 
     action_label = {
@@ -416,6 +418,41 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
         "lid_only": "蓋開のみ",
         "unknown": "不明",
     }.get(action, action)
+
+    # イベント情報取得（電力・時刻、学習データ保存用）
+    power_w: float | None = None
+    hour_of_day: int | None = None
+    conn = get_conn()
+    try:
+        ev = conn.execute(
+            "SELECT value, started_at FROM events WHERE id = ?", (event_id,)
+        ).fetchone()
+        if ev:
+            power_w = float(ev["value"]) if ev["value"] is not None else None
+            t = ev["started_at"]
+            if isinstance(t, str):
+                try:
+                    t = _dt.fromisoformat(t)
+                except ValueError:
+                    t = None
+            if isinstance(t, _dt):
+                hour_of_day = t.hour
+    finally:
+        conn.close()
+
+    # 学習データに記録（unknownでも将来の判別性は無いが履歴として残す）
+    if power_w is not None and hour_of_day is not None:
+        try:
+            with transaction() as c:
+                c.execute(
+                    """INSERT INTO rice_classifications
+                           (event_id, power_w, hour_of_day, lid_recently_opened,
+                            classification, classified_by, auto_decided)
+                       VALUES(?, ?, ?, 0, ?, ?, 0)""",
+                    (event_id, power_w, hour_of_day, action, sender_id),
+                )
+        except Exception as e:
+            log.warning("rice_classifications 保存失敗: %s", e)
 
     # 保温/蓋開のみ → イベント削除＋関連セッションも空ならクリーンアップ
     if action in ("keep_warm", "lid_only"):
@@ -442,7 +479,20 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
     else:  # unknown
         summary = f"event #{event_id} は「不明」のまま自動判定に任せる"
 
-    # pending通知を完了マーク + 全家族に共有
+    # 学習が進んだら自動判定が効くようになるヒントを追加
+    cls_count = 0
+    try:
+        conn = get_conn()
+        cls_count = conn.execute(
+            "SELECT COUNT(*) FROM rice_classifications WHERE auto_decided = 0 AND classification != 'unknown'"
+        ).fetchone()[0]
+        conn.close()
+    except Exception:
+        pass
+
+    if cls_count > 0 and cls_count % 5 == 0:
+        summary += f"\n📚 学習サンプル {cls_count}件 蓄積済み（類似ケースは自動判定されます）"
+
     await asyncio.to_thread(
         mark_notification_completed,
         "rice_action", f"event_{event_id}", sender_id, summary,
