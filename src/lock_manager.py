@@ -28,24 +28,40 @@ RECENT_MEAL_MINUTES = 90
 
 
 async def _matter_set_power(node_id: int, on: bool) -> bool:
+    """Matter経由でP110Mのコンセント通電をON/OFFする。
+
+    matter-server 8.x の API（APICommand.DEVICE_COMMAND = "device_command"）に
+    対応。Matter OnOff cluster (id=6) の On/Off コマンドを送信する。
+    """
     try:
         async with aiohttp.ClientSession() as session:
             ws = await session.ws_connect(MATTER_WS)
+            # サーバ hello を1回受信
             await asyncio.wait_for(ws.receive_json(), timeout=5)
-            cmd = "on" if on else "off"
+            cmd_name = "On" if on else "Off"  # Matter Cluster Command クラス名
             await ws.send_json({
                 "message_id": "lock",
-                "command": f"device_controller.send_device_command",
+                "command": "device_command",
                 "args": {
                     "node_id": node_id,
                     "endpoint_id": 1,
-                    "cluster_id": 6,
-                    "command_name": cmd,
+                    "cluster_id": 6,           # OnOff cluster
+                    "command_name": cmd_name,
+                    "payload": {},
                 },
             })
-            resp = await asyncio.wait_for(ws.receive_json(), timeout=10)
+            # message_id 一致するレスポンスまで読む（途中のサブスクリプション通知をスキップ）
+            for _ in range(10):
+                resp = await asyncio.wait_for(ws.receive_json(), timeout=10)
+                if resp.get("message_id") == "lock":
+                    await ws.close()
+                    if resp.get("error_code") is not None:
+                        log.warning("Matter制御エラー: %s", resp.get("details"))
+                        return False
+                    return True
             await ws.close()
-            return resp.get("error_code") is None
+            log.warning("Matter制御: lock応答が見つからず")
+            return False
     except Exception as e:
         log.error("Matter制御失敗: %s", e)
         return False
