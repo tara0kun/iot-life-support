@@ -14,7 +14,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn, transaction
-from src.notifier import broadcast_with_quick_reply, broadcast_line_message
+from src.notifier import (
+    broadcast_with_quick_reply, broadcast_line_message,
+    send_line_message, send_line_with_quick_reply,
+    is_critical_category, _admin_user_id,
+)
 from src.settings import get_bool
 
 RENOTIFY_INTERVAL_MINUTES = 30
@@ -57,10 +61,21 @@ def main():
             except Exception:
                 items = []
         try:
-            if items:
-                sent = broadcast_with_quick_reply(msg, items)
+            if is_critical_category(r["notification_type"]):
+                # CRITICAL → 全員に再通知
+                if items:
+                    sent = broadcast_with_quick_reply(msg, items)
+                else:
+                    sent = broadcast_line_message(msg)
             else:
-                sent = broadcast_line_message(msg)
+                # NORMAL → admin のみ
+                admin = _admin_user_id()
+                if not admin:
+                    sent = 0
+                elif items:
+                    sent = 1 if send_line_with_quick_reply(msg, items, user_id=admin) else 0
+                else:
+                    sent = 1 if send_line_message(msg, user_id=admin) else 0
             if sent > 0:
                 with transaction() as c:
                     c.execute(
@@ -91,11 +106,17 @@ def main():
 
     for t in timeouts:
         try:
-            broadcast_line_message(
+            timeout_msg = (
                 f"⏰ {RENOTIFY_INTERVAL_MINUTES * MAX_NOTIFY_COUNT}分以上応答なし。\n"
                 f"以下の通知は対応されませんでした:\n\n{t['message'][:120]}\n\n"
                 "後ほど家族管理画面で確認してください。"
             )
+            if is_critical_category(t['notification_type']):
+                broadcast_line_message(timeout_msg)
+            else:
+                admin = _admin_user_id()
+                if admin:
+                    send_line_message(timeout_msg, user_id=admin)
             with transaction() as c:
                 c.execute(
                     """UPDATE pending_notifications
