@@ -54,6 +54,9 @@ async def on_plug_reading(name: str, r: PlugReading) -> None:
     log.debug("[%s] %.1fW", name, r.power_w)
 
 
+RICE_COOKING_CERTAIN_W = 700  # これ以上で確実に炊飯と判定（ambiguous問い合わせをスキップ）
+
+
 async def on_plug_start(name: str, r: PlugReading) -> None:
     import time
     # 炊飯器: 蓋開直後の power_on は保温ヒーター応答として抑制
@@ -66,14 +69,49 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
                 name, elapsed, r.power_w,
             )
             return
-    await event_bus.record_event(
+
+    event_id = await event_bus.record_event(
         source=name,
         event_type="power_on",
         value=r.power_w,
     )
+
+    # 炊飯器の中間電力（100〜700W）→ 炊飯/保温/蓋開のいずれか曖昧
+    # 家族に LINE Quick Reply で問い合わせる
+    if name == "rice_cooker" and r.power_w < RICE_COOKING_CERTAIN_W:
+        await _ask_rice_action_classification(event_id, r.power_w)
+
     # ドライヤー稼働開始 → 直近30分以内にお風呂が終わっていれば「髪洗った」と推定
     if name == "hair_dryer":
         await _maybe_record_hair_wash()
+
+
+async def _ask_rice_action_classification(event_id: int, power_w: float) -> None:
+    """炊飯器の曖昧な電力検知時、家族にLINE Quick Replyで分類を仰ぐ。"""
+    from src.notifier import broadcast_with_quick_reply, record_pending_notification
+    now_str = datetime.now().strftime("%H:%M")
+    msg = (
+        f"🍚 炊飯器が起動しました\n"
+        f"電力: {int(power_w)}W / 時刻: {now_str}\n\n"
+        "これは何の動きですか？"
+    )
+    items = [
+        {"label": "炊飯", "data": f"rice_action:{event_id}:cook"},
+        {"label": "保温", "data": f"rice_action:{event_id}:keep_warm"},
+        {"label": "蓋開のみ", "data": f"rice_action:{event_id}:lid_only"},
+        {"label": "不明", "data": f"rice_action:{event_id}:unknown"},
+    ]
+    try:
+        sent = await asyncio.to_thread(broadcast_with_quick_reply, msg, items)
+        if sent > 0:
+            await asyncio.to_thread(
+                record_pending_notification,
+                "rice_action", f"event_{event_id}", msg, items,
+            )
+            log.info("[rice_cooker] 曖昧電力%.0fW → 家族に分類問い合わせ送信(event=%d)",
+                     power_w, event_id)
+    except Exception as e:
+        log.warning("rice_action 通知失敗: %s", e)
 
 
 async def on_plug_stop(name: str, r: PlugReading) -> None:

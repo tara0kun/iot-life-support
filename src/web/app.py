@@ -867,7 +867,10 @@ async def line_webhook(request: Request):
     allowed = _load_line_allowed_senders()
 
     from ..notifier import reply_line_message
-    from ..line_commands import dispatch, handle_attribute_postback, handle_merge_postback, handle_confirm_postback
+    from ..line_commands import (
+        dispatch, handle_attribute_postback, handle_merge_postback,
+        handle_confirm_postback, handle_rice_action_postback,
+    )
     events = payload.get("events", [])
     for ev in events:
         ev_type = ev.get("type", "")
@@ -901,6 +904,8 @@ async def line_webhook(request: Request):
                     reply = await handle_merge_postback(data, sender_id)
                 elif data.startswith("confirm:"):
                     reply = await handle_confirm_postback(data, sender_id)
+                elif data.startswith("rice_action:"):
+                    reply = await handle_rice_action_postback(data, sender_id)
             except Exception as e:
                 _webhook_log.error("postback処理エラー: %s", e)
                 reply = "⚠️ 処理に失敗しました"

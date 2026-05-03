@@ -392,6 +392,64 @@ CATEGORY_LABELS = {
 }
 
 
+async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
+    """炊飯器の曖昧な power_on を家族が分類するボタン押下を処理。
+
+    data形式: "rice_action:<event_id>:<action>"
+      action: cook / keep_warm / lid_only / unknown
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "rice_action":
+        return None
+    try:
+        event_id = int(parts[1])
+    except ValueError:
+        return None
+    action = parts[2]
+
+    from .notifier import resolve_confirmer_name, mark_notification_completed
+    confirmer = resolve_confirmer_name(sender_id)
+
+    action_label = {
+        "cook": "炊飯",
+        "keep_warm": "保温",
+        "lid_only": "蓋開のみ",
+        "unknown": "不明",
+    }.get(action, action)
+
+    # 保温/蓋開のみ → イベント削除＋関連セッションも空ならクリーンアップ
+    if action in ("keep_warm", "lid_only"):
+        with transaction() as c:
+            session_ids = [
+                r["session_id"]
+                for r in c.execute(
+                    "SELECT session_id FROM session_events WHERE event_id = ?",
+                    (event_id,),
+                ).fetchall()
+            ]
+            c.execute("DELETE FROM session_events WHERE event_id = ?", (event_id,))
+            c.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            for sid in session_ids:
+                remaining = c.execute(
+                    "SELECT COUNT(*) FROM session_events WHERE session_id = ?",
+                    (sid,),
+                ).fetchone()[0]
+                if remaining == 0:
+                    c.execute("DELETE FROM meal_sessions WHERE id = ?", (sid,))
+        summary = f"event #{event_id} を「{action_label}」として除外（食事カウントせず）"
+    elif action == "cook":
+        summary = f"event #{event_id} を「炊飯」として確定（食事として集約）"
+    else:  # unknown
+        summary = f"event #{event_id} は「不明」のまま自動判定に任せる"
+
+    # pending通知を完了マーク + 全家族に共有
+    await asyncio.to_thread(
+        mark_notification_completed,
+        "rice_action", f"event_{event_id}", sender_id, summary,
+    )
+    return f"✅ {confirmer}さん、{summary}"
+
+
 async def handle_confirm_postback(data: str, sender_id: str) -> str | None:
     """「✓ 確認した」ボタン押下を処理する。
 
