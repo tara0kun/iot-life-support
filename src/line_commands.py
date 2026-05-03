@@ -268,6 +268,15 @@ async def handle_unlock_confirm(text: str, sender_id: str) -> str:
         log.error("ロック解除エラー: %s", e)
         return "⚠️ 解除処理でエラーが発生しました。"
     if success:
+        # 全家族にbroadcast（誰がLINEから解除したか名前付き）
+        try:
+            from .notifier import notify_device_unlocked, resolve_confirmer_name
+            name = resolve_confirmer_name(sender_id)
+            await asyncio.to_thread(
+                notify_device_unlocked, device, True, f"{name}さんがLINEから解除"
+            )
+        except Exception as e:
+            log.warning("unlock broadcast失敗: %s", e)
         return "✅ 炊飯器のロックを解除しました。"
     return "⚠️ 解除処理に失敗しました（Matter通信エラー）。"
 
