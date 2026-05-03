@@ -1330,7 +1330,9 @@ async def family_view(request: Request):
 
     conn = get_conn()
     try:
-        persons = [dict(r) for r in conn.execute("SELECT id, name, role FROM persons").fetchall()]
+        persons = [dict(r) for r in conn.execute(
+            "SELECT id, name, role FROM persons ORDER BY id"
+        ).fetchall()]
     finally:
         conn.close()
     grandma_sessions = sessions_today(1)

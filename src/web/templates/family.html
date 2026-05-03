@@ -197,12 +197,16 @@
   }
 
   /* フィルタ */
-  .filters { display: flex; gap: 8px; margin-bottom: 16px; }
+  .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
   .filter-btn {
     padding: 8px 16px; border: 2px solid #E0E0E0; border-radius: 8px;
     background: white; color: var(--text); font-size: 13px; cursor: pointer; font-family: inherit; font-weight: 500;
+    white-space: nowrap;
   }
   .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+  @media (max-width: 480px) {
+    .filter-btn { padding: 6px 10px; font-size: 12px; }
+  }
 
   /* テーブル（section-card内に配置されるので独自の枠は最小限） */
   .event-log-card { padding: 0; overflow: hidden; }
