@@ -98,8 +98,36 @@ def _is_bath_session(events: list[EventRow]) -> bool:
     return bool(sources & BATH_SOURCES) and not (sources & {"rice_cooker", "ih", "contact_sensor"})
 
 
-def _qualifies_as_session(events: list[EventRow]) -> bool:
-    """食事セッションまたはお風呂セッションとして有効か。"""
+def _is_rice_lid_in_use(conn) -> bool:
+    """過去24時間以内に rice_cooker_lid のイベントが1件でもあれば True。
+
+    蓋センサーが運用中（設置済み・稼働中）の判定。
+    True なら炊飯器単独の power_on は食事と認めず、蓋開イベントが必要になる。
+    """
+    try:
+        since = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+        row = conn.execute(
+            "SELECT 1 FROM events WHERE source = 'rice_cooker_lid' AND started_at >= ? LIMIT 1",
+            (since,),
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+
+
+def _has_rice_lid_open(events: list[EventRow]) -> bool:
+    """セッションのイベント群に rice_cooker_lid の open があるか。"""
+    return any(
+        e.source == "rice_cooker_lid" and e.event_type == "open" for e in events
+    )
+
+
+def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
+    """食事セッションまたはお風呂セッションとして有効か。
+
+    conn が渡される場合、蓋センサーの運用状態を確認し、運用中なら炊飯器単独
+    の power_on は食事として認めない（蓋開と組合せが必要）。
+    """
     sources = {e.source for e in events}
 
     # お風呂セッション: bath_end イベントがあれば有効
@@ -112,11 +140,26 @@ def _qualifies_as_session(events: list[EventRow]) -> bool:
     if event_types == {"power_off"}:
         return False
 
+    # 蓋開 + 炊飯器 → 確実に食事
+    if _has_rice_lid_open(events) and ("rice_cooker" in sources or "ih" in sources):
+        return True
+
+    # 蓋センサーが運用中の場合: 炊飯器単独の power_on は食事と認めない
+    rice_lid_active = _is_rice_lid_in_use(conn) if conn is not None else False
+    if rice_lid_active and sources & {"rice_cooker", "ih"} and not _has_rice_lid_open(events):
+        # 炊飯器が動いたが蓋を開けてない → 炊飯中 or 保温パルス、食事ではない
+        # ただし他の強信号（複数センサー or 冷蔵庫複数回）があればそちらで判定
+        if len(sources - {"camera", "rice_cooker", "ih"}) >= 1:
+            pass  # 他のセンサーもあるので下のルールで判定
+        else:
+            return False
+
     if len(sources - {"camera"}) >= 2:
         return True
     if sources == {"fridge"} and len(events) >= 2:
         return True
-    if sources & {"rice_cooker", "ih"}:
+    # 蓋センサー未運用時のみ、炊飯器/IH単独でも食事認定（旧来挙動）
+    if sources & {"rice_cooker", "ih"} and not rice_lid_active:
         return True
     if sources == {"camera"}:
         total = 0.0
@@ -263,7 +306,7 @@ def aggregate_sessions(lookback_hours: int = 24) -> int:
                 clusters.append(current)
 
             for cluster in clusters:
-                if not _qualifies_as_session(cluster):
+                if not _qualifies_as_session(cluster, conn=conn):
                     continue
                 # お風呂セッションの場合は「お風呂」ラベル
                 if _is_bath_session(cluster):
