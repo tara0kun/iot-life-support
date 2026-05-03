@@ -469,7 +469,7 @@ async def api_device_status(request: Request):
 
 @app.post("/api/unlock")
 async def api_unlock(request: Request):
-    """家族がロックを手動解除する。"""
+    """家族がロックを手動解除する。全家族にLINE通知。"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     body = await request.json()
@@ -486,6 +486,12 @@ async def api_unlock(request: Request):
                    VALUES(NULL, 'family_override', 'unlock', ?, ?)""",
                 (now, json.dumps({"device": device_name, "reason": reason}, ensure_ascii=False)),
             )
+        # 全家族にLINEで「ロック解除しました」をbroadcast
+        try:
+            from ..notifier import notify_device_unlocked
+            await asyncio.to_thread(notify_device_unlocked, device_name, True, reason)
+        except Exception as e:
+            _webhook_log.warning("unlock通知失敗: %s", e)
         return {"ok": True, "message": "解除しました"}
     else:
         raise HTTPException(status_code=500, detail="Matter通信に失敗しました")
@@ -493,7 +499,7 @@ async def api_unlock(request: Request):
 
 @app.post("/api/lock")
 async def api_lock(request: Request):
-    """家族が手動でロックをかける（予防的措置）。"""
+    """家族が手動でロックをかける（予防的措置）。全家族にLINE通知。"""
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     body = await request.json()
@@ -510,6 +516,12 @@ async def api_lock(request: Request):
                    VALUES(NULL, 'family_override', 'lock', ?, ?)""",
                 (now, json.dumps({"device": device_name, "reason": reason}, ensure_ascii=False)),
             )
+        # 全家族にLINEで「手動ロックしました」をactionable broadcast
+        try:
+            from ..notifier import notify_device_locked
+            await asyncio.to_thread(notify_device_locked, device_name, True, reason)
+        except Exception as e:
+            _webhook_log.warning("lock通知失敗: %s", e)
         return {"ok": True, "message": "ロックしました"}
     else:
         raise HTTPException(status_code=500, detail="Matter通信に失敗しました")

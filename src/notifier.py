@@ -423,17 +423,51 @@ def notify_meal_alert(person_name: str, meal_count: int, last_meal_time: str) ->
     ) > 0
 
 
-def notify_device_locked(device_name: str) -> bool:
-    device_labels = {
-        "rice_cooker": "炊飯器",
-        "ih": "IHコンロ",
-    }
-    label = device_labels.get(device_name, device_name)
+_DEVICE_LABELS = {
+    "rice_cooker": "炊飯器",
+    "ih": "IHコンロ",
+}
+
+
+def notify_device_locked(device_name: str, manual: bool = False, reason: str = "") -> bool:
+    """機器ロック時の家族全員へのLINE通知。
+
+    manual=True なら家族の手動操作、False なら自動ロック（食事後）。
+    """
+    label = _DEVICE_LABELS.get(device_name, device_name)
     now = datetime.now()
-    message = f"🔒 {label}を自動ロックしました（食事後の安全措置）\n時刻: {now.strftime('%H:%M')}"
-    message += "\n（解除するには「ロック解除」と送信）"
+    if manual:
+        sub = f"理由: {reason}" if reason else "家族による手動操作"
+        message = (
+            f"🔒 {label}を手動ロックしました\n"
+            f"{sub}\n"
+            f"時刻: {now.strftime('%H:%M')}\n"
+            "（解除するには家族管理画面 or LINEに「ロック解除」と送信）"
+        )
+    else:
+        message = (
+            f"🔒 {label}を自動ロックしました（食事後の安全措置）\n"
+            f"時刻: {now.strftime('%H:%M')}\n"
+            "（解除するには家族管理画面 or LINEに「ロック解除」と送信）"
+        )
     return send_actionable_notification(
         "device_locked",
         f"{now.strftime('%Y-%m-%d_%H%M')}_{device_name}",
         message,
     ) > 0
+
+
+def notify_device_unlocked(device_name: str, manual: bool = False, reason: str = "") -> bool:
+    """機器ロック解除時の家族全員へのLINE通知。
+
+    manual=True なら家族操作 or LINEコマンドによる解除、False なら自動タイマー解除。
+    """
+    label = _DEVICE_LABELS.get(device_name, device_name)
+    now = datetime.now()
+    if manual:
+        sub = f"理由: {reason}" if reason else "家族による手動解除"
+        message = f"🔓 {label}のロックを解除しました\n{sub}\n時刻: {now.strftime('%H:%M')}"
+    else:
+        message = f"🔓 {label}のロックが自動で解除されました\n時刻: {now.strftime('%H:%M')}"
+    # 情報通知のみ（確認ボタン不要）
+    return broadcast_line_message(message) > 0
