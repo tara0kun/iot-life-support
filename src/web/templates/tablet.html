@@ -78,7 +78,9 @@
   .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 
   /* スタンプカード（高齢者向けに拡大） */
-  /* グリッド: 狭幅は3列(=各セル広め)、中幅4列、広幅8列で「できた」が確実に収まる */
+  /* グリッド: 小型は3列、それ以上は常に4列。
+     container max-width=720px なので8列だと1セル76pxしかなく「できた」が
+     収まらない問題があり、4列固定（8stampなら2行）に変更。 */
   .stamps-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -86,9 +88,6 @@
   }
   @media (min-width: 480px) {
     .stamps-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  }
-  @media (min-width: 600px) {
-    .stamps-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
   }
   .stamp {
     background: var(--bg); border-radius: var(--radius-sm); padding: 16px 8px 14px;
