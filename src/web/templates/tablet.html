@@ -258,7 +258,7 @@
 
   <!-- 家族からのメッセージ -->
   {% for fp in family_prompts %}
-  <div class="alert-card remind" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
+  <div class="alert-card remind" data-priority="{{ fp.priority or 'normal' }}" data-msg-id="fp_{{ fp.id }}" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
     <div class="alert-icon">
       <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#42A5F5" opacity="0.15"/><path d="M12 16 h24 v16 q0 4 -4 4 H16 q-4 0 -4-4Z" fill="#42A5F5" opacity="0.3"/><path d="M12 16 L24 26 L36 16" fill="none" stroke="#1565C0" stroke-width="2.5"/></svg>
     </div>
@@ -272,7 +272,7 @@
 
   <!-- 注意喚起 -->
   {% for a in alerts %}
-  <div class="alert-card {{ a.level }}">
+  <div class="alert-card {{ a.level }}" data-priority="{{ 'critical' if a.level == 'warn' else 'normal' }}" data-msg-id="alert_{{ a.type }}">
     <div class="alert-icon">
       {% if a.type == "meal_many" %}
       <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#FF9800" opacity="0.15"/><circle cx="24" cy="24" r="16" fill="#FF9800" opacity="0.2"/><path d="M24 10 L24 28" stroke="#E65100" stroke-width="4" stroke-linecap="round"/><circle cx="24" cy="35" r="3" fill="#E65100"/></svg>
@@ -636,14 +636,23 @@ document.querySelectorAll('.garden-flower').forEach(el => {
 });
 
 // ============================================================
-// 音声読み上げ (Web Speech API)
+// 音声読み上げ (Web Speech API) — 拡張版
+// ============================================================
+//   A: WebSocket差分発話（新規アラートのみ読み上げ、既読はスキップ）
+//   C: 写真撮影プロンプトの音声誘導（speak() を公開API化）
+//   D: 時刻ベース定期発話（朝・昼・夕・夜の挨拶）
+//   E: 緊急通知の強調音声（priority=critical / level=warn を大きく繰り返し）
+//   G: 家族の priority 設定対応（silent=表示のみ、normal=通常、critical=強調）
 // ============================================================
 const TTS_KEY = 'tablet_tts_enabled';
+const TTS_INIT_KEY = 'tablet_tts_initialized';
+const TTS_SPOKEN_KEY = 'tablet_tts_spoken_ids';   // 既に読み上げたメッセージID
+const TTS_GREETING_KEY = 'tablet_tts_greeting';   // 時刻挨拶の重複防止
 const ttsSupported = 'speechSynthesis' in window;
 
 function isTTSEnabled() {
   const v = localStorage.getItem(TTS_KEY);
-  return v === null ? true : v === '1';  // デフォルトON
+  return v === null ? true : v === '1';
 }
 
 function setTTSEnabled(on) {
@@ -660,46 +669,132 @@ function updateTTSButton() {
   btn.style.color = isTTSEnabled() ? '#2E7D32' : '#999';
 }
 
+// グローバル speak（外部から呼べる: 写真撮影プロンプト等で利用）
 function speak(text, opts = {}) {
-  if (!ttsSupported || !isTTSEnabled()) return;
-  if (!text) return;
+  if (!ttsSupported || !isTTSEnabled() || !text) return;
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'ja-JP';
-  u.rate = opts.rate || 0.9;  // 祖母向けに少し遅め
+  u.rate = opts.rate || 0.9;
   u.pitch = opts.pitch || 1.0;
   u.volume = opts.volume || 1.0;
   speechSynthesis.speak(u);
+  // 緊急時は2回読み上げ
+  if (opts.repeat && opts.repeat > 1) {
+    for (let i = 1; i < opts.repeat; i++) {
+      setTimeout(() => {
+        const u2 = new SpeechSynthesisUtterance(text);
+        u2.lang = 'ja-JP';
+        u2.rate = opts.rate || 0.9;
+        u2.volume = opts.volume || 1.0;
+        speechSynthesis.speak(u2);
+      }, i * (text.length * 150 + 800));
+    }
+  }
 }
 
-function speakAlerts() {
+function _getSpokenIds() {
+  try { return JSON.parse(localStorage.getItem(TTS_SPOKEN_KEY) || '[]'); }
+  catch(e) { return []; }
+}
+function _setSpokenIds(ids) {
+  // 古いID（最新50件以外）は削除して肥大化を防ぐ
+  localStorage.setItem(TTS_SPOKEN_KEY, JSON.stringify(ids.slice(-50)));
+}
+
+// 新規アラートだけ発話（既読IDをlocalStorageで管理）
+function speakAlerts(forceAll = false) {
   if (!ttsSupported || !isTTSEnabled()) return;
-  speechSynthesis.cancel();  // 既存キューをクリア
+  speechSynthesis.cancel();
 
-  // 家族からのメッセージ優先
-  const famMsgs = document.querySelectorAll('.alert-card .alert-message');
-  const alertTexts = Array.from(famMsgs).map(el => el.textContent.trim()).filter(Boolean);
-  if (alertTexts.length === 0) return;
+  const cards = document.querySelectorAll('.alert-card[data-msg-id]');
+  if (cards.length === 0) return;
 
-  // 重要: ユーザー操作由来でないとブラウザが抑制する場合がある
-  // → 画面タップ後に読み上げる方針
-  alertTexts.forEach((t, i) => {
-    setTimeout(() => speak(t), i * 300);
+  const spoken = forceAll ? [] : _getSpokenIds();
+  const newIds = [];
+  const queue = [];
+
+  cards.forEach(card => {
+    const msgId = card.dataset.msgId;
+    if (spoken.includes(msgId)) return;
+    const priority = card.dataset.priority || 'normal';
+    if (priority === 'silent') {
+      newIds.push(msgId);  // 既読扱いだが発話しない
+      return;
+    }
+    const textEl = card.querySelector('.alert-message');
+    if (!textEl) return;
+    const text = textEl.textContent.trim();
+    if (!text) return;
+
+    // E: critical は遅めの速度+大音量+2回繰り返し
+    const opts = priority === 'critical'
+      ? { rate: 0.85, volume: 1.0, repeat: 2 }
+      : { rate: 0.9, volume: 1.0 };
+    queue.push({ text, opts, id: msgId });
   });
+
+  queue.forEach((item, i) => {
+    setTimeout(() => speak(item.text, item.opts), i * 600);
+    newIds.push(item.id);
+  });
+
+  if (newIds.length) {
+    _setSpokenIds([..._getSpokenIds(), ...newIds]);
+  }
 }
 
-// 初回タップで音声読み上げ（ブラウザのautoplay制約対策）
-let ttsInitialized = false;
+// D: 時刻ベース挨拶（毎時0〜3分の間に1回だけ発話）
+const TIME_GREETINGS = [
+  { hour: 7,  message: 'おはようございます' },
+  { hour: 8,  message: 'おはようございます。朝ごはんを食べましょう' },
+  { hour: 12, message: 'お昼の時間です' },
+  { hour: 15, message: 'おやつの時間です' },
+  { hour: 18, message: 'そろそろ夕ごはんの時間です' },
+  { hour: 21, message: 'そろそろお休みの時間ですよ' },
+];
+
+function checkTimeGreeting() {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  const now = new Date();
+  if (now.getMinutes() > 3) return;  // 毎時0〜3分のみ
+  const h = now.getHours();
+  const greeting = TIME_GREETINGS.find(g => g.hour === h);
+  if (!greeting) return;
+  const key = `${now.toDateString()}_h${h}`;
+  if (localStorage.getItem(TTS_GREETING_KEY) === key) return;
+  localStorage.setItem(TTS_GREETING_KEY, key);
+  setTimeout(() => speak(greeting.message, { rate: 0.85 }), 1000);
+}
+
+// 初回タップで音声初期化（ブラウザのautoplay制約対策）
+let ttsInitialized = localStorage.getItem(TTS_INIT_KEY) === '1';
+
 function initTTSOnInteraction() {
   if (ttsInitialized) return;
   ttsInitialized = true;
-  speakAlerts();
+  localStorage.setItem(TTS_INIT_KEY, '1');
+  speakAlerts(true);  // 初回は全アラート読み上げ
 }
 document.addEventListener('click', initTTSOnInteraction, { once: true });
 document.addEventListener('touchstart', initTTSOnInteraction, { once: true });
 
 window.addEventListener('DOMContentLoaded', () => {
   updateTTSButton();
+  // 既に初期化済み（過去に祖母がタップ済み）なら、reload直後でも自動発話
+  if (ttsInitialized) {
+    setTimeout(() => speakAlerts(false), 800);  // DOM安定化待ち
+  }
 });
+
+// 1分おきに時刻挨拶チェック
+setInterval(checkTimeGreeting, 60 * 1000);
+// 初期チェックも1回
+setTimeout(checkTimeGreeting, 5000);
+
+// 「できた」ボタン押下時のフィードバック（B 機能）
+window.speakRecordSuccess = function(activity) {
+  speak(`${activity}、ありがとう。記録しました`, { rate: 0.95 });
+};
 
 // 家族メッセージ確認
 async function dismissPrompt(id, btn) {
@@ -735,6 +830,8 @@ async function tabletRecord(activity, btn) {
 
     btn.classList.add('pressed');
     btn.textContent = '✓';
+    // ポジティブフィードバック音声
+    if (window.speakRecordSuccess) window.speakRecordSuccess(activity);
     setTimeout(() => location.reload(), 1500);
   } catch(e) {
     btn.disabled = false;

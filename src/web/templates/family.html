@@ -375,6 +375,17 @@
       <input type="text" id="custom-prompt" placeholder="自由にメッセージを入力" style="flex:1; padding:10px 14px; border:2px solid #E0E0E0; border-radius:8px; font-size:14px; font-family:inherit;">
       <button onclick="sendPrompt(document.getElementById('custom-prompt').value)" style="padding:10px 20px; background:var(--primary); color:white; border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">送信</button>
     </div>
+    <div style="margin-top:10px; display:flex; gap:14px; align-items:center; font-size:12px; color:var(--text-light);">
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="radio" name="prompt-priority" value="normal" checked> 通常（音声・表示）
+      </label>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="radio" name="prompt-priority" value="critical"> 重要（音声強調・繰り返し）
+      </label>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="radio" name="prompt-priority" value="silent"> 静か（表示のみ・音声なし）
+      </label>
+    </div>
   </div>
 
   <!-- 炊飯量設定 -->
@@ -695,11 +706,14 @@ async function deleteEvent(eventId, eventType) {
 
 async function sendPrompt(message) {
   if (!message || !message.trim()) { alert('メッセージを入力してください'); return; }
-  if (!confirm(`「${message}」をタブレットに表示しますか？`)) return;
+  const priorityEl = document.querySelector('input[name="prompt-priority"]:checked');
+  const priority = priorityEl ? priorityEl.value : 'normal';
+  const priorityLabel = { critical: '重要', normal: '通常', silent: '静か' }[priority] || '通常';
+  if (!confirm(`「${message}」を${priorityLabel}でタブレットに表示しますか？`)) return;
   try {
     const resp = await fetch('/api/family-prompt', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
-      body: JSON.stringify({ message: message.trim(), minutes: 60 })
+      body: JSON.stringify({ message: message.trim(), minutes: 60, priority })
     });
     if (resp.ok) {
       alert('タブレットに送信しました');
