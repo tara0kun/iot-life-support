@@ -78,16 +78,23 @@
   .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 
   /* スタンプカード（高齢者向けに拡大） */
-  .stamps-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0; }
-  @media (min-width: 600px) { .stamps-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+  /* グリッド: 狭幅は3列(=各セル広め)、中幅4列、広幅8列で「できた」が確実に収まる */
+  .stamps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px; margin: 8px 0;
+  }
+  @media (min-width: 480px) {
+    .stamps-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
+  @media (min-width: 600px) {
+    .stamps-grid { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+  }
   .stamp {
-    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 4px 14px;
+    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 8px 14px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     border: 2px solid transparent; min-height: 110px; transition: all 0.3s ease;
     min-width: 0;
-  }
-  @media (min-width: 600px) {
-    .stamp { padding: 16px 8px 14px; }
   }
   .stamp.done { background: linear-gradient(135deg, #E8F8F0, #D5F5E3); border-color: var(--success); }
   .stamp.current { border-color: var(--accent-light); background: #FFF8EE; animation: stamp-pulse 2.5s infinite; }
@@ -127,22 +134,18 @@
   .garden-row-label { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
   .garden-row-label span { font-size: 12px; color: #558B2F; font-weight: 500; }
 
-  /* できたボタン（タッチ領域は確保しつつ、狭セルではみ出さない） */
+  /* できたボタン（タッチ領域は確保、狭セルでもはみ出さない） */
   .stamp-btn {
-    margin-top: 8px; padding: 10px 4px; border: 2px solid var(--success); border-radius: 12px;
-    background: white; color: var(--success); font-size: 14px; font-weight: 700;
+    margin-top: 8px; padding: 10px 8px; border: 2px solid var(--success); border-radius: 12px;
+    background: white; color: var(--success); font-size: 15px; font-weight: 700;
     cursor: pointer; font-family: inherit; transition: all 0.2s;
     min-height: 44px; white-space: nowrap; box-sizing: border-box;
     width: 100%; max-width: 100%;
-    overflow: hidden; text-overflow: clip;
   }
   .stamp-btn:hover { background: var(--success); color: white; }
   .stamp-btn:active { transform: scale(0.95); }
   .stamp-btn:disabled { border-color: var(--text-muted); color: var(--text-muted); cursor: not-allowed; }
   .stamp-btn.pressed { background: var(--success); color: white; pointer-events: none; }
-  @media (min-width: 600px) {
-    .stamp-btn { padding: 10px 14px; font-size: 15px; }
-  }
 
   /* 検証アラート */
   .verify-alert {
