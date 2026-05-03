@@ -806,9 +806,12 @@ async function dismissPrompt(id, btn) {
   } catch(e) {}
 }
 
-// 祖母「できた」ボタン処理
-// 祖母には常に肯定的なフィードバック（✓）のみを返す。
-// センサー未確認のケースは家族側UI＋LINEで通知され、祖母には見せない。
+// 祖母「できた」ボタン処理 — 4ケース対応
+// A. sensor_confirmed     → ✓ + 「ありがとう、記録しました」音声
+// B. already_done_old     → 「もうすでに○○できてますよ HH:MMに」表示+音声、記録しない
+// C. no_sensor_data       → 「センサーが感知していません 家族に聞いてください」表示+音声
+// D. no_sensor (薬/就寝)  → 「家族に伝えてください」表示+音声
+// cooldown                → ボタンに ✓ を一時表示するだけ
 async function tabletRecord(activity, btn) {
   btn.disabled = true;
   btn.textContent = '確認中...';
@@ -828,11 +831,60 @@ async function tabletRecord(activity, btn) {
       return;
     }
 
-    btn.classList.add('pressed');
-    btn.textContent = '✓';
-    // ポジティブフィードバック音声
-    if (window.speakRecordSuccess) window.speakRecordSuccess(activity);
-    setTimeout(() => location.reload(), 1500);
+    if (data.verified) {
+      // A: センサー確認済み → 普通の成功
+      btn.classList.add('pressed');
+      btn.textContent = '✓';
+      if (window.speakRecordSuccess) window.speakRecordSuccess(activity);
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+
+    // ボタンの見た目はリセット
+    btn.disabled = false;
+    btn.textContent = 'できた';
+
+    // 警告メッセージとアイコン
+    let title = '';
+    let sub = '';
+    let voiceText = '';
+    let icon = '⚠️';
+
+    if (data.reason === 'already_done_old') {
+      // B: 既に完了済み（窓外） → 重複防止メッセージ
+      title = `もうすでに ${activity} できてますよ`;
+      sub = data.last_time ? `${data.last_time} にできていました` : '';
+      voiceText = `もうすでに${activity}できてますよ。${data.last_time ? data.last_time + 'にできていました。' : ''}`;
+      icon = '✅';
+      // ボタンも「✓」に変えて押せないようにする（重複防止のUI表現）
+      btn.classList.add('pressed');
+      btn.textContent = '✓';
+    } else if (data.reason === 'no_sensor_data') {
+      // C: センサー記録なし → 家族確認誘導
+      title = 'センサーが感知していません';
+      sub = '家にいる家族に聞いてください';
+      voiceText = `センサーが${activity}を感知していません。家族に確認してください。`;
+      icon = '⚠️';
+    } else if (data.reason === 'no_sensor') {
+      // D: そもそもセンサー無し（お薬・就寝）→ 家族に伝える
+      title = `${activity} を家族に伝えてください`;
+      sub = '家族が記録してくれます';
+      voiceText = `${activity}を家族に伝えてください。家族が記録してくれます。`;
+      icon = 'ℹ️';
+    } else {
+      // フォールバック
+      title = data.message || '何か問題が起きました';
+      voiceText = title;
+    }
+
+    if (area) {
+      area.innerHTML = `<div class="verify-alert fail">
+        <div class="va-title">${icon} ${title}</div>
+        ${sub ? `<div class="va-sub">${sub}</div>` : ''}
+      </div>`;
+      setTimeout(() => { area.innerHTML = ''; }, 12000);
+    }
+    if (window.speak) window.speak(voiceText, { rate: 0.85 });
   } catch(e) {
     btn.disabled = false;
     btn.textContent = 'できた';

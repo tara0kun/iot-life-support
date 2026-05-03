@@ -538,19 +538,31 @@ SENSOR_VERIFY = {
 
 
 def _verify_sensor(activity: str, person_id: int) -> dict:
-    """ボタン押下時にセンサー記録を照合する。"""
+    """ボタン押下時にセンサー記録を照合する。
+
+    返却される reason:
+      - 'no_sensor'              : お薬/就寝など、そもそもセンサーがない項目
+      - 'sensor_confirmed'       : 直近 window 以内にセンサー反応あり（祖母として）
+      - 'sensor_confirmed_unidentified' : 同上だが person_id 未識別（誰か）
+      - 'already_done_old'       : 今日の window 外にセンサー反応あり → 既にやってる
+      - 'no_sensor_data'         : 今日センサー反応一切なし → 本当にやった？
+    """
     rule = SENSOR_VERIFY.get(activity)
     if rule is None:
-        return {"verified": False, "reason": "no_sensor", "message": "センサーがない項目です。家族に確認してもらってください。"}
+        return {"verified": False, "reason": "no_sensor",
+                "message": "センサーがない項目です。家族に確認してもらってください。"}
 
     window = timedelta(minutes=rule["window_minutes"])
     now = datetime.now()
     since = now - window
+    today_start = datetime.combine(now.date(), time.min)
 
     conn = get_conn()
     try:
         placeholders_src = ",".join("?" for _ in rule["sources"])
         placeholders_evt = ",".join("?" for _ in rule["event_types"])
+
+        # window内にセンサー反応あり（祖母 person_id一致）
         params = [person_id, since] + rule["sources"] + rule["event_types"]
         row = conn.execute(
             f"""SELECT COUNT(*) as cnt FROM events
@@ -560,8 +572,10 @@ def _verify_sensor(activity: str, person_id: int) -> dict:
             params,
         ).fetchone()
         if row and row["cnt"] > 0:
-            return {"verified": True, "reason": "sensor_confirmed", "message": "センサーで確認できました。"}
-        # person_id不問でも探す（未識別の場合）
+            return {"verified": True, "reason": "sensor_confirmed",
+                    "message": "センサーで確認できました。"}
+
+        # window内に person_id 不問のセンサー反応あり
         params2 = [since] + rule["sources"] + rule["event_types"]
         row2 = conn.execute(
             f"""SELECT COUNT(*) as cnt FROM events
@@ -571,8 +585,33 @@ def _verify_sensor(activity: str, person_id: int) -> dict:
             params2,
         ).fetchone()
         if row2 and row2["cnt"] > 0:
-            return {"verified": True, "reason": "sensor_confirmed_unidentified", "message": "センサーで確認できました。"}
-        return {"verified": False, "reason": "no_sensor_data", "message": "センサーの記録がありません。本当にやりましたか？"}
+            return {"verified": True, "reason": "sensor_confirmed_unidentified",
+                    "message": "センサーで確認できました。"}
+
+        # 今日のwindow外にセンサー反応がある場合 → 既にやってる
+        params3 = [today_start] + rule["sources"] + rule["event_types"]
+        row3 = conn.execute(
+            f"""SELECT MAX(started_at) as last_at FROM events
+                WHERE started_at >= ?
+                AND source IN ({placeholders_src})
+                AND event_type IN ({placeholders_evt})""",
+            params3,
+        ).fetchone()
+        if row3 and row3["last_at"]:
+            last_at = row3["last_at"]
+            # 時刻表示用に HH:MM 取り出し
+            time_str = ""
+            if isinstance(last_at, str):
+                if " " in last_at:
+                    time_str = last_at.split(" ")[1][:5]
+                elif "T" in last_at:
+                    time_str = last_at.split("T")[1][:5]
+            return {"verified": False, "reason": "already_done_old",
+                    "last_time": time_str,
+                    "message": f"もうすでに{activity}できてますよ。{time_str}にできていました。"}
+
+        return {"verified": False, "reason": "no_sensor_data",
+                "message": "センサーが感知していません。家族に聞いてください。"}
     finally:
         conn.close()
 
@@ -620,16 +659,25 @@ async def api_tablet_record(request: Request):
     # センサー照合
     verify = _verify_sensor(activity, person_id)
 
-    # LINE通知（常に送信、確認不要なケースは情報通知のみ）
+    reason = verify["reason"]
+
+    # LINE通知（ケース別）
     try:
         from ..notifier import send_line_message, send_actionable_notification
         import asyncio
         ctx_key = f"{now.strftime('%Y-%m-%d_%H%M%S')}_{activity}"
         if verify["verified"]:
-            # センサー確認済み = 家族の対応不要、情報通知のみ
+            # センサー確認済み = 情報通知（admin限定）
             msg = f"📋 祖母が「{activity}」ボタンを押しました\n✅ センサー確認済み\n時刻: {now.strftime('%H:%M')}"
             await asyncio.to_thread(send_line_message, msg)
-        elif verify["reason"] == "no_sensor":
+        elif reason == "already_done_old":
+            # 既にセンサーで確認済（窓外） = 情報通知のみ、家族の対応不要
+            last_t = verify.get("last_time", "")
+            msg = (f"📋 祖母が「{activity}」ボタンを押しました\n"
+                   f"ℹ️ 既に{last_t}にセンサー確認済（重複押下、記録はしません）\n"
+                   f"時刻: {now.strftime('%H:%M')}")
+            await asyncio.to_thread(send_line_message, msg)
+        elif reason == "no_sensor":
             # センサーなし（お薬・就寝） → 家族確認必要 = アクション付き
             msg = f"📋 祖母が「{activity}」ボタンを押しました\n⚠️ センサーなし（家族確認が必要）\n時刻: {now.strftime('%H:%M')}"
             await asyncio.to_thread(
@@ -637,39 +685,52 @@ async def api_tablet_record(request: Request):
                 "tablet_unverified", ctx_key, msg,
             )
         else:
-            # センサー記録なし → 家族確認必要 = アクション付き
-            msg = f"📋 祖母が「{activity}」ボタンを押しました\n❌ センサー記録なし（確認してください）\n時刻: {now.strftime('%H:%M')}"
+            # no_sensor_data → センサーが感知してないので家族確認必要
+            msg = (f"📋 祖母が「{activity}」ボタンを押しました\n"
+                   f"❌ センサーが感知していません（家族の確認が必要）\n"
+                   f"時刻: {now.strftime('%H:%M')}")
             await asyncio.to_thread(
                 send_actionable_notification,
                 "tablet_unverified", ctx_key, msg,
             )
     except Exception:
-        pass  # LINE通知失敗は無視
+        pass
 
     if verify["verified"]:
-        # センサー確認済み → 記録する
+        # センサー確認済 → 記録する
         with transaction() as conn:
             conn.execute(
                 """INSERT INTO events(person_id, source, event_type, started_at, value, confidence, raw_meta)
                    VALUES(?, 'tablet_report', ?, ?, NULL, 1.0, ?)""",
-                (person_id, activity, now, json.dumps({"verified": True, "verify_reason": verify["reason"]}, ensure_ascii=False)),
+                (person_id, activity, now,
+                 json.dumps({"verified": True, "verify_reason": reason}, ensure_ascii=False)),
             )
             conn.execute(
                 """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
                    VALUES(?, ?, ?, 1, ?)""",
                 (person_id, now, now, activity),
             )
-        return {"ok": True, "verified": True, "message": f"{activity} を記録しました"}
-    else:
-        # 未確認 → 記録しない、アラートを返す
-        with transaction() as conn:
-            conn.execute(
-                """INSERT INTO events(person_id, source, event_type, started_at, value, confidence, raw_meta)
-                   VALUES(?, 'tablet_report', ?, ?, NULL, 0.0, ?)""",
-                (person_id, f"{activity}_unverified", now,
-                 json.dumps({"verified": False, "verify_reason": verify["reason"]}, ensure_ascii=False)),
-            )
-        return {"ok": False, "verified": False, "reason": verify["reason"], "message": verify["message"]}
+        return {"ok": True, "verified": True, "reason": reason,
+                "message": f"{activity} を記録しました"}
+
+    if reason == "already_done_old":
+        # 既にセンサー検知済（窓外） → 重複記録しない、祖母にお知らせ
+        return {"ok": False, "verified": False, "reason": "already_done_old",
+                "last_time": verify.get("last_time", ""),
+                "activity": activity,
+                "message": verify["message"]}
+
+    # 未確認 → unverified として記録（家族確認用）
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO events(person_id, source, event_type, started_at, value, confidence, raw_meta)
+               VALUES(?, 'tablet_report', ?, ?, NULL, 0.0, ?)""",
+            (person_id, f"{activity}_unverified", now,
+             json.dumps({"verified": False, "verify_reason": reason}, ensure_ascii=False)),
+        )
+    return {"ok": False, "verified": False, "reason": reason,
+            "activity": activity,
+            "message": verify["message"]}
 
 
 @app.post("/api/quick-record")
