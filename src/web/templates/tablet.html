@@ -2,9 +2,10 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#2C3E50">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon-192.png">
@@ -30,6 +31,15 @@
     --radius-sm: 16px;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* 誤操作防止（祖母タブレット用） */
+  html, body {
+    overscroll-behavior: none;        /* プルダウン更新・横スワイプで戻るを抑制 */
+    touch-action: pan-y;              /* 縦スクロールのみ許可 */
+    -webkit-touch-callout: none;      /* 長押しのメニュー表示を抑制 */
+    -webkit-user-select: none;        /* テキスト選択を抑制 */
+    user-select: none;
+    -webkit-tap-highlight-color: transparent; /* タップ時のハイライト無し */
+  }
   body {
     font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', sans-serif;
     background: var(--bg);
@@ -37,6 +47,8 @@
     color: var(--text);
     -webkit-font-smoothing: antialiased;
   }
+  /* 入力フィールドだけは選択可能に戻す */
+  input, textarea { -webkit-user-select: text; user-select: text; }
   .container { max-width: 720px; margin: 0 auto; padding: 24px 20px 40px; }
 
   /* ヘッダー */
@@ -751,6 +763,29 @@ requestWakeLock();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') requestWakeLock();
 });
+
+// 誤操作防止（祖母タブレット用）
+// 1. 長押しメニュー（コンテキストメニュー）を抑制
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// 2. ピンチズーム（2本指）を抑制
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('gesturechange', (e) => e.preventDefault());
+
+// 3. 初回タップで全画面化を試行（ブラウザUIを隠す）
+//    Chrome/Safari では fullscreenAPI はユーザー操作起因が必要
+let fsRequested = false;
+function tryFullscreen() {
+  if (fsRequested) return;
+  fsRequested = true;
+  try {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } catch(e) {}
+}
+document.addEventListener('touchend', tryFullscreen, { once: true });
+document.addEventListener('click', tryFullscreen, { once: true });
 
 // 3分ごとにページ自動リロード（データ鮮度維持）
 setTimeout(() => location.reload(), 3 * 60 * 1000);
