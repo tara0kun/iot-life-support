@@ -55,6 +55,17 @@ async def on_plug_reading(name: str, r: PlugReading) -> None:
 
 
 async def on_plug_start(name: str, r: PlugReading) -> None:
+    import time
+    # 炊飯器: 蓋開直後の power_on は保温ヒーター応答として抑制
+    if name == "rice_cooker":
+        last_lid_open = _recent_lid_opens.get("rice_cooker_lid", 0.0)
+        elapsed = time.time() - last_lid_open
+        if 0 < elapsed <= LID_OPEN_SUPPRESS_SECONDS:
+            log.info(
+                "[%s] 蓋開%.0f秒後の power_on(%.0fW) → 保温応答として抑制",
+                name, elapsed, r.power_w,
+            )
+            return
     await event_bus.record_event(
         source=name,
         event_type="power_on",
@@ -146,9 +157,40 @@ _bath_monitor: BathMonitor | None = None
 # T110のエイリアスで設置場所を判定（Tapoアプリでリネームする想定）
 BATH_DOOR_ALIASES = {"浴室ドア", "bath_door", "風呂ドア"}
 BATH_MOTION_ALIASES = {"脱衣所", "bath_motion", "脱衣所モーション"}
+RICE_COOKER_LID_ALIASES = {"炊飯器", "炊飯器の蓋", "rice_cooker_lid", "Rice Cooker"}
+FRIDGE_ALIASES = {"冷蔵庫", "fridge", "Refrigerator"}
+TOILET_DOOR_ALIASES = {"トイレ", "toilet", "toilet_door", "Toilet"}
+TOOTHBRUSH_ALIASES = {"歯ブラシ", "歯ブラシスタンド", "toothbrush", "Toothbrush"}
+SHAMPOO_ALIASES = {"シャンプー", "シャンプーボトル", "shampoo", "shampoo_bottle"}
+
+# 蓋開→保温応答 power_on の抑制窓（秒）
+LID_OPEN_SUPPRESS_SECONDS = 30
+_recent_lid_opens: dict[str, float] = {}  # device_name -> last_open_unix_time
+
+
+def _alias_to_source(alias: str) -> str:
+    """T110/T100のエイリアスから内部ソース名へ変換。"""
+    if alias in BATH_DOOR_ALIASES:
+        return "bath_door"
+    if alias in BATH_MOTION_ALIASES:
+        return "bath_motion"
+    if alias in RICE_COOKER_LID_ALIASES:
+        return "rice_cooker_lid"
+    if alias in FRIDGE_ALIASES:
+        return "fridge"
+    if alias in TOILET_DOOR_ALIASES:
+        return "toilet_door"
+    if alias in TOOTHBRUSH_ALIASES:
+        return "toothbrush"
+    if alias in SHAMPOO_ALIASES:
+        return "shampoo_bottle"
+    if alias == "Tapo T110":
+        return "contact_sensor"
+    return alias
 
 
 async def on_contact_change(event: ContactEvent) -> None:
+    import time
     alias = event.alias
     # 浴室ドアセンサーの場合 → BathMonitor に委譲
     if alias in BATH_DOOR_ALIASES and _bath_monitor:
@@ -157,16 +199,12 @@ async def on_contact_change(event: ContactEvent) -> None:
         else:
             await _bath_monitor.door_closed()
 
-    source_map = {
-        "Tapo T110": "contact_sensor",
-    }
-    # エイリアスから分かりやすいソース名に変換
-    if alias in BATH_DOOR_ALIASES:
-        source = "bath_door"
-    elif alias in BATH_MOTION_ALIASES:
-        source = "bath_motion"
-    else:
-        source = source_map.get(alias, alias)
+    source = _alias_to_source(alias)
+
+    # 炊飯器の蓋開検知 → 保温応答 power_on の抑制窓を有効化
+    if source == "rice_cooker_lid" and event.is_open:
+        _recent_lid_opens["rice_cooker_lid"] = time.time()
+
     await event_bus.record_event(
         source=source,
         event_type="open" if event.is_open else "close",
@@ -174,12 +212,13 @@ async def on_contact_change(event: ContactEvent) -> None:
 
 
 async def on_motion_detected(event: ContactEvent) -> None:
-    """T100モーションセンサー: 脱衣所の動き検知。"""
+    """T100モーションセンサー: 脱衣所など各設置場所の動き検知。"""
     alias = event.alias
     if alias in BATH_MOTION_ALIASES and _bath_monitor:
         await _bath_monitor.motion_detected()
+    source = _alias_to_source(alias) if alias in BATH_MOTION_ALIASES else alias
     await event_bus.record_event(
-        source="bath_motion" if alias in BATH_MOTION_ALIASES else alias,
+        source=source,
         event_type="motion",
     )
 
