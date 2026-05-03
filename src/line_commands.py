@@ -599,15 +599,17 @@ async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
     # personsの存在チェック
     conn = get_conn()
     try:
-        person = conn.execute(
+        person_row = conn.execute(
             "SELECT id, name FROM persons WHERE id = ?", (new_person_id,)
         ).fetchone()
-        session = conn.execute(
+        session_row = conn.execute(
             "SELECT id, person_id, started_at, label FROM meal_sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
     finally:
         conn.close()
+    person = dict(person_row) if person_row else None
+    session = dict(session_row) if session_row else None
 
     if not person:
         return f"⚠️ person_id={new_person_id} は登録されていません。"
