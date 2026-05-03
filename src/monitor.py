@@ -178,8 +178,26 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
 
 
 async def _ask_rice_action_classification(event_id: int, power_w: float) -> None:
-    """炊飯器の曖昧な電力検知時、家族にLINE Quick Replyで分類を仰ぐ。"""
+    """炊飯器の曖昧な電力検知時、家族にLINE Quick Replyで分類を仰ぐ。
+
+    蓋センサーが未稼働なら問い合わせも発火しない（蓋情報なしでは曖昧解消が
+    家族側でも難しいため、LINEノイズを避ける）。蓋センサーが稼働開始したら
+    自動的に問い合わせモードに入る。
+    """
+    from src.db import get_conn
     from src.notifier import broadcast_with_quick_reply, record_pending_notification
+    # 蓋センサー稼働確認（過去24時間に rice_cooker_lid イベントが1件以上あるか）
+    conn = get_conn()
+    try:
+        lid_active = conn.execute(
+            "SELECT 1 FROM events WHERE source='rice_cooker_lid' AND started_at >= datetime('now','-24 hours') LIMIT 1"
+        ).fetchone() is not None
+    finally:
+        conn.close()
+    if not lid_active:
+        log.info("[rice_cooker] 蓋センサー未稼働 → 分類問い合わせを抑制")
+        return
+
     now_str = datetime.now().strftime("%H:%M")
     msg = (
         f"🍚 炊飯器が起動しました\n"
