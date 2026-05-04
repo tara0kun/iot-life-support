@@ -1,8 +1,8 @@
 #!/bin/bash
-# 祖母宅Wi-Fiの事前登録
+# 現地Wi-Fiの事前登録
 # 使い方: sudo bash scripts/setup_grandma_wifi.sh
 #
-# ラズパイが祖母宅のWi-Fiに自動接続できるようにする。
+# ラズパイが現地のWi-Fiに自動接続できるようにする。
 # 自宅Wi-Fiも残すので、どちらの環境でも動作する。
 
 set -e
@@ -19,7 +19,7 @@ fi
 
 # NetworkManager を使用（Raspberry Pi OS Bookworm以降）
 if command -v nmcli &> /dev/null; then
-    echo "NetworkManagerで祖母宅Wi-Fiを追加..."
+    echo "NetworkManagerで現地Wi-Fiを追加..."
     nmcli connection add type wifi con-name "grandma-wifi" \
         wifi.ssid "$GRANDMA_SSID" \
         wifi-sec.key-mgmt wpa-psk \
@@ -27,10 +27,10 @@ if command -v nmcli &> /dev/null; then
         connection.autoconnect yes \
         connection.autoconnect-priority 10
     echo "Done: $GRANDMA_SSID を追加しました（優先度10）"
-    echo "自宅Wi-Fiより優先して接続されます（祖母宅にいる場合）"
+    echo "自宅Wi-Fiより優先して接続されます（現地にいる場合）"
 else
     # wpa_supplicant fallback
-    echo "wpa_supplicantで祖母宅Wi-Fiを追加..."
+    echo "wpa_supplicantで現地Wi-Fiを追加..."
     WPA_FILE="/etc/wpa_supplicant/wpa_supplicant.conf"
     if grep -q "$GRANDMA_SSID" "$WPA_FILE" 2>/dev/null; then
         echo "既に登録されています"

@@ -1,4 +1,4 @@
-# 認知症祖母IoTサポート プロジェクト 進捗記録
+# 高齢者見守りIoTサポート プロジェクト 進捗記録
 
 最終更新: 2026-04-24
 
@@ -24,9 +24,9 @@
 4. **全センサー統合テスト** — monitor.py 通しで DB → UI → LINE通知まで
 5. **cron追加**（GW前に有効化推奨）:
    ```cron
-   */30 7-22 * * *  cd ~/IoT && venv/bin/python scripts/scheduled_notify.py care_tasks
-   0 22 * * 0       cd ~/IoT && venv/bin/python scripts/weekly_report.py
-   */10 * * * *     cd ~/IoT && venv/bin/python scripts/anomaly_check.py
+   */30 7-22 * * *  cd ~/iot-life-support && venv/bin/python scripts/scheduled_notify.py care_tasks
+   0 22 * * 0       cd ~/iot-life-support && venv/bin/python scripts/weekly_report.py
+   */10 * * * *     cd ~/iot-life-support && venv/bin/python scripts/anomaly_check.py
    ```
 
 ### 直近実装（2026-04-22）
@@ -68,8 +68,8 @@
 
 ## 🎯 プロジェクトの目的
 
-認知症の祖母の日常生活をIoTでサポートする。設計原則：
-- 祖母に「監視されている」と気づかせない
+高齢者の日常生活をIoTでサポートする。設計原則：
+- 本人に「監視されている」と気づかせない
 - 直接指摘・命令せず、自分の記録帳として提示する
 - 機械の不調に見せて物理的に阻止する
 - **家族の操作（編集・バイパス）は祖母に絶対知られない**
@@ -87,7 +87,7 @@
 ## ✅ 2026-04-15 に行ったこと
 
 ### 環境構築
-- [x] プロジェクトディレクトリ `/home/tara0/IoT/` 作成
+- [x] プロジェクトディレクトリ `/home/pi/iot-life-support/` 作成
 - [x] Python venv、python-kasa、FastAPI等インストール
 - [x] `.env` / `.gitignore` / `.env.example` 作成
 
@@ -101,7 +101,7 @@
 2. 検知方式：カメラ＋センサーのハイブリッド
 3. 多層防御モデル（気づかせる→物理阻止→家族通知→環境設計）
 4. 案A＋B統合（宣言型アンロック＋顔認識ゲート）
-5. 祖母UI（`/tablet`）と家族UI（`/family`）の完全分離
+5. 本人UI（`/tablet`）と家族UI（`/family`）の完全分離
 6. 全家族メンバーの個別行動記録
 
 ### 資料作成
@@ -134,8 +134,8 @@
 #### ⚠️ P110M (Matter版) の重要な技術情報
 - P110Mは**TPAP暗号化**を使用しており、python-kasa/tapoライブラリでは直接接続不可
 - **python-matter-server** 経由でMatterプロトコルを使い接続に成功
-- Matterサーバ: `matter-server --storage-path /home/tara0/IoT/data/matter --port 5580 --bluetooth-adapter 0`
-- Matterサーバ起動には `/data/` ディレクトリが必要（`sudo mkdir -p /data && sudo chown tara0:tara0 /data`）
+- Matterサーバ: `matter-server --storage-path /home/pi/iot-life-support/data/matter --port 5580 --bluetooth-adapter 0`
+- Matterサーバ起動には `/data/` ディレクトリが必要（`sudo mkdir -p /data && sudo chown pi:pi /data`）
 - WebSocket API: `ws://localhost:5580/ws`
 - 電力値: `attrs["1/144/8"]` (mW単位 → ÷1000でW)
 - ON/OFF: `attrs["1/6/0"]`
@@ -278,12 +278,12 @@
 - [x] タブレットUI表示確認（スタンプ、さいごにたべたのは、次の予定）
 - [x] 家族UI表示確認（イベント一覧、人物フィルタ、編集）
 
-### 祖母宅の事前調査
+### 本人宅の事前調査
 母からの写真で判明：
-- [x] **炊飯器**: ZOJIRUSHI NW-VC10（プラグ式）→ P110M制御可、しきい値100W
-- [x] **IHコンロ**: HITACHI HT-330S（ビルトイン）→ P110M不可、Phase 1対象外
+- [x] **炊飯器**: [炊飯器型番は.envに記載]（プラグ式）→ P110M制御可、しきい値100W
+- [x] **IHコンロ**: [IH型番は.envに記載]（ビルトイン）→ P110M不可、Phase 1対象外
 - [x] **冷蔵庫**: 6ドア観音開き → T110でドア開閉検知可
-- [x] **Wi-Fi**: I-O DATA [ルーター型番], SSID=`[.envに記載]`
+- [x] **Wi-Fi**: [ルーター情報は.envに記載], SSID=`[.envに記載]`
 - [x] **カメラ設置候補**: 壁時計の横（キッチン全体を見渡せる高い位置）
 - [x] Wi-Fi事前登録スクリプト (`scripts/setup_grandma_wifi.sh`) 作成済
 - [x] mDNS (`[hostname].local`) 既に有効 → IP変更時も `http://[hostname].local:8000/tablet` でアクセス可
@@ -474,7 +474,7 @@
 
 | ブランチ | 用途 | 運用ルール |
 |---------|------|-----------|
-| **main** | 安定版・本番 | 祖母宅ラズパイはこのブランチを使用。テスト済みのコードのみマージ |
+| **main** | 安定版・本番 | 本人宅ラズパイはこのブランチを使用。テスト済みのコードのみマージ |
 | **dev** | 開発中・テスト中 | 普段の開発作業はここで行う。安定したら `main` にマージ |
 | **future** | 新機能・今後の進展 | Phase 2以降の新機能開発。実装が安定したら `dev` にマージ |
 
@@ -484,12 +484,12 @@ future（新機能開発）
   ↓ 実装完了・テスト通過
 dev（開発・テスト）
   ↓ 安定動作確認
-main（本番・祖母宅）
+main（本番・本人宅）
 ```
 
 #### 注意事項
 - **main に直接コミットしない** — 必ず `dev` 経由でマージ
-- **祖母宅ラズパイは `main` を `git pull`** して更新
+- **本人宅ラズパイは `main` を `git pull`** して更新
 - **`future` は実験的なコードも許容** — 壊れても `dev`/`main` に影響しない
 - ブランチ切り替え: `git checkout dev`（開発時）、`git checkout main`（本番確認時）
 
@@ -649,7 +649,7 @@ main（本番・祖母宅）
 - [ ] **P110M 2台目のセットアップ**（IHはビルトインなので別用途検討）
 - [ ] **T110 残り2台 + T100 のH100ペアリング**
 - [ ] **祖母用タブレット端末の調達**
-- [ ] **祖母宅Wi-Fi接続テスト**（`scripts/setup_grandma_wifi.sh` 実行）
+- [ ] **本人宅Wi-Fi接続テスト**（`scripts/setup_grandma_wifi.sh` 実行）
 
 ### 🟢 低優先度（運用開始後でもOK → `future` ブランチで開発）
 - [ ] SwitchBot Lock（冷蔵庫用物理ロック）
@@ -700,7 +700,7 @@ GW投入後、運用が安定してから着手する候補。優先度と見積
 ## 📁 現在のプロジェクト構成
 
 ```
-/home/tara0/IoT/
+/home/pi/iot-life-support/
 ├── PROGRESS.md              ← このファイル
 ├── GW_SETUP.md              ← GW設置手順書（4/20作成）
 ├── handoff_prompt.md        ← 初期仕様書
@@ -751,7 +751,7 @@ GW投入後、運用が安定してから着手する候補。優先度と見積
 │   ├── scheduled_notify.py  ← LINE定期通知（お薬・お風呂・まとめ）
 │   ├── start_tunnel.sh      ← Cloudflareトンネル起動＋LINE通知
 │   ├── health_check.sh      ← ヘルスチェック（5分おき）
-│   ├── setup_grandma_wifi.sh ← 祖母宅Wi-Fi事前登録
+│   ├── setup_grandma_wifi.sh ← 本人宅Wi-Fi事前登録
 │   ├── test_camera.py       ← カメラ接続テスト
 │   ├── test_p110m.py        ← P110M接続テスト
 │   ├── build_proposal.py    ← パワポ生成
@@ -799,7 +799,7 @@ sudo journalctl -u iot-web -f
 source venv/bin/activate
 
 # Matterサーバ（systemdで動作中なら不要）
-nohup matter-server --storage-path /home/tara0/IoT/data/matter \
+nohup matter-server --storage-path /home/pi/iot-life-support/data/matter \
   --port 5580 --bluetooth-adapter 0 > logs/matter.log 2>&1 &
 
 # Webサーバ（--reloadで開発）
@@ -841,19 +841,19 @@ python scripts/seed_mock_data.py --clear --scenario 4  # 充実した1日
 2. **Matterサーバには`/data/`ディレクトリが必要**（sudo作成済み）
 3. **C220カメラアカウントはTapoアカウントと別**（.envのCAMERA_USERNAME/PASSWORD）
 4. **Wi-Fiは2.4GHz**（`[自宅Wi-Fi SSID]`）。全Tapo機器が同じSSID
-5. **祖母UIと家族UIはDOMレベルで分離**。編集機能は家族UIにのみ存在
+5. **本人UIと家族UIはDOMレベルで分離**。編集機能は家族UIにのみ存在
 6. **家族フィードバック**: タブレット入力は期待できない→センサー自動検知メイン＋ゲーミフィケーション
 7. **家族パスワード**: [.envに記載]（.envのFAMILY_PASSWORDで変更可）
 8. **face_recognitionはsetuptools<70が必要**（pkg_resources依存）
 9. **GW投入目標: 2026-04-29〜05-06**
-10. **IHコンロはビルトイン型**（HITACHI HT-330S）→ P110M不可、Phase 1対象外
-11. **祖母宅Wi-Fi**: SSID=`[.envに記載]`, PW=`[.envに記載]`（.envに記録済）
+10. **IHコンロはビルトイン型**（[IH型番は.envに記載]）→ P110M不可、Phase 1対象外
+11. **本人宅Wi-Fi**: SSID=`[.envに記載]`, PW=`[.envに記載]`（.envに記録済）
 12. **mDNS有効**: `[hostname].local` でラズパイにアクセス可（IP変更に強い）
 13. **LINE公式アカウント**: [LINE公式アカウントID]（通知用）
 14. **タブレットトークン**: `.env`の`TABLET_TOKEN`（外部アクセス用）
 15. **Cloudflare Tunnel**: アカウントなし版（Quick Tunnel）。URLは再起動で変わるがLINEで自動通知
 16. **crontab登録済み**: 定期通知(9,12,18,22時)、トンネル自動起動、DBバックアップ(3時)、ヘルスチェック(5分おき)
-17. **お風呂で祖母が意識喪失した過去あり** → T110+T100による浴室監視は安全面で重要
+17. **浴室での体調急変リスクあり** → T110+T100による浴室監視は安全面で重要
 18. **浴室ドアのT110エイリアスは「浴室ドア」にリネーム必須**（monitor.pyが名前で判別）
 19. **Gitブランチ**: main（本番）/ dev（開発）/ future（新機能）の3ブランチ運用。mainに直接コミット禁止
 20. **GitHub CLI**: `gh` インストール済み、HTTPS認証済み。リポジトリ: `tara0kun/iot-life-support`

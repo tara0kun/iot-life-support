@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tara0
-WorkingDirectory=/home/tara0/IoT
-ExecStart=/home/tara0/IoT/venv/bin/python -m src.monitor
+User=pi
+WorkingDirectory=/home/pi/iot-life-support
+ExecStart=/home/pi/iot-life-support/venv/bin/python -m src.monitor
 Restart=on-failure
 RestartSec=10
 
