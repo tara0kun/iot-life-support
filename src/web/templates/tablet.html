@@ -250,6 +250,36 @@
     </button>
   </div>
 
+  <!-- 食事写真撮影プロンプト（センサー検知後に動的表示） -->
+  <div id="meal-photo-prompt" style="display:none; background:linear-gradient(135deg,#FFE0B2,#FFCC80); border:3px solid #FB8C00; border-radius:18px; padding:22px 18px; margin:0 0 16px; text-align:center; box-shadow: 0 4px 12px rgba(251,140,0,0.2);">
+    <div style="font-size:28px; margin-bottom:8px;">🍚</div>
+    <div id="meal-photo-prompt-title" style="font-size:22px; font-weight:700; color:#E65100; margin-bottom:8px;">ごはんを食べましたね！</div>
+    <div style="font-size:16px; color:#5D4037; margin-bottom:14px;">写真を撮って みんなに見せましょう</div>
+    <button onclick="openMealCamera()" style="background:#FB8C00; color:white; border:none; border-radius:14px; padding:18px 32px; font-size:20px; font-weight:700; font-family:inherit; cursor:pointer; min-height:60px; box-shadow:0 4px 8px rgba(0,0,0,0.15);">
+      📷 写真をとる
+    </button>
+  </div>
+
+  <!-- カメラモーダル（撮影中だけ表示） -->
+  <div id="meal-camera-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.95); z-index:9999; flex-direction:column; align-items:center; justify-content:center; padding:16px;">
+    <div style="color:white; font-size:18px; margin-bottom:12px; font-weight:700;">📷 ごはんの写真をとる</div>
+    <video id="meal-camera-video" autoplay playsinline muted style="max-width:100%; max-height:60vh; border-radius:12px; background:black;"></video>
+    <canvas id="meal-camera-canvas" style="display:none;"></canvas>
+    <div id="meal-camera-preview" style="display:none; text-align:center;">
+      <img id="meal-camera-preview-img" style="max-width:100%; max-height:60vh; border-radius:12px;">
+    </div>
+    <div id="meal-camera-status" style="color:#FFD54F; font-size:15px; margin:12px 0; min-height:24px;"></div>
+    <div id="meal-camera-actions" style="display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+      <button id="meal-camera-shoot" onclick="captureMealPhoto()" style="background:#FB8C00; color:white; border:none; border-radius:50%; width:80px; height:80px; font-size:36px; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.4);">📷</button>
+      <button onclick="closeMealCamera()" style="background:#757575; color:white; border:none; border-radius:14px; padding:14px 22px; font-size:16px; font-weight:700; font-family:inherit; cursor:pointer;">✕ やめる</button>
+    </div>
+    <div id="meal-camera-confirm" style="display:none; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+      <button onclick="sendMealPhoto()" style="background:#43A047; color:white; border:none; border-radius:14px; padding:18px 28px; font-size:18px; font-weight:700; font-family:inherit; cursor:pointer;">✅ おくる</button>
+      <button onclick="retakeMealPhoto()" style="background:#FB8C00; color:white; border:none; border-radius:14px; padding:18px 28px; font-size:18px; font-weight:700; font-family:inherit; cursor:pointer;">↩ とりなおす</button>
+      <button onclick="closeMealCamera()" style="background:#757575; color:white; border:none; border-radius:14px; padding:14px 22px; font-size:16px; font-weight:700; font-family:inherit; cursor:pointer;">✕ やめる</button>
+    </div>
+  </div>
+
   <div class="time-guide">
     <div class="label">今は</div>
     <div class="activity">{{ current_activity.text }}</div>
@@ -795,6 +825,138 @@ setTimeout(checkTimeGreeting, 5000);
 window.speakRecordSuccess = function(activity) {
   speak(`${activity}、ありがとう。記録しました`, { rate: 0.95 });
 };
+
+// ============================================================
+// 食事写真撮影機能
+// ============================================================
+let mealCameraStream = null;
+let mealCameraSessionId = null;
+let mealCameraBlob = null;
+
+async function checkMealPhotoPrompt() {
+  try {
+    const resp = await fetch('/api/meal-photo-prompt');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const prompt = document.getElementById('meal-photo-prompt');
+    const titleEl = document.getElementById('meal-photo-prompt-title');
+    if (data.prompt) {
+      mealCameraSessionId = data.session_id;
+      if (titleEl) titleEl.textContent = `${data.label}を食べましたね！`;
+      prompt.style.display = 'block';
+      // 一度だけ音声誘導（同セッションIDで再発話しない）
+      const speakKey = `photo_prompt_spoken_${data.session_id}`;
+      if (!localStorage.getItem(speakKey)) {
+        if (window.speak) {
+          setTimeout(() => speak(
+            `${data.label}を食べましたね。写真を撮って、みんなに見せましょう`,
+            { rate: 0.85 }
+          ), 1500);
+        }
+        localStorage.setItem(speakKey, '1');
+      }
+    } else {
+      prompt.style.display = 'none';
+      mealCameraSessionId = null;
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function openMealCamera() {
+  const modal = document.getElementById('meal-camera-modal');
+  modal.style.display = 'flex';
+  document.getElementById('meal-camera-status').textContent = 'カメラを起動中...';
+  document.getElementById('meal-camera-actions').style.display = 'flex';
+  document.getElementById('meal-camera-confirm').style.display = 'none';
+  document.getElementById('meal-camera-preview').style.display = 'none';
+  const video = document.getElementById('meal-camera-video');
+  video.style.display = 'block';
+  try {
+    mealCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } },
+      audio: false,
+    });
+    video.srcObject = mealCameraStream;
+    document.getElementById('meal-camera-status').textContent = '料理が映るように向けて、撮るボタンを押してね';
+  } catch(e) {
+    document.getElementById('meal-camera-status').textContent =
+      'カメラを使えませんでした。タブレットの設定でカメラを許可してね。';
+    if (window.speak) speak('カメラを使う許可が必要です。家族に聞いてください。', {rate:0.85});
+  }
+}
+
+function captureMealPhoto() {
+  const video = document.getElementById('meal-camera-video');
+  const canvas = document.getElementById('meal-camera-canvas');
+  if (!video.videoWidth) return;
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  canvas.toBlob(blob => {
+    mealCameraBlob = blob;
+    // プレビュー表示
+    const previewImg = document.getElementById('meal-camera-preview-img');
+    previewImg.src = URL.createObjectURL(blob);
+    document.getElementById('meal-camera-preview').style.display = 'block';
+    video.style.display = 'none';
+    document.getElementById('meal-camera-actions').style.display = 'none';
+    document.getElementById('meal-camera-confirm').style.display = 'flex';
+    document.getElementById('meal-camera-status').textContent = 'これでよければ「おくる」、もう一度なら「とりなおす」';
+    if (window.speak) speak('良ければ送るボタン、もう一度なら撮り直すボタンを押してください', {rate:0.85});
+  }, 'image/jpeg', 0.85);
+}
+
+function retakeMealPhoto() {
+  const video = document.getElementById('meal-camera-video');
+  video.style.display = 'block';
+  document.getElementById('meal-camera-preview').style.display = 'none';
+  document.getElementById('meal-camera-actions').style.display = 'flex';
+  document.getElementById('meal-camera-confirm').style.display = 'none';
+  document.getElementById('meal-camera-status').textContent = '撮り直します。撮るボタンを押してね';
+  mealCameraBlob = null;
+}
+
+async function sendMealPhoto() {
+  if (!mealCameraBlob || !mealCameraSessionId) return;
+  document.getElementById('meal-camera-status').textContent = '送信中...';
+  document.getElementById('meal-camera-confirm').style.display = 'none';
+  const fd = new FormData();
+  fd.append('photo', mealCameraBlob, 'meal.jpg');
+  fd.append('session_id', mealCameraSessionId);
+  try {
+    const resp = await fetch('/api/meal-photo', { method: 'POST', body: fd });
+    if (resp.ok) {
+      document.getElementById('meal-camera-status').textContent = '✅ 送りました！ありがとう';
+      if (window.speak) speak('写真を送りました。ありがとう', {rate:0.95});
+      setTimeout(() => {
+        closeMealCamera();
+        location.reload();
+      }, 2000);
+    } else {
+      document.getElementById('meal-camera-status').textContent = '送信に失敗しました';
+      document.getElementById('meal-camera-confirm').style.display = 'flex';
+    }
+  } catch(e) {
+    document.getElementById('meal-camera-status').textContent = '通信エラー';
+    document.getElementById('meal-camera-confirm').style.display = 'flex';
+  }
+}
+
+function closeMealCamera() {
+  const modal = document.getElementById('meal-camera-modal');
+  modal.style.display = 'none';
+  if (mealCameraStream) {
+    mealCameraStream.getTracks().forEach(t => t.stop());
+    mealCameraStream = null;
+  }
+  mealCameraBlob = null;
+}
+
+// 起動時とその後5分おきに撮影プロンプトをチェック
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(checkMealPhotoPrompt, 1500);
+});
+setInterval(checkMealPhotoPrompt, 5 * 60 * 1000);
 
 // 家族メッセージ確認
 async function dismissPrompt(id, btn) {
