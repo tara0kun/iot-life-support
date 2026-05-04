@@ -152,9 +152,10 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
                     classified_by="auto", auto_decided=True,
                 )
                 return
-            # 'cook' なら通常通り記録
+            # 'cook' なら通常通り記録（直近カメラ識別人物を帰属候補に）
             event_id = await event_bus.record_event(
                 source=name, event_type="power_on", value=r.power_w,
+                person_id=get_active_person(),
             )
             _record_classification(
                 event_id, r.power_w, hour, lid_recent, cls,
@@ -166,6 +167,7 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
         source=name,
         event_type="power_on",
         value=r.power_w,
+        person_id=get_active_person(),
     )
 
     # 炊飯器の中間電力で予測できなかった → 家族に問い合わせ
@@ -352,9 +354,12 @@ async def on_contact_change(event: ContactEvent) -> None:
     if source == "rice_cooker_lid" and event.is_open:
         _recent_lid_opens["rice_cooker_lid"] = time.time()
 
+    # 直近のカメラ識別人物を帰属候補に
+    inferred_pid = get_active_person()
     await event_bus.record_event(
         source=source,
         event_type="open" if event.is_open else "close",
+        person_id=inferred_pid,
     )
 
 
@@ -364,27 +369,85 @@ async def on_motion_detected(event: ContactEvent) -> None:
     if alias in BATH_MOTION_ALIASES and _bath_monitor:
         await _bath_monitor.motion_detected()
     source = _alias_to_source(alias) if alias in BATH_MOTION_ALIASES else alias
+    # 直近のカメラ識別人物を帰属候補に（脱衣所/トイレ等の動きは祖母であることが多いが念のため）
+    inferred_pid = get_active_person()
     await event_bus.record_event(
         source=source,
         event_type="motion",
+        person_id=inferred_pid,
     )
 
 
 _last_person_detection = 0.0
 
+# 直近にカメラで識別された人物（センサー帰属ヒントとして使う）
+# (timestamp_unix, person_id, name) のリスト
+_camera_identification_log: list[tuple[float, int, str]] = []
+ACTIVE_PERSON_WINDOW_MIN = 15   # 何分前までのカメラ識別をセンサー帰属に使うか
+CAMERA_LOG_RETENTION_MIN = 60   # この分数より古いログは削除
+
+
+def _record_camera_identification(person_id: int, name: str) -> None:
+    """カメラで識別された人物をログに追加（古いものは削除）。"""
+    import time
+    now = time.time()
+    _camera_identification_log.append((now, person_id, name))
+    cutoff = now - CAMERA_LOG_RETENTION_MIN * 60
+    while _camera_identification_log and _camera_identification_log[0][0] < cutoff:
+        _camera_identification_log.pop(0)
+
+
+def get_active_person() -> int | None:
+    """直近 ACTIVE_PERSON_WINDOW_MIN 分以内にカメラで識別された人物の person_id を返す。
+
+    複数人いる場合は「最後にカメラに映った人」を返す。
+    識別ログがなければ None（→ センサー帰属できず NULL のまま）。
+    """
+    import time
+    cutoff = time.time() - ACTIVE_PERSON_WINDOW_MIN * 60
+    recent = [r for r in _camera_identification_log if r[0] >= cutoff]
+    if not recent:
+        return None
+    return recent[-1][1]   # 最新エントリの person_id
+
+
 async def on_person_detected(frame: CameraFrame) -> None:
+    """カメラで人物検知時のコールバック。
+
+    顔識別ができた場合 → person_id 付きで camera/person_detected を記録、
+    active_person ログにも追加。
+    顔識別できなかった場合 → person_id=None で記録（従来挙動）。
+    """
     import time
     global _last_person_detection
     now = time.time()
-    # 30秒以内の連続検知は無視（DB肥大化防止）
     if now - _last_person_detection < 30:
         return
     _last_person_detection = now
-    await event_bus.record_event(
-        source="camera",
-        event_type="person_detected",
-        value=float(frame.face_count),
-    )
+
+    # 顔識別あり → 識別された人物ごとにイベント記録
+    identified = frame.identified_persons or []
+    matched_persons = [r for r in identified
+                       if r.get("person_id") and r.get("confidence", 0) >= 0.6]
+
+    if matched_persons:
+        for r in matched_persons:
+            pid = r["person_id"]
+            await event_bus.record_event(
+                source="camera",
+                event_type="person_detected",
+                person_id=pid,
+                value=float(frame.face_count),
+                confidence=float(r.get("confidence", 0)),
+            )
+            _record_camera_identification(pid, r.get("name", "?"))
+    else:
+        # 顔識別なし or 信頼度低 → person_id=None で記録（従来挙動）
+        await event_bus.record_event(
+            source="camera",
+            event_type="person_detected",
+            value=float(frame.face_count),
+        )
 
 
 # --- セッション集約 + ロック/通知 ---
@@ -764,9 +827,19 @@ async def main() -> None:
         tasks.append(asyncio.create_task(contact.run()))
         log.info("T110開閉センサー監視を開始")
 
-    # C220 カメラ
+    # C220 カメラ + 顔認識
     camera_ip = env.get("CAMERA_IP", "")
     if camera_ip and camera_user:
+        # FaceIdentifier を初期化（顔データなしでも動く、未認識として扱う）
+        face_id_obj = None
+        try:
+            from src.face_id import FaceIdentifier
+            face_id_obj = FaceIdentifier()
+            n_faces = len(getattr(face_id_obj, "_known_person_ids", []))
+            log.info("FaceIdentifier 初期化（登録済み顔: %d件）", n_faces)
+        except Exception as e:
+            log.warning("FaceIdentifier 初期化失敗、顔認識なしで起動: %s", e)
+
         cam = CameraMonitor(
             cfg=CameraConfig(
                 ip=camera_ip,
@@ -776,6 +849,7 @@ async def main() -> None:
                 save_dir=Path(__file__).resolve().parent.parent / "data" / "captures",
             ),
             on_person=on_person_detected,
+            face_identifier=face_id_obj,
         )
         tasks.append(asyncio.create_task(cam.run()))
         log.info("C220カメラ監視を開始")

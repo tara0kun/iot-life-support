@@ -23,6 +23,7 @@ class CameraFrame:
     frame: np.ndarray
     person_detected: bool
     face_count: int = 0
+    identified_persons: list[dict] | None = None  # face_id.identify() の結果
 
 
 @dataclass
@@ -41,9 +42,11 @@ class CameraMonitor:
         self,
         cfg: CameraConfig,
         on_person: Callable[[CameraFrame], Awaitable[None]] | None = None,
+        face_identifier=None,  # FaceIdentifier instance（None なら顔識別なし、人物検知のみ）
     ):
         self.cfg = cfg
         self._on_person = on_person
+        self._face_identifier = face_identifier
         self._running = False
         self._cap: cv2.VideoCapture | None = None
         self._hog = cv2.HOGDescriptor()
@@ -99,11 +102,27 @@ class CameraMonitor:
                 person, face_count = await asyncio.to_thread(self._detect, frame)
 
                 if person:
+                    # 顔認識: 顔が検出されており face_identifier が設定されている時だけ実行
+                    identified = None
+                    if face_count > 0 and self._face_identifier is not None:
+                        try:
+                            identified = await asyncio.to_thread(
+                                self._face_identifier.identify, frame
+                            )
+                            if identified:
+                                names = [r.get("name", "?") for r in identified
+                                         if r.get("person_id")]
+                                if names:
+                                    log.info("顔認識: %s", ", ".join(names))
+                        except Exception as e:
+                            log.warning("顔識別エラー: %s", e)
+
                     cf = CameraFrame(
                         timestamp=datetime.now(),
                         frame=frame,
                         person_detected=True,
                         face_count=face_count,
+                        identified_persons=identified,
                     )
                     if self.cfg.save_detections:
                         ts = cf.timestamp.strftime("%Y%m%d_%H%M%S")
