@@ -156,6 +156,22 @@ CREATE TABLE IF NOT EXISTS settings (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS meal_photos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER REFERENCES meal_sessions(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES persons(id),
+    file_name TEXT NOT NULL,                       -- data/meal_photos/ 配下のファイル名
+    file_size INTEGER,
+    width INTEGER,
+    height INTEGER,
+    taken_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP                           -- 家族が削除したら設定
+);
+CREATE INDEX IF NOT EXISTS idx_meal_photos_taken
+    ON meal_photos(taken_at);
+CREATE INDEX IF NOT EXISTS idx_meal_photos_session
+    ON meal_photos(session_id);
+
 CREATE TABLE IF NOT EXISTS rice_classifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     event_id INTEGER,                              -- 関連eventsレコードID（削除済みでもOK）

@@ -388,6 +388,15 @@
     </div>
   </div>
 
+  <!-- 食事写真ギャラリー -->
+  <div class="section-card">
+    <div class="section-title">🍚 食事の写真</div>
+    <div class="section-desc">祖母が撮影した食事の写真（直近7日分）</div>
+    <div id="meal-photo-gallery" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:10px; margin-top:12px;">
+      <div style="grid-column:1/-1; color:#999; text-align:center; padding:20px;">読み込み中...</div>
+    </div>
+  </div>
+
   <!-- 炊飯量設定 -->
   <div class="section-card">
     <div class="section-title">炊飯量</div>
@@ -805,6 +814,46 @@ async function loadHeatmap() {
   }
 }
 window.addEventListener('DOMContentLoaded', loadHeatmap);
+
+// 食事写真ギャラリー
+async function loadMealPhotos() {
+  const grid = document.getElementById('meal-photo-gallery');
+  if (!grid) return;
+  try {
+    const resp = await fetch('/api/meal-photos?days=7', { credentials: 'same-origin' });
+    if (!resp.ok) {
+      grid.innerHTML = '<div style="grid-column:1/-1; color:#999; text-align:center; padding:20px;">読み込み失敗</div>';
+      return;
+    }
+    const photos = await resp.json();
+    if (!photos.length) {
+      grid.innerHTML = '<div style="grid-column:1/-1; color:#999; text-align:center; padding:20px;">まだ写真がありません</div>';
+      return;
+    }
+    grid.innerHTML = photos.map(p => {
+      const t = (p.taken_at || '').replace('T', ' ').slice(5, 16);
+      const label = p.label || '食事';
+      return `<div style="position:relative; border-radius:10px; overflow:hidden; background:#FAFAFA; box-shadow:0 2px 4px rgba(0,0,0,0.08); cursor:pointer;" onclick="window.open('/photos/${p.file_name}', '_blank')">
+        <img src="/photos/${p.file_name}" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">
+        <div style="padding:6px 8px; font-size:11px;">
+          <div style="font-weight:700; color:var(--text);">${label}</div>
+          <div style="color:var(--text-muted);">${t}</div>
+        </div>
+        <button onclick="event.stopPropagation(); deleteMealPhoto(${p.id});" style="position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.85); border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:12px;" title="削除">✕</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    grid.innerHTML = '<div style="grid-column:1/-1; color:#999;">通信エラー</div>';
+  }
+}
+
+async function deleteMealPhoto(id) {
+  if (!confirm('この写真を削除しますか？')) return;
+  const resp = await fetch(`/api/meal-photos/${id}`, { method:'DELETE', credentials:'same-origin' });
+  if (resp.ok) loadMealPhotos();
+}
+
+window.addEventListener('DOMContentLoaded', loadMealPhotos);
 
 async function saveSetting(key, value) {
   try {

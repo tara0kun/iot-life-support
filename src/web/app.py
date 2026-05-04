@@ -17,8 +17,8 @@ import secrets
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Form, HTTPException
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Form, HTTPException, UploadFile, File
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -731,6 +731,173 @@ async def api_tablet_record(request: Request):
     return {"ok": False, "verified": False, "reason": reason,
             "activity": activity,
             "message": verify["message"]}
+
+
+# ============================================================
+# 食事写真撮影機能
+# ============================================================
+
+MEAL_PHOTOS_DIR = BASE.parent.parent / "data" / "meal_photos"
+MEAL_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
+MEAL_PHOTO_PROMPT_WINDOW_MIN = 60   # 食事検知後この分数内なら写真撮影プロンプトを出す
+MEAL_LABELS_FOR_PHOTO = {"朝食", "昼食", "夕食", "間食", "おやつ"}
+
+
+def _current_tunnel_base_url() -> str:
+    """LINE 画像送信に使う公開URL の base。Cloudflare TunnelのURL。"""
+    url_file = BASE.parent.parent / "data" / "tunnel_url.txt"
+    if url_file.exists():
+        return url_file.read_text().strip().rstrip("/")
+    return ""
+
+
+@app.get("/api/meal-photo-prompt")
+async def api_meal_photo_prompt(request: Request):
+    """祖母タブレット用: 直近の食事セッションで写真未撮影なら情報を返す。"""
+    if not _is_local(request) and not _check_tablet_access(request):
+        raise HTTPException(status_code=403)
+    cutoff = (datetime.now() - timedelta(minutes=MEAL_PHOTO_PROMPT_WINDOW_MIN)).strftime("%Y-%m-%d %H:%M:%S")
+    placeholders = ",".join("?" * len(MEAL_LABELS_FOR_PHOTO))
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            f"""SELECT m.id as session_id, m.label, m.started_at,
+                       (SELECT COUNT(*) FROM meal_photos p
+                          WHERE p.session_id = m.id AND p.deleted_at IS NULL) as photo_count
+                  FROM meal_sessions m
+                 WHERE m.person_id = 1
+                   AND m.started_at >= ?
+                   AND m.label IN ({placeholders})
+                 ORDER BY m.started_at DESC
+                 LIMIT 1""",
+            (cutoff, *MEAL_LABELS_FOR_PHOTO),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or row["photo_count"] > 0:
+        return {"prompt": False}
+    started = row["started_at"]
+    if isinstance(started, str) and " " in started:
+        time_str = started.split(" ")[1][:5]
+    else:
+        time_str = ""
+    return {
+        "prompt": True,
+        "session_id": row["session_id"],
+        "label": row["label"],
+        "time": time_str,
+    }
+
+
+@app.post("/api/meal-photo")
+async def api_upload_meal_photo(
+    request: Request,
+    photo: UploadFile = File(...),
+    session_id: int = Form(...),
+):
+    """祖母タブレットから食事写真をアップロードする。
+
+    保存先: data/meal_photos/{session_id}_{timestamp}.jpg
+    LINE で全家族に画像をbroadcast、DB に記録。
+    """
+    if not _is_local(request) and not _check_tablet_access(request):
+        raise HTTPException(status_code=403, detail="アクセスできません")
+    data = await photo.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="画像データが空です")
+    if len(data) > 5 * 1024 * 1024:  # 5MB上限
+        raise HTTPException(status_code=400, detail="画像が大きすぎます（5MB以下）")
+
+    now = datetime.now()
+    fname = f"{session_id}_{int(now.timestamp())}.jpg"
+    fpath = MEAL_PHOTOS_DIR / fname
+    fpath.write_bytes(data)
+
+    # DB登録
+    conn = get_conn()
+    try:
+        sess = conn.execute(
+            "SELECT id, person_id, label FROM meal_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not sess:
+        fpath.unlink(missing_ok=True)
+        raise HTTPException(status_code=404, detail="セッションが見つかりません")
+
+    with transaction() as conn:
+        conn.execute(
+            """INSERT INTO meal_photos(session_id, person_id, file_name, file_size, taken_at)
+               VALUES(?, ?, ?, ?, ?)""",
+            (session_id, sess["person_id"], fname, len(data), now),
+        )
+
+    # LINE で全家族に broadcast
+    base = _current_tunnel_base_url()
+    if base:
+        public_url = f"{base}/photos/{fname}"
+        try:
+            from ..notifier import broadcast_line_image
+            label = sess["label"] or "食事"
+            time_str = now.strftime("%H:%M")
+            caption = f"🍚 祖母が{label}の写真を撮りました\n時刻: {time_str}"
+            await asyncio.to_thread(broadcast_line_image, public_url, public_url, caption)
+        except Exception as e:
+            _webhook_log.warning("食事写真LINE送信失敗: %s", e)
+
+    return {"ok": True, "file_name": fname, "session_id": session_id}
+
+
+@app.get("/photos/{file_name}")
+async def serve_meal_photo(request: Request, file_name: str):
+    """食事写真を配信する（LINEサーバーからの取得用、外部公開）。
+
+    ファイル名のサニタイズで path traversal を防止。
+    """
+    if "/" in file_name or ".." in file_name:
+        raise HTTPException(status_code=400)
+    fpath = MEAL_PHOTOS_DIR / file_name
+    if not fpath.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(fpath, media_type="image/jpeg")
+
+
+@app.get("/api/meal-photos")
+async def api_list_meal_photos(request: Request, days: int = 7):
+    """家族UI: 直近の食事写真を取得。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    days = max(1, min(days, 30))
+    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT p.id, p.session_id, p.file_name, p.taken_at,
+                      m.label, m.started_at as session_start, per.name as person_name
+                 FROM meal_photos p
+                 LEFT JOIN meal_sessions m ON m.id = p.session_id
+                 LEFT JOIN persons per ON per.id = p.person_id
+                WHERE p.taken_at >= ? AND p.deleted_at IS NULL
+                ORDER BY p.taken_at DESC""",
+            (since,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
+@app.delete("/api/meal-photos/{photo_id}")
+async def api_delete_meal_photo(request: Request, photo_id: int):
+    """家族UIから食事写真を論理削除。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    with transaction() as conn:
+        conn.execute(
+            "UPDATE meal_photos SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (photo_id,),
+        )
+    return {"ok": True}
 
 
 @app.post("/api/quick-record")

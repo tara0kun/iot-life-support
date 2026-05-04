@@ -235,6 +235,68 @@ def send_line_with_quick_reply(message: str, quick_items: list[dict], user_id: s
         return False
 
 
+def send_line_image(image_url: str, preview_url: str | None = None,
+                     caption: str | None = None, user_id: str | None = None) -> bool:
+    """LINE プッシュで画像を1人に送信。
+
+    image_url, preview_url は HTTPS の公開URL（LINEサーバーが取得しに来る）。
+    caption は画像と一緒に送るテキスト（指定時）。
+    user_id 未指定なら admin (LINE_USER_ID)。
+    """
+    try:
+        from .settings import get_bool
+        if not get_bool("notify_master_enabled", default=True):
+            log.info("LINE通知マスタースイッチOFF → 画像送信スキップ")
+            return False
+    except Exception:
+        pass
+
+    env = _load_env()
+    token = env.get("LINE_CHANNEL_ACCESS_TOKEN", "")
+    uid = (user_id or _admin_user_id()).strip()
+    if not token or not uid:
+        log.warning("LINE 画像送信失敗（トークン or user_id なし）")
+        return False
+
+    messages: list[dict] = []
+    if caption:
+        messages.append({"type": "text", "text": caption})
+    messages.append({
+        "type": "image",
+        "originalContentUrl": image_url,
+        "previewImageUrl": preview_url or image_url,
+    })
+
+    try:
+        resp = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"},
+            json={"to": uid, "messages": messages},
+            timeout=15,
+        )
+        if resp.status_code == 200:
+            log.info("LINE画像送信OK: %s", image_url[:80])
+            return True
+        log.warning("LINE画像送信失敗: %d %s", resp.status_code, resp.text[:200])
+        return False
+    except Exception as e:
+        log.error("LINE画像送信エラー: %s", e)
+        return False
+
+
+def broadcast_line_image(image_url: str, preview_url: str | None = None,
+                         caption: str | None = None) -> int:
+    """LINE_ALLOWED_SENDERS + family_line_users 全員に画像を送信。戻り値=成功数。"""
+    recipients = _load_recipients()
+    if not recipients:
+        return 0
+    sent = 0
+    for uid in recipients:
+        if send_line_image(image_url, preview_url, caption, user_id=uid):
+            sent += 1
+    return sent
+
+
 def reply_line_message(reply_token: str, message: str) -> bool:
     """LINE Reply API でメッセージを返信する（webhook応答用）。"""
     env = _load_env()
