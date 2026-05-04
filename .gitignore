@@ -29,6 +29,16 @@ Thumbs.db
 android/bin/
 android/.buildozer/
 
-# 個人写真（doc/screenshots/ のみ許可）
+# 個人写真は一切Gitに上げない。doc/screenshots/ 配下も既存README用のみ許可。
 doc/*
 !doc/screenshots/
+# screenshots配下を一旦全て除外
+doc/screenshots/*
+# README で使う既存の画面キャプチャだけホワイトリスト
+!doc/screenshots/family_dashboard.jpg
+!doc/screenshots/family_events.jpg
+!doc/screenshots/line_notifications.jpg
+!doc/screenshots/tablet_clock_alerts.jpg
+!doc/screenshots/tablet_flower_stamps.jpg
+!doc/screenshots/tablet_garden.jpg
+!doc/screenshots/tablet_history.jpg
