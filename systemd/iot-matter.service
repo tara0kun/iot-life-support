@@ -5,9 +5,9 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=tara0
-WorkingDirectory=/home/tara0/IoT
-ExecStart=/home/tara0/IoT/venv/bin/matter-server --storage-path /home/tara0/IoT/data/matter --port 5580 --bluetooth-adapter 0
+User=pi
+WorkingDirectory=/home/pi/iot-life-support
+ExecStart=/home/pi/iot-life-support/venv/bin/matter-server --storage-path /home/pi/iot-life-support/data/matter --port 5580 --bluetooth-adapter 0
 Restart=on-failure
 RestartSec=10
 
