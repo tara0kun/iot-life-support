@@ -334,10 +334,16 @@ def reply_line_message(reply_token: str, message: str) -> bool:
 # ============================================================
 
 def send_actionable_notification(category: str, context_key: str, message: str,
-                                  extra_items: list[dict] | None = None) -> int:
+                                  extra_items: list[dict] | None = None,
+                                  default_choices: bool = True) -> int:
     """確認ボタン付きで全家族にbroadcast、pending_notificationsに記録する。
 
-    家族の誰かが「✓ 確認した」を押すと:
+    デフォルトの選択肢（default_choices=True）:
+      - 「了解（対応します）」: 対応済みとしてマーク
+      - 「対応不要」: 確認したが対応はしない（誤検知扱い、学習対象外）
+    extra_items でこれをオーバーライドすることも可能（例: bath_classification は完全カスタム）。
+
+    家族の誰かが選択肢を押すと:
       - pending_notifications.completed_at が記録される
       - 全家族に「☑️ 対応済み」がbroadcastされる
       - recheck_pending.pyによる再通知が止まる
@@ -349,9 +355,15 @@ def send_actionable_notification(category: str, context_key: str, message: str,
       category: 通知の種類識別子（例 "meal_alert", "anomaly_night_rice"）
       context_key: 同一文脈を一意に識別するキー（例 "2026-05-02_meal_3"）
       message: 通知文
-      extra_items: 「✓ 確認した」以外に追加したいQuick Replyボタン
+      extra_items: 追加したいQuick Replyボタン
+      default_choices: True なら「了解」「対応不要」の標準2択を入れる。False なら extra_items のみ
     """
-    items: list[dict] = [{"label": "✓ 確認した", "data": f"confirm:{category}:{context_key}"}]
+    items: list[dict] = []
+    if default_choices:
+        items = [
+            {"label": "✓ 了解（対応します）", "data": f"confirm:{category}:{context_key}"},
+            {"label": "対応不要（誤検知）", "data": f"confirm_dismiss:{category}:{context_key}"},
+        ]
     if extra_items:
         items.extend(extra_items)
     items = items[:13]  # LINE Quick Reply は最大13個
@@ -436,6 +448,32 @@ def resolve_confirmer_name(line_user_id: str) -> str:
     return "誰か"
 
 
+def mark_related_completed_silent(notification_type: str, context_prefix: str,
+                                   completed_by: str, action_summary: str) -> int:
+    """同一日の関連通知を「サイレントに」完了マークする（broadcastしない）。
+
+    用途: device_locked と meal_alert のように、同じイベントから派生した複数通知を
+    片方の確認で全部閉じる。LINEへの追加メッセージ送信は行わない。
+    戻り値: 完了マークした件数
+    """
+    from .db import transaction
+    try:
+        with transaction() as conn:
+            cur = conn.execute(
+                """UPDATE pending_notifications
+                      SET completed_at = CURRENT_TIMESTAMP,
+                          completed_by = ?, completed_action = ?
+                    WHERE notification_type = ?
+                      AND context_key LIKE ?
+                      AND completed_at IS NULL""",
+                (completed_by[:64], action_summary, notification_type, f"{context_prefix}%"),
+            )
+            return cur.rowcount or 0
+    except Exception as e:
+        log.warning("関連通知の自動完了に失敗: %s", e)
+        return 0
+
+
 def mark_notification_completed(notification_type: str, context_key: str,
                                  completed_by: str, action_summary: str) -> bool:
     """未完了の通知を完了マーク + 全家族にブロードキャスト通知。
@@ -467,14 +505,10 @@ def mark_notification_completed(notification_type: str, context_key: str,
                     (completed_by[:64], action_summary, row["id"]),
                 )
 
-        # 完了通知もカテゴリで分岐（CRITICAL=全員、その他=adminのみ）
+        # 「誰が何を確認/対応したか」は家族間で共有すべき情報なので常に全員にbroadcast
+        # （誰が対応中か把握できないと家族同士で重複対応するため）
         msg = f"☑️ {confirmer}さんが対応しました\n{action_summary}"
-        if is_critical_category(notification_type):
-            broadcast_line_message(msg)
-        else:
-            admin = _admin_user_id()
-            if admin:
-                send_line_message(msg, user_id=admin)
+        broadcast_line_message(msg)
         return True
     except Exception as e:
         log.error("pending_notification 完了処理失敗: %s", e)
@@ -530,9 +564,11 @@ _DEVICE_LABELS = {
 
 
 def notify_device_locked(device_name: str, manual: bool = False, reason: str = "") -> bool:
-    """機器ロック時の家族全員へのLINE通知。
+    """機器ロック時の家族全員への情報通知（追加確認は不要）。
 
-    manual=True なら家族の手動操作、False なら自動ロック（食事後）。
+    manual=True なら家族の手動操作。
+    自動ロックは現在は使われていない（_request_lock_confirmation で事前確認するため）。
+    家族間の重複対応を防ぐためシンプル broadcast のみ。
     """
     label = _DEVICE_LABELS.get(device_name, device_name)
     now = datetime.now()
@@ -546,28 +582,25 @@ def notify_device_locked(device_name: str, manual: bool = False, reason: str = "
         )
     else:
         message = (
-            f"🔒 {label}を自動ロックしました（食事後の安全措置）\n"
+            f"🔒 {label}をロックしました\n"
             f"時刻: {now.strftime('%H:%M')}\n"
             "（解除するには家族管理画面 or LINEに「ロック解除」と送信）"
         )
-    return send_actionable_notification(
-        "device_locked",
-        f"{now.strftime('%Y-%m-%d_%H%M')}_{device_name}",
-        message,
-    ) > 0
+    return broadcast_line_message(message) > 0
 
 
 def notify_device_unlocked(device_name: str, manual: bool = False, reason: str = "") -> bool:
-    """機器ロック解除時の通知（admin=孫 のみに送信、コスト節約）。
+    """機器ロック解除時の通知。家族の誰が解除したかを全員に共有する。
 
-    解除は情報通知のみで、対応アクション不要。CRITICAL対象外。
-    必要なら家族管理画面で履歴確認可能。
+    手動解除（家族の操作）は全員にbroadcast（重複操作防止のため）。
+    自動解除は admin のみ（情報通知）。
     """
     label = _DEVICE_LABELS.get(device_name, device_name)
     now = datetime.now()
     if manual:
         sub = f"理由: {reason}" if reason else "家族による手動解除"
-        message = f"🔓 {label}のロックを解除しました\n{sub}\n時刻: {now.strftime('%H:%M')}"
+        message = f"🔓 {label}のロックを家族が手動で解除しました\n{sub}\n時刻: {now.strftime('%H:%M')}"
+        return broadcast_line_message(message) > 0
     else:
         message = f"🔓 {label}のロックが自動で解除されました\n時刻: {now.strftime('%H:%M')}"
-    return send_line_message(message)  # user_id=None → admin のみ
+        return send_line_message(message)  # 自動解除は情報通知 → admin のみ

@@ -291,6 +291,20 @@
   </div>
   {% endif %}
 
+  <!-- ライブカメラ -->
+  <div class="section-card">
+    <div class="section-title">ライブ映像（リビング C220）</div>
+    <div class="section-desc">必要なときだけONにしてください（帯域節約）</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <button id="cam-toggle" onclick="toggleCamera()">▶ 映像ON</button>
+      <button onclick="snapCamera()">📸 スナップショット</button>
+      <span id="cam-status" style="font-size:12px;color:#888;"></span>
+    </div>
+    <div id="cam-wrap" style="display:none;background:#000;border-radius:6px;overflow:hidden;">
+      <img id="cam-img" alt="カメラ映像" style="width:100%;display:block;">
+    </div>
+  </div>
+
   <!-- 機器管理（常駐） -->
   <div class="section-card">
     <div class="section-title">機器管理</div>
@@ -349,6 +363,24 @@
       </button>
       <button class="quick-btn" onclick="quickRecord('就寝', this)">
         <span class="qb-icon">🌙</span><span class="qb-label">就寝</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="recordEatingOut(this)">
+        <span class="qb-icon">🍴</span><span class="qb-label">外食</span><span class="qb-status"></span>
+      </button>
+    </div>
+    <div class="section-desc" style="margin-top:14px;">食事を記録（センサーが見逃した時の手動記録）</div>
+    <div class="quick-btns">
+      <button class="quick-btn" onclick="quickRecord('朝食', this)">
+        <span class="qb-icon">🌅</span><span class="qb-label">朝食</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('昼食', this)">
+        <span class="qb-icon">🍱</span><span class="qb-label">昼食</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('夕食', this)">
+        <span class="qb-icon">🍚</span><span class="qb-label">夕食</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('間食', this)">
+        <span class="qb-icon">🍰</span><span class="qb-label">間食</span><span class="qb-status"></span>
       </button>
     </div>
   </div>
@@ -421,21 +453,14 @@
     </div>
   </div>
 
-  <!-- 7日間アクティビティヒートマップ -->
+  <!-- 7日間アクティビティ（項目別タブ） -->
   <div class="section-card">
-    <div class="section-title">7日間アクティビティ</div>
-    <div class="section-desc">過去7日の時間帯別イベント密度。色が濃いほど活動あり。</div>
-    <div id="heatmap-summary" style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap;">
-      <div style="background:#FFF3E0;padding:8px 14px;border-radius:6px;">
-        🍴 食事 <span id="hm-meals" style="font-weight:700;">-</span>回
-      </div>
-      <div style="background:#E1F5FE;padding:8px 14px;border-radius:6px;">
-        🛁 お風呂 <span id="hm-baths" style="font-weight:700;">-</span>回
-      </div>
-      <div style="background:#F3E5F5;padding:8px 14px;border-radius:6px;">
-        🚽 トイレ <span id="hm-toilets" style="font-weight:700;">-</span>回
-      </div>
+    <div class="section-title">7日間の活動記録</div>
+    <div class="section-desc">タブを切り替えて項目ごとの活動パターンを確認できます。色が濃いほど活発。</div>
+    <div id="heatmap-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0;">
+      <!-- JSで動的にタブ生成 -->
     </div>
+    <div id="heatmap-current-info" style="font-size:13px;color:#607D8B;margin-bottom:8px;"></div>
     <div id="heatmap-container" style="overflow-x:auto;">
       <table id="heatmap-table" style="border-collapse:collapse;font-size:0.75em;font-family:monospace;">
         <!-- JSで描画 -->
@@ -538,8 +563,33 @@
     <span class="date-label">{% if is_today %}今日{% else %}{{ selected_date }}{% endif %}のイベント</span>
   </div>
 
-  <!-- イベント一覧 -->
-  <div class="section-card event-log-card">
+  <!-- 行動サマリ（複数センサーから「何が起こったか」を予測） -->
+  <div class="section-card">
+    <div class="section-title">今日の行動</div>
+    <div class="section-desc">センサーのデータから推測される行動。詳しい記録は下の「全イベント」で確認できます。</div>
+    <div class="activity-list" style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+      {% for a in activities %}
+      <div class="activity-row" style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:#FAFAFA;border-left:4px solid #B0BEC5;border-radius:8px;">
+        <div style="font-size:24px;line-height:1;flex-shrink:0;">{{ a.icon }}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;color:#37474F;font-size:14px;">{{ a.label }}{% if a.person_name %}（{{ a.person_name }}）{% endif %}</div>
+          {% if a.detail %}<div style="font-size:12px;color:#78909C;">{{ a.detail }}</div>{% endif %}
+        </div>
+        <div style="font-size:12px;color:#90A4AE;flex-shrink:0;">
+          {{ a.started_at }}{% if a.ended_at != a.started_at %} 〜 {{ a.ended_at }}{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      {% if activities | length == 0 %}
+      <div style="text-align:center;color:#90A4AE;padding:20px;">まだ今日の行動記録がありません</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 全イベント（生データ・トラブル時の詳細確認用） -->
+  <details class="section-card event-log-card" style="padding:0;overflow:hidden;">
+  <summary style="padding:16px;cursor:pointer;font-weight:600;">全センサーイベント（詳細）</summary>
+  <div style="padding:0 16px 16px;">
   <div class="filters">
     <button class="filter-btn active" onclick="filterEvents('all')">全員</button>
     {% for p in persons %}
@@ -579,7 +629,26 @@
           </select>
           <span class="save-msg" id="msg-{{ e.id }}">&#10003;</span>
         </td>
-        {% set source_names = {"rice_cooker": "炊飯器", "ih": "IH", "camera": "カメラ", "contact_sensor": "開閉センサー", "bath_door": "浴室ドア", "bath_motion": "浴室モーション", "family_report": "家族記録", "family_override": "家族操作", "toilet": "トイレ", "tablet_report": "祖母ボタン"} %}
+        {% set source_names = {
+            "rice_cooker": "炊飯器（電源）",
+            "rice_cooker_lid": "炊飯器の蓋",
+            "ih": "IHコンロ",
+            "camera": "リビングカメラ",
+            "contact_sensor": "開閉センサー",
+            "bath_door": "浴室のドア",
+            "bath_motion": "脱衣所の動き",
+            "bathroom_meter": "浴室の温湿度",
+            "fridge": "冷蔵庫のドア",
+            "toilet": "トイレ",
+            "toilet_door": "トイレのドア",
+            "toothbrush": "歯ブラシ立て",
+            "shampoo_bottle": "シャンプーボトル",
+            "hair_dryer": "ドライヤー",
+            "family_report": "家族から記録",
+            "family_override": "家族の操作",
+            "tablet_report": "祖母タブレット",
+            "family_prompt": "家族からの伝言"
+        } %}
         <td><span class="source-badge source-{{ e.source }}">{{ source_names.get(e.source, e.source) }}</span></td>
         <td>{{ e.event_type }}</td>
         <td>{{ "%.1f" | format(e.value) if e.value else "-" }}</td>
@@ -590,9 +659,47 @@
   </table>
   </div>
   </div>
+  </details>
 </div>
 
 <script>
+function toggleCamera() {
+  const img = document.getElementById('cam-img');
+  const wrap = document.getElementById('cam-wrap');
+  const btn = document.getElementById('cam-toggle');
+  const status = document.getElementById('cam-status');
+  if (wrap.style.display === 'none') {
+    img.src = '/api/camera/mjpeg?t=' + Date.now();
+    wrap.style.display = 'block';
+    btn.textContent = '■ 映像OFF';
+    status.textContent = 'ライブ配信中（stream2 / 360p）';
+  } else {
+    img.src = '';
+    wrap.style.display = 'none';
+    btn.textContent = '▶ 映像ON';
+    status.textContent = '';
+  }
+}
+
+async function snapCamera() {
+  const status = document.getElementById('cam-status');
+  status.textContent = '取得中...';
+  try {
+    const res = await fetch('/api/camera/snapshot?t=' + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const wrap = document.getElementById('cam-wrap');
+    const img = document.getElementById('cam-img');
+    img.src = url;
+    wrap.style.display = 'block';
+    document.getElementById('cam-toggle').textContent = '▶ 映像ON';
+    status.textContent = 'スナップショット表示中（' + new Date().toLocaleTimeString('ja-JP') + '）';
+  } catch (e) {
+    status.textContent = '取得失敗: ' + e.message;
+  }
+}
+
 async function unlockDevice() {
   if (!confirm('炊飯器のロックを解除しますか？')) return;
   try {
@@ -615,6 +722,30 @@ async function lockDevice() {
     if (resp.ok) { alert('ロックしました'); location.reload(); }
     else { const d = await resp.json(); alert('ロック失敗: ' + (d.detail || '不明')); }
   } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function recordEatingOut(btn) {
+  // 外食: 食事区分を聞いてから記録
+  const kind = prompt('外食の区分は？（朝食/昼食/夕食/間食）\n空欄なら現在時刻から自動判定');
+  if (kind === null) return;  // キャンセル
+  const valid = ['', '朝食', '昼食', '夕食', '間食'];
+  if (!valid.includes(kind.trim())) {
+    alert('朝食/昼食/夕食/間食 のいずれか、または空欄で入力してください');
+    return;
+  }
+  const status = btn.querySelector('.qb-status');
+  try {
+    const resp = await fetch('/api/quick-record', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ activity: '外食', person_id: 1, witness: '家族', meal_kind: kind.trim() })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      btn.classList.add('recording');
+      status.textContent = `${data.time} ${data.meal_kind}記録済`;
+      setTimeout(() => location.reload(), 1500);
+    } else { status.textContent = '失敗'; status.style.color = '#C62828'; }
+  } catch(e) { status.textContent = 'エラー'; status.style.color = '#C62828'; }
 }
 
 async function quickRecord(activity, btn) {
@@ -765,50 +896,95 @@ async function saveMedicine(timing) {
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
+// ヒートマップ: 項目別タブで切り替え表示
+let _heatmapData = null;
+let _heatmapCurrent = "meals";
+
+const HEATMAP_COLORS = {
+  meals:  {r: 255, g: 152, b: 0},   // オレンジ
+  baths:  {r: 33,  g: 150, b: 243}, // 青
+  toilet: {r: 156, g: 39,  b: 176}, // 紫
+  fridge: {r: 0,   g: 188, b: 212}, // 水色
+  motion: {r: 76,  g: 175, b: 80},  // 緑
+};
+
+function renderHeatmapTabs() {
+  if (!_heatmapData) return;
+  const tabContainer = document.getElementById('heatmap-tabs');
+  tabContainer.innerHTML = '';
+  Object.entries(_heatmapData.categories).forEach(([key, cat]) => {
+    const btn = document.createElement('button');
+    btn.textContent = `${cat.icon} ${cat.name} (${cat.total})`;
+    const active = (key === _heatmapCurrent);
+    btn.style.cssText = `
+      padding:8px 14px; border-radius:18px; border:2px solid;
+      cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;
+      transition:all 0.15s;
+      ${active
+        ? 'background:#1976D2; color:white; border-color:#1976D2;'
+        : 'background:white; color:#37474F; border-color:#CFD8DC;'}
+    `;
+    btn.onclick = () => {
+      _heatmapCurrent = key;
+      renderHeatmapTabs();
+      renderHeatmapTable();
+    };
+    tabContainer.appendChild(btn);
+  });
+}
+
+function renderHeatmapTable() {
+  if (!_heatmapData) return;
+  const cat = _heatmapData.categories[_heatmapCurrent];
+  if (!cat) return;
+  const color = HEATMAP_COLORS[_heatmapCurrent] || HEATMAP_COLORS.motion;
+
+  document.getElementById('heatmap-current-info').textContent =
+    `${cat.icon} ${cat.name}: 過去7日で ${cat.total} 回`;
+
+  const table = document.getElementById('heatmap-table');
+  table.innerHTML = '';
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  hr.appendChild(document.createElement('th'));
+  for (let h = 0; h < 24; h++) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.cssText = 'padding:2px 4px;color:#999;font-weight:400;';
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const max = Math.max(...cat.matrix.flat(), 1);
+  const tbody = document.createElement('tbody');
+  _heatmapData.dates.forEach((dateLabel, i) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = dateLabel;
+    th.style.cssText = 'padding:4px 8px;text-align:right;font-weight:500;color:#666;white-space:nowrap;';
+    tr.appendChild(th);
+    cat.matrix[i].forEach(cnt => {
+      const td = document.createElement('td');
+      const intensity = cnt / max;
+      const alpha = intensity === 0 ? 0.05 : 0.15 + intensity * 0.85;
+      td.style.cssText = `width:18px;height:22px;background:rgba(${color.r},${color.g},${color.b},${alpha});text-align:center;color:${intensity > 0.5 ? '#fff' : '#333'};border:1px solid #fff;`;
+      td.textContent = cnt > 0 ? cnt : '';
+      td.title = `${cnt}件`;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
 async function loadHeatmap() {
   try {
     const resp = await fetch('/api/heatmap?days=7', { credentials: 'same-origin' });
     if (!resp.ok) return;
-    const data = await resp.json();
-    document.getElementById('hm-meals').textContent = data.summary.meals;
-    document.getElementById('hm-baths').textContent = data.summary.baths;
-    document.getElementById('hm-toilets').textContent = data.summary.toilets;
-
-    const table = document.getElementById('heatmap-table');
-    table.innerHTML = '';
-    // ヘッダー: 時間
-    const thead = document.createElement('thead');
-    const hr = document.createElement('tr');
-    hr.appendChild(document.createElement('th'));
-    for (let h = 0; h < 24; h++) {
-      const th = document.createElement('th');
-      th.textContent = h;
-      th.style.cssText = 'padding:2px 4px;color:#999;font-weight:400;';
-      hr.appendChild(th);
-    }
-    thead.appendChild(hr);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    const max = Math.max(data.max, 1);
-    data.dates.forEach((dateLabel, i) => {
-      const tr = document.createElement('tr');
-      const th = document.createElement('th');
-      th.textContent = dateLabel;
-      th.style.cssText = 'padding:4px 8px;text-align:right;font-weight:500;color:#666;white-space:nowrap;';
-      tr.appendChild(th);
-      data.matrix[i].forEach(cnt => {
-        const td = document.createElement('td');
-        const intensity = cnt / max;
-        const alpha = intensity === 0 ? 0.05 : 0.15 + intensity * 0.85;
-        td.style.cssText = `width:18px;height:22px;background:rgba(76,175,80,${alpha});text-align:center;color:${intensity > 0.5 ? '#fff' : '#333'};border:1px solid #fff;`;
-        td.textContent = cnt > 0 ? cnt : '';
-        td.title = `${cnt}件`;
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
+    _heatmapData = await resp.json();
+    renderHeatmapTabs();
+    renderHeatmapTable();
   } catch(e) {
     console.error('heatmap load error', e);
   }
@@ -898,6 +1074,9 @@ ws.onmessage = (e) => {
   const data = JSON.parse(e.data);
   if (data.source && data.event_type === 'power_reading') {
     document.getElementById('live-power').textContent = data.value ? data.value.toFixed(1) : '0';
+  } else if (data.source === 'camera') {
+    // カメライベントは件数が多すぎて他データが埋もれるため家族UIではリロードトリガーから除外
+    return;
   } else if (isToday) {
     // 今日の画面のみ自動リロード（過去日はリロードしない）
     setTimeout(() => location.reload(), 1000);

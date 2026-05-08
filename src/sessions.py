@@ -270,10 +270,14 @@ def merge_sessions_manual(new_session_id: int, prev_session_id: int) -> bool:
     return True
 
 
-def aggregate_sessions(lookback_hours: int = 24) -> int:
-    """未割当イベントをセッションにまとめる。戻り値=新規作成セッション数。"""
+def aggregate_sessions(lookback_hours: int = 24) -> list[int]:
+    """未割当イベントをセッションにまとめる。戻り値=新規作成セッションIDのリスト。
+
+    新規セッションは confirmed=0（未確定）で作成される。
+    呼び出し側は各IDに対して LINE 確認プロンプトを送信する責務を持つ。
+    """
     since = datetime.now() - timedelta(hours=lookback_hours)
-    created = 0
+    created_ids: list[int] = []
 
     with transaction() as conn:
         events = _load_unassigned_events(conn, since)
@@ -317,10 +321,12 @@ def aggregate_sessions(lookback_hours: int = 24) -> int:
                     started = food_events[0].started_at if food_events else cluster[0].started_at
                     ended = max((c.ended_at or c.started_at) for c in cluster)
                     label = _guess_label(started)
+                # 未確定セッション (confirmed=0) として作成。
+                # LINE で家族に確認 → handle_session_confirm_postback で confirmed=1 にする
                 cur = conn.execute(
                     """INSERT INTO meal_sessions(person_id, started_at, ended_at,
-                                                 event_count, label)
-                       VALUES(?, ?, ?, ?, ?)""",
+                                                 event_count, label, confirmed)
+                       VALUES(?, ?, ?, ?, ?, 0)""",
                     (person_id, started, ended, len(cluster), label),
                 )
                 sid = cur.lastrowid
@@ -328,27 +334,39 @@ def aggregate_sessions(lookback_hours: int = 24) -> int:
                     "INSERT INTO session_events(session_id, event_id) VALUES(?, ?)",
                     [(sid, c.id) for c in cluster],
                 )
-                created += 1
+                created_ids.append(sid)
 
         # 近接食事セッションの自動統合（認知症パターン対策）
         merged_count = _merge_close_meal_sessions(conn)
         if merged_count:
             log.info("近接食事セッションを統合: %d件", merged_count)
 
-    return created
+    return created_ids
 
 
-def sessions_today(person_id: int) -> list[dict]:
+def sessions_today(person_id: int, include_unconfirmed: bool = False) -> list[dict]:
+    """その日の食事セッション。デフォルトは confirmed=1 のみ（家族確認済）。"""
     today_start = datetime.combine(datetime.now().date(), time.min)
     conn = get_conn()
     try:
-        rows = conn.execute(
-            """SELECT id, started_at, ended_at, label, event_count
-                 FROM meal_sessions
-                WHERE person_id = ? AND started_at >= ?
-                ORDER BY started_at""",
-            (person_id, today_start),
-        ).fetchall()
+        if include_unconfirmed:
+            rows = conn.execute(
+                """SELECT id, started_at, ended_at, label, event_count, confirmed
+                     FROM meal_sessions
+                    WHERE person_id = ? AND started_at >= ?
+                      AND confirmed != -1
+                    ORDER BY started_at""",
+                (person_id, today_start),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """SELECT id, started_at, ended_at, label, event_count
+                     FROM meal_sessions
+                    WHERE person_id = ? AND started_at >= ?
+                      AND confirmed = 1
+                    ORDER BY started_at""",
+                (person_id, today_start),
+            ).fetchall()
         results = []
         seen_labels = set()
         for r in rows:
@@ -365,19 +383,22 @@ def sessions_today(person_id: int) -> list[dict]:
 
 
 def last_session(person_id: int) -> dict | None:
+    """最後の確定済セッションを返す。"""
     conn = get_conn()
     try:
         row = conn.execute(
             """SELECT id, started_at, ended_at, label
                  FROM meal_sessions
-                WHERE person_id = ?
+                WHERE confirmed = 1
+                AND person_id = ?
                 ORDER BY started_at DESC LIMIT 1""",
             (person_id,),
         ).fetchone()
-        if not row:
-            return None
-        d = dict(row)
-        d["started_at"] = _to_dt(d["started_at"])
-        return d
+        if row:
+            d = dict(row)
+            d["started_at"] = _to_dt(d["started_at"])
+            return d
+        return None
     finally:
         conn.close()
+

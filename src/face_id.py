@@ -52,7 +52,8 @@ class FaceIdentifier:
     def register(self, person_id: int, name: str, image: np.ndarray) -> bool:
         """BGR画像から顔を登録する。成功したらTrue。"""
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        locations = face_recognition.face_locations(rgb)
+        # upsample=2: 2K画像でも小さめの顔（160px程度）を拾えるようにする
+        locations = face_recognition.face_locations(rgb, number_of_times_to_upsample=2)
         if not locations:
             log.warning("顔が検出されませんでした: %s", name)
             return False
@@ -77,7 +78,7 @@ class FaceIdentifier:
         戻り値: [{"person_id": int|None, "name": str, "confidence": float, "location": tuple}, ...]
         """
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        locations = face_recognition.face_locations(rgb)
+        locations = face_recognition.face_locations(rgb, number_of_times_to_upsample=2)
         if not locations:
             return []
         encodings = face_recognition.face_encodings(rgb, locations)

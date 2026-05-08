@@ -424,7 +424,8 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
     action_label = {
         "cook": "炊飯",
         "keep_warm": "保温",
-        "lid_only": "蓋開のみ",
+        "lid_only": "蓋を開けただけ",
+        "lid_meal": "開けてご飯食べた",
         "unknown": "不明",
     }.get(action, action)
 
@@ -482,11 +483,12 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
                 ).fetchone()[0]
                 if remaining == 0:
                     c.execute("DELETE FROM meal_sessions WHERE id = ?", (sid,))
-        summary = f"event #{event_id} を「{action_label}」として除外（食事カウントせず）"
-    elif action == "cook":
-        summary = f"event #{event_id} を「炊飯」として確定（食事として集約）"
+        summary = f"炊飯器の動作を「{action_label}」として記録しました（食事ではないので食事回数には数えません）"
+    elif action in ("cook", "lid_meal"):
+        # 食事として確定 — meal_sessions の集約に拾わせるため event はそのまま残す
+        summary = f"炊飯器の動作を「{action_label}」として記録しました（祖母さんの食事1回として記録）"
     else:  # unknown
-        summary = f"event #{event_id} は「不明」のまま自動判定に任せる"
+        summary = "炊飯器の動作を「判定保留」にしました（次回似た動きが来たら学習します）"
 
     # 学習が進んだら自動判定が効くようになるヒントを追加
     cls_count = 0
@@ -506,7 +508,273 @@ async def handle_rice_action_postback(data: str, sender_id: str) -> str | None:
         mark_notification_completed,
         "rice_action", f"event_{event_id}", sender_id, summary,
     )
-    return f"✅ {confirmer}さん、{summary}"
+
+    # keep_warm/lid_only 時は同日の他の rice_action 通知も自動でサイレント完了
+    # （炊飯器が保温で動きっぱなしの状況で、複数の通知が連発するのを抑制）
+    extra_closed = 0
+    if action in ("keep_warm", "lid_only"):
+        from .notifier import mark_related_completed_silent
+        from datetime import datetime as _dt2
+        today_prefix = _dt2.now().strftime("%Y-%m-%d")
+        # context_key は "event_<id>" 形式なので prefix では拾えない。
+        # よって event_id ごとに直接拾わず、rice_action 全体を完了 + ただし当日作成のみ。
+        # mark_related_completed_silent は context_key LIKE で動くため、
+        # rice_action 全 pending を当日分として消す方針。
+        try:
+            with transaction() as c:
+                cur = c.execute(
+                    """UPDATE pending_notifications
+                          SET completed_at = CURRENT_TIMESTAMP,
+                              completed_by = ?,
+                              completed_action = ?
+                        WHERE notification_type = 'rice_action'
+                          AND completed_at IS NULL
+                          AND created_at >= datetime('now', '-24 hours')""",
+                    (sender_id[:64], f"同日の保温分類により自動完了（{action_label}）"),
+                )
+                extra_closed = cur.rowcount or 0
+        except Exception as e:
+            log.warning("rice_action 関連通知の自動完了失敗: %s", e)
+        if extra_closed:
+            log.info("[rice_action] 関連通知を %d件 自動完了", extra_closed)
+
+    msg = f"✅ {confirmer}さん、{summary}"
+    if extra_closed:
+        msg += f"\n💡 他の同種 {extra_closed}件の通知も同時に閉じました"
+    return msg
+
+
+async def handle_session_confirm_postback(data: str, sender_id: str) -> str | None:
+    """新規食事セッションへの家族確認: 誰の食事か / 食事じゃないか。
+
+    data形式: "sess_confirm:<session_id>:<choice>"
+      choice: "1" (祖母) / "2" (母) / "3" (祖父) / "other" / "reject"
+    confirmed=1 で確定、confirmed=-1 で却下（UIから消える）。
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "sess_confirm":
+        return None
+    try:
+        sid = int(parts[1])
+    except ValueError:
+        return None
+    choice = parts[2]
+
+    from .notifier import resolve_confirmer_name, mark_notification_completed
+    name = resolve_confirmer_name(sender_id)
+
+    if choice == "reject":
+        # 誤検知 → confirmed=-1 にしてUIから隠す（生イベントは残す）
+        try:
+            with transaction() as c:
+                c.execute(
+                    """UPDATE meal_sessions
+                          SET confirmed = -1, confirmed_by = ?, confirmed_at = CURRENT_TIMESTAMP
+                        WHERE id = ?""",
+                    (sender_id[:64], sid),
+                )
+        except Exception as e:
+            log.warning("セッション却下失敗: %s", e)
+            return "⚠️ 処理に失敗しました"
+        await asyncio.to_thread(
+            mark_notification_completed,
+            "session_confirm", f"session_{sid}", sender_id,
+            f"{name}さんが「食事じゃない」を選択 → 食事カウントから除外",
+        )
+        return f"✅ {name}さん、誤検知として記録しました"
+
+    # person_id を確定
+    if choice in ("1", "2", "3"):
+        person_id = int(choice)
+    elif choice == "other":
+        person_id = 0  # 未確定（後で家族管理画面で詳細指定可）
+    else:
+        return None
+
+    # セッション情報取得
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT label, started_at FROM meal_sessions WHERE id = ?", (sid,)
+        ).fetchone()
+        if person_id:
+            person = conn.execute(
+                "SELECT name FROM persons WHERE id = ?", (person_id,)
+            ).fetchone()
+            person_name = person["name"] if person else "?"
+        else:
+            person_name = "他の家族"
+    finally:
+        conn.close()
+    if not row:
+        return "⚠️ 該当セッションが見つかりません"
+    label = row["label"] or "食事"
+
+    try:
+        with transaction() as c:
+            c.execute(
+                """UPDATE meal_sessions
+                      SET person_id = ?, confirmed = 1,
+                          confirmed_by = ?, confirmed_at = CURRENT_TIMESTAMP
+                    WHERE id = ?""",
+                (person_id, sender_id[:64], sid),
+            )
+    except Exception as e:
+        log.warning("セッション確定失敗: %s", e)
+        return "⚠️ 処理に失敗しました"
+
+    await asyncio.to_thread(
+        mark_notification_completed,
+        "session_confirm", f"session_{sid}", sender_id,
+        f"{label}を「{person_name}さん」の食事として記録",
+    )
+    return f"✅ {name}さん、{person_name}さんの{label}として記録しました"
+
+
+async def handle_lock_confirm_postback(data: str, sender_id: str) -> str | None:
+    """炊飯器ロック確認リクエストへの家族の回答を処理。
+
+    data形式: "lock_confirm:<ctx>:yes" or "lock_confirm:<ctx>:no"
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "lock_confirm":
+        return None
+    ctx = parts[1]
+    choice = parts[2]
+    if choice not in ("yes", "no"):
+        return None
+
+    from .notifier import resolve_confirmer_name, mark_notification_completed
+    name = resolve_confirmer_name(sender_id)
+
+    if choice == "no":
+        await asyncio.to_thread(
+            mark_notification_completed,
+            "lock_confirm", ctx, sender_id,
+            f"{name}さんが「ロックしない」を選択 → スキップ",
+        )
+        return f"✅ {name}さん、ロックをスキップしました"
+
+    # yes: 実際にロック実行
+    from .lock_manager import lock_device
+    import os
+    rice_node_id = int(os.environ.get("RICE_COOKER_NODE_ID", "1"))
+    try:
+        locked = await lock_device(
+            "rice_cooker", rice_node_id,
+            reason=f"家族（{name}）の確認後にロック",
+        )
+    except Exception as e:
+        log.warning("ロック実行失敗: %s", e)
+        locked = False
+
+    if not locked:
+        await asyncio.to_thread(
+            mark_notification_completed,
+            "lock_confirm", ctx, sender_id,
+            f"{name}さんが承認したがロック実行に失敗",
+        )
+        return f"⚠️ {name}さん、承認は受けましたがロック実行に失敗しました（matter通信エラー）"
+
+    # ロック確認はもう取れているので、追加の actionable 通知は出さず
+    # シンプルな完了 broadcast のみで重複確認を避ける
+    await asyncio.to_thread(
+        mark_notification_completed,
+        "lock_confirm", ctx, sender_id,
+        f"{name}さんが承認 → 🔒 炊飯器ロック実行",
+    )
+    return f"✅ {name}さん、炊飯器をロックしました"
+
+
+async def handle_bath_classification_postback(data: str, sender_id: str) -> str | None:
+    """お風呂利用候補に対する家族の回答を学習データとして保存する。
+
+    data形式: "bath_cls:<record_id>:<choice>"
+      choice: grandma / grandpa / mother / other / yu_filling / cleaning / no_one
+    bath_classifications.confirmed_person_id / confirmed_kind を更新。
+    """
+    parts = data.split(":")
+    if len(parts) != 3 or parts[0] != "bath_cls":
+        return None
+    try:
+        record_id = int(parts[1])
+    except ValueError:
+        return None
+    choice = parts[2]
+
+    # 選択肢 → (person_id, kind, label) のマッピング
+    # person_id=0: 誰もいない（湯はり/清掃）, person_id>0: その人物
+    choice_map = {
+        "grandma": (1, "bathing", "祖母さんの入浴"),
+        "grandpa": (3, "bathing", "祖父さんの入浴"),
+        "mother": (2, "bathing", "母さんの入浴"),
+        "other": (None, "bathing", "他の家族の入浴"),
+        "yu_filling": (0, "yu_filling", "湯はり（人なし）"),
+        "cleaning": (0, "cleaning", "清掃"),
+        "no_one": (0, "unknown", "誰もいない"),
+    }
+    if choice not in choice_map:
+        return None
+    person_id, kind, label = choice_map[choice]
+
+    from .notifier import resolve_confirmer_name, mark_notification_completed
+    confirmer = resolve_confirmer_name(sender_id)
+
+    try:
+        with transaction() as c:
+            row = c.execute(
+                "SELECT id, confirmed_person_id FROM bath_classifications WHERE id = ?",
+                (record_id,),
+            ).fetchone()
+            if not row:
+                return "⚠️ 該当の入浴記録が見つかりません"
+            if row["confirmed_person_id"] is not None:
+                return "ℹ️ この入浴は既に他の家族が回答済みです"
+            c.execute(
+                """UPDATE bath_classifications
+                      SET confirmed_person_id = ?,
+                          confirmed_kind = ?,
+                          confirmation_method = 'line_reply',
+                          confirmed_by = ?,
+                          confirmed_at = CURRENT_TIMESTAMP
+                    WHERE id = ?""",
+                (person_id if person_id is not None else -1,
+                 kind, sender_id[:64], record_id),
+            )
+    except Exception as e:
+        log.warning("bath_classifications 更新失敗: %s", e)
+        return "⚠️ 記録に失敗しました"
+
+    # 関連 pending_notification も完了マーク
+    await asyncio.to_thread(
+        mark_notification_completed,
+        "bath_classification", f"bath_{record_id}", sender_id,
+        f"お風呂使用「{label}」として記録",
+    )
+    return f"✅ {confirmer}さん、{label}として記録しました"
+
+
+async def handle_confirm_dismiss_postback(data: str, sender_id: str) -> str | None:
+    """「対応不要（誤検知）」ボタン押下: 通知を完了マーク + 学習用に記録。
+
+    data形式: "confirm_dismiss:<category>:<context_key>"
+    完了は記録するが、対応済みではなく「誤検知」としてマーク。
+    """
+    parts = data.split(":", 2)
+    if len(parts) != 3 or parts[0] != "confirm_dismiss":
+        return None
+    category, context_key = parts[1], parts[2]
+    label = CATEGORY_LABELS.get(category, category)
+    from .notifier import mark_notification_completed, resolve_confirmer_name
+    name = resolve_confirmer_name(sender_id)
+    success = await asyncio.to_thread(
+        mark_notification_completed,
+        category, context_key, sender_id,
+        f"「{label}」を誤検知として閉じました",
+    )
+    if success:
+        return f"✅ {name}さん、誤検知として記録しました（再通知停止）"
+    return "ℹ️ この通知は既に他の家族が対応済みです"
 
 
 async def handle_confirm_postback(data: str, sender_id: str) -> str | None:
@@ -522,7 +790,10 @@ async def handle_confirm_postback(data: str, sender_id: str) -> str | None:
     category, context_key = parts[1], parts[2]
 
     label = CATEGORY_LABELS.get(category, category)
-    from .notifier import mark_notification_completed, resolve_confirmer_name
+    from .notifier import (
+        mark_notification_completed, mark_related_completed_silent,
+        resolve_confirmer_name,
+    )
     name = resolve_confirmer_name(sender_id)
     success = await asyncio.to_thread(
         mark_notification_completed,
@@ -530,6 +801,24 @@ async def handle_confirm_postback(data: str, sender_id: str) -> str | None:
         f"「{label}」を確認",
     )
     if success:
+        # 関連通知の自動完了: meal_alertとdevice_lockedは同じ食事イベントから派生するので
+        # 片方の確認で同日の関連通知も同時にクローズする（再通知ループ防止）
+        # context_keyの先頭は YYYY-MM-DD（例: "2026-05-04_3" や "2026-05-04_1629_rice_cooker"）
+        date_prefix = context_key.split("_")[0] if "_" in context_key else context_key
+        if len(date_prefix) == 10 and date_prefix[4] == "-":  # YYYY-MM-DD 検査
+            related_pairs = []
+            if category == "device_locked":
+                related_pairs.append(("meal_alert", date_prefix))
+            elif category == "meal_alert":
+                related_pairs.append(("device_locked", date_prefix))
+            for rel_type, rel_prefix in related_pairs:
+                closed = await asyncio.to_thread(
+                    mark_related_completed_silent,
+                    rel_type, rel_prefix, sender_id,
+                    f"関連通知（{label}）の確認時に同時クローズ",
+                )
+                if closed:
+                    log.info("関連通知 %s を %d件 自動完了", rel_type, closed)
         return f"✅ {name}さん、確認を記録しました。家族全員に共有しました。"
     return "ℹ️ この通知は既に他の家族が対応済みです。"
 
@@ -550,7 +839,7 @@ async def handle_merge_postback(data: str, sender_id: str) -> str | None:
 
     success = merge_sessions_manual(new_sid, prev_sid)
     if not success:
-        return f"⚠️ 統合に失敗しました（セッション #{new_sid} または #{prev_sid} が見つかりません）。"
+        return "⚠️ 統合に失敗しました（対象の食事記録が見つかりません）"
 
     # 統合後のセッション情報を返信
     conn = get_conn()
@@ -566,7 +855,7 @@ async def handle_merge_postback(data: str, sender_id: str) -> str | None:
 
     person = (merged["person_name"] if merged else None) or "未確定"
     label = merged["label"] if merged else "セッション"
-    action_summary = f"#{new_sid} を #{prev_sid} ({label} / {person}) に統合"
+    action_summary = f"今回の食事を、前回の{label}（{person}さん）と同じ食事としてまとめました"
 
     # 通知完了マーク + 全家族へのブロードキャスト
     try:
@@ -614,7 +903,7 @@ async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
     if not person:
         return f"⚠️ person_id={new_person_id} は登録されていません。"
     if not session:
-        return f"⚠️ セッション #{session_id} は見つかりません。"
+        return "⚠️ 対象の記録が見つかりません"
 
     old_person_id = session["person_id"]
 
@@ -664,7 +953,7 @@ async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
             log.warning("ロック再評価失敗: %s", e)
 
     action_summary = (
-        f"{session.get('label') or 'セッション'} #{session_id} を「{person['name']}」として記録"
+        f"{session.get('label') or '食事'}を「{person['name']}さん」のものとして記録しました"
         + lock_msg
     )
     # 全家族に完了をブロードキャスト（自動でpending_notification完了マークも）

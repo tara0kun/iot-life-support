@@ -18,7 +18,7 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Form, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, FileResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
@@ -28,6 +28,7 @@ from ..event_bus import get_events_today, get_recent_events, get_events_by_date,
 from ..sessions import sessions_today, last_session
 from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
 from ..lock_manager import get_device_state, lock_device, unlock_device
+from .camera_stream import get_streamer
 
 app = FastAPI(title="IoT生活サポート")
 app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
@@ -145,6 +146,23 @@ async def tablet_view(request: Request):
     # 今日の花の色
     today_flower_color = _date_to_color(now.date())
 
+    # 今日の食事写真（祖母が自分の食事を見て思い出すため）
+    today_start = now.strftime("%Y-%m-%d 00:00:00")
+    conn = get_conn()
+    try:
+        meal_photos_today = [dict(r) for r in conn.execute(
+            """SELECT p.id, p.session_id, p.file_name, p.taken_at,
+                      m.label
+                 FROM meal_photos p
+                 LEFT JOIN meal_sessions m ON m.id = p.session_id
+                WHERE p.taken_at >= ? AND p.deleted_at IS NULL
+                  AND p.person_id = 1
+                ORDER BY p.taken_at""",
+            (today_start,),
+        ).fetchall()]
+    finally:
+        conn.close()
+
     return templates.TemplateResponse(request, "tablet.html", {
         "now": now,
         "sessions": sessions,
@@ -158,6 +176,7 @@ async def tablet_view(request: Request):
         "current_activity": current_activity,
         "alerts": alerts,
         "today_flower_color": today_flower_color,
+        "meal_photos_today": meal_photos_today,
         "done_count": done_count,
         "family_prompts": _get_active_prompts(),
     })
@@ -428,7 +447,8 @@ async def family_logout(request: Request):
 async def api_events(request: Request, limit: int = 50):
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
-    return get_recent_events(limit)
+    # camera イベントは家族UIでは除外
+    return [e for e in get_recent_events(limit * 2) if e.get("source") != "camera"][:limit]
 
 
 @app.get("/api/sessions/{person_id}")
@@ -448,6 +468,59 @@ async def api_persons(request: Request):
         return [dict(r) for r in rows]
     finally:
         conn.close()
+
+
+@app.get("/api/camera/snapshot")
+async def api_camera_snapshot(request: Request):
+    """最新フレームをJPEGで返す。家族認証必須。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    streamer = get_streamer()
+    streamer.start()
+    # 起動直後はフレーム未取得の可能性があるので待つ
+    for _ in range(50):
+        jpg = streamer.latest_jpeg()
+        if jpg:
+            break
+        await asyncio.sleep(0.1)
+    if not jpg:
+        raise HTTPException(status_code=503, detail="camera unavailable")
+    return Response(content=jpg, media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/camera/mjpeg")
+async def api_camera_mjpeg(request: Request):
+    """multipart/x-mixed-replace でMJPEG連続配信。家族認証必須。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    streamer = get_streamer()
+    streamer.start()
+    boundary = b"--frame"
+
+    async def gen():
+        last_ts = 0.0
+        while True:
+            if await request.is_disconnected():
+                break
+            jpg = streamer.latest_jpeg()
+            ts = streamer.latest_age_seconds()
+            now = asyncio.get_event_loop().time()
+            if jpg and now - last_ts > 0.18:
+                last_ts = now
+                yield (
+                    boundary + b"\r\n"
+                    + b"Content-Type: image/jpeg\r\n"
+                    + f"Content-Length: {len(jpg)}\r\n\r\n".encode()
+                    + jpg + b"\r\n"
+                )
+            await asyncio.sleep(0.1)
+
+    return StreamingResponse(
+        gen(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 @app.get("/api/device-status")
@@ -849,6 +922,55 @@ async def api_upload_meal_photo(
     return {"ok": True, "file_name": fname, "session_id": session_id}
 
 
+# ============================================================
+# 使い方ガイド（外部公開、認証なし — 家族間で共有可能）
+# ============================================================
+
+GUIDE_DIR = BASE.parent.parent / "docs" / "guide"
+
+GUIDE_PAGES = {
+    "": ("📚 ガイド一覧", "README.md"),
+    "tablet-setup": ("祖母タブレット セットアップ手順", "tablet-setup.md"),
+    "grandma-usage": ("祖母用 タブレットの使い方", "grandma-usage.md"),
+    "family-setup": ("家族用 セットアップ手順", "family-setup.md"),
+    "family-reference": ("家族用 機能リファレンス", "family-reference.md"),
+    "troubleshooting": ("トラブルシューティング", "troubleshooting.md"),
+}
+
+
+@app.get("/guide/", response_class=HTMLResponse)
+@app.get("/guide", response_class=HTMLResponse)
+async def guide_index(request: Request):
+    return await _render_guide(request, "")
+
+
+@app.get("/guide/{slug}", response_class=HTMLResponse)
+async def guide_page(request: Request, slug: str):
+    return await _render_guide(request, slug)
+
+
+async def _render_guide(request: Request, slug: str) -> HTMLResponse:
+    if slug not in GUIDE_PAGES:
+        raise HTTPException(status_code=404, detail="ガイドが見つかりません")
+    title, fname = GUIDE_PAGES[slug]
+    fpath = GUIDE_DIR / fname
+    if not fpath.exists():
+        raise HTTPException(status_code=404, detail="ガイドファイルが存在しません")
+    md_text = fpath.read_text(encoding="utf-8")
+    try:
+        import markdown as _md
+        html_content = _md.markdown(
+            md_text,
+            extensions=["tables", "fenced_code", "toc", "sane_lists"],
+        )
+    except Exception as e:
+        html_content = f"<pre>ガイドのレンダリングに失敗しました: {e}\n\n{md_text}</pre>"
+    return templates.TemplateResponse(request, "guide.html", {
+        "title": title,
+        "html_content": html_content,
+    })
+
+
 @app.get("/photos/{file_name}")
 async def serve_meal_photo(request: Request, file_name: str):
     """食事写真を配信する（LINEサーバーからの取得用、外部公開）。
@@ -902,15 +1024,22 @@ async def api_delete_meal_photo(request: Request, photo_id: int):
 
 @app.post("/api/quick-record")
 async def api_quick_record(request: Request):
-    """家族が証人として祖母の行動を記録する。"""
+    """家族が証人として祖母の行動を記録する。
+
+    activity:
+      - 起床/お薬/就寝/お風呂/トイレ/おやつ: 単発活動
+      - 外食: 家族が一緒に外食したことを記録（食事カウント+1扱い）
+    """
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     body = await request.json()
     activity = body.get("activity", "")
     person_id = body.get("person_id", 1)  # デフォルト: 祖母
     witness = body.get("witness", "家族")
+    meal_kind = body.get("meal_kind", "")  # 朝食/昼食/夕食/間食 — 外食時のみ使用
 
-    valid_activities = {"起床", "お薬", "就寝", "お風呂", "トイレ", "おやつ"}
+    valid_activities = {"起床", "お薬", "就寝", "お風呂", "トイレ", "おやつ",
+                        "外食", "朝食", "昼食", "夕食", "間食"}
     if activity not in valid_activities:
         raise HTTPException(status_code=400, detail=f"無効な活動: {activity}")
 
@@ -919,10 +1048,13 @@ async def api_quick_record(request: Request):
         conn.execute(
             """INSERT INTO events(person_id, source, event_type, started_at, value, confidence, raw_meta)
                VALUES(?, 'family_report', ?, ?, NULL, 1.0, ?)""",
-            (person_id, activity, now, json.dumps({"witness": witness}, ensure_ascii=False)),
+            (person_id, activity, now, json.dumps(
+                {"witness": witness, "meal_kind": meal_kind} if meal_kind else {"witness": witness},
+                ensure_ascii=False,
+            )),
         )
 
-    # セッション集約に拾われるよう meal_sessions にも直接追加（食事以外の活動）
+    # 単発活動はセッション化（食事カウントとは別系統）
     if activity in {"起床", "お薬", "就寝", "お風呂", "トイレ"}:
         with transaction() as conn:
             conn.execute(
@@ -931,7 +1063,53 @@ async def api_quick_record(request: Request):
                 (person_id, now, now, activity),
             )
 
-    return {"ok": True, "activity": activity, "time": now.strftime("%H:%M")}
+    # 外食: 食事として meal_sessions に登録（食事カウントに含まれる）
+    if activity == "外食":
+        # meal_kind が指定されてなければ時間帯から推定
+        if not meal_kind:
+            h = now.hour
+            if 5 <= h < 10:
+                meal_kind = "朝食"
+            elif 10 <= h < 15:
+                meal_kind = "昼食"
+            elif 15 <= h < 21:
+                meal_kind = "夕食"
+            else:
+                meal_kind = "間食"
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
+                   VALUES(?, ?, ?, 1, ?)""",
+                (person_id, now, now, f"外食({meal_kind})"),
+            )
+
+    # 通常の食事（朝食/昼食/夕食/間食）: 家族が手動で記録（センサ見逃し時など）
+    if activity in {"朝食", "昼食", "夕食", "間食"}:
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
+                   VALUES(?, ?, ?, 1, ?)""",
+                (person_id, now, now, activity),
+            )
+
+    # 家族が手動で記録した内容は全員にbroadcast（重複記録防止＋情報共有）
+    try:
+        from ..notifier import broadcast_line_message
+        if activity == "外食":
+            await asyncio.to_thread(
+                broadcast_line_message,
+                f"📝 家族が「外食({meal_kind})」を記録しました（{now.strftime('%H:%M')}）",
+            )
+        else:
+            await asyncio.to_thread(
+                broadcast_line_message,
+                f"📝 家族が「{activity}」を記録しました（{now.strftime('%H:%M')}）",
+            )
+    except Exception as e:
+        logging.getLogger("app").warning("quick-record broadcast失敗: %s", e)
+
+    return {"ok": True, "activity": activity, "time": now.strftime("%H:%M"),
+            "meal_kind": meal_kind if activity == "外食" else None}
 
 
 @app.post("/api/family-prompt")
@@ -962,6 +1140,18 @@ async def api_send_prompt(request: Request):
             "INSERT INTO family_prompts(message, sent_by, created_at, expires_at, priority) VALUES(?, ?, ?, ?, ?)",
             (message, "家族", now_str, expires_str, priority),
         )
+    # event_bus 経由でWebSocket購読者（タブレット）に即時通知
+    # タブレット側のWS handlerがリロードを実行 → 新しいfamily_promptが即座に表示される
+    from ..event_bus import _notify
+    await _notify({
+        "source": "family_prompt",
+        "event_type": "new",
+        "value": None,
+        "person_id": None,
+        "started_at": now_str,
+        "id": None,
+        "_payload": {"message": message, "priority": priority},
+    })
     return {"ok": True, "message": message, "expires_at": expires_str, "priority": priority}
 
 
@@ -1118,7 +1308,11 @@ async def line_webhook(request: Request):
     from ..notifier import reply_line_message
     from ..line_commands import (
         dispatch, handle_attribute_postback, handle_merge_postback,
-        handle_confirm_postback, handle_rice_action_postback,
+        handle_confirm_postback, handle_confirm_dismiss_postback,
+        handle_rice_action_postback,
+        handle_bath_classification_postback,
+        handle_lock_confirm_postback,
+        handle_session_confirm_postback,
     )
     events = payload.get("events", [])
     for ev in events:
@@ -1153,8 +1347,16 @@ async def line_webhook(request: Request):
                     reply = await handle_merge_postback(data, sender_id)
                 elif data.startswith("confirm:"):
                     reply = await handle_confirm_postback(data, sender_id)
+                elif data.startswith("confirm_dismiss:"):
+                    reply = await handle_confirm_dismiss_postback(data, sender_id)
                 elif data.startswith("rice_action:"):
                     reply = await handle_rice_action_postback(data, sender_id)
+                elif data.startswith("bath_cls:"):
+                    reply = await handle_bath_classification_postback(data, sender_id)
+                elif data.startswith("lock_confirm:"):
+                    reply = await handle_lock_confirm_postback(data, sender_id)
+                elif data.startswith("sess_confirm:"):
+                    reply = await handle_session_confirm_postback(data, sender_id)
             except Exception as e:
                 _webhook_log.error("postback処理エラー: %s", e)
                 reply = "⚠️ 処理に失敗しました"
@@ -1300,13 +1502,18 @@ async def family_weekly_report(request: Request):
 
 @app.get("/api/heatmap")
 async def api_heatmap(request: Request, days: int = 7):
-    """過去N日×24時間のイベント密度を返す（家族UIヒートマップ用）。
+    """過去N日×24時間のイベント密度を項目ごとに返す（家族UI用）。
 
+    各カテゴリで個別の matrix を返し、フロントエンドはタブ切替で表示する。
     返却形式: {
-        "dates": ["04-18", "04-19", ...],
-        "matrix": [[h0_count, h1_count, ..., h23_count], ...],
-        "max": 最大カウント,
-        "summary": {"meals": int, "baths": int, "toilets": int}
+        "dates": ["04-18 (土)", ...],
+        "categories": {
+            "meals":  {"icon": "🍴", "name": "食事", "matrix": [[...]], "total": int},
+            "baths":  {"icon": "🛁", "name": "お風呂", "matrix": [[...]], "total": int},
+            "toilet": {"icon": "🚽", "name": "トイレ", "matrix": [[...]], "total": int},
+            "fridge": {"icon": "🧊", "name": "冷蔵庫", "matrix": [[...]], "total": int},
+            "motion": {"icon": "🚶", "name": "脱衣所モーション", "matrix": [[...]], "total": int},
+        }
     }
     """
     if not _is_family_authenticated(request):
@@ -1315,58 +1522,76 @@ async def api_heatmap(request: Request, days: int = 7):
     today = datetime.now().date()
     dates = [(today - timedelta(days=i)) for i in range(days - 1, -1, -1)]
     date_strs = [d.strftime("%Y-%m-%d") for d in dates]
+    date_idx = {ds: i for i, ds in enumerate(date_strs)}
 
-    matrix = [[0] * 24 for _ in range(days)]
-    summary = {"meals": 0, "baths": 0, "toilets": 0}
+    def empty_matrix():
+        return [[0] * 24 for _ in range(days)]
+
+    # 各カテゴリの定義
+    categories = {
+        "meals":  {"icon": "🍴", "name": "食事",        "matrix": empty_matrix(), "total": 0},
+        "baths":  {"icon": "🛁", "name": "お風呂",      "matrix": empty_matrix(), "total": 0},
+        "toilet": {"icon": "🚽", "name": "トイレ",      "matrix": empty_matrix(), "total": 0},
+        "fridge": {"icon": "🧊", "name": "冷蔵庫",      "matrix": empty_matrix(), "total": 0},
+        "motion": {"icon": "🚶", "name": "脱衣所",      "matrix": empty_matrix(), "total": 0},
+    }
 
     conn = get_conn()
     try:
-        # 全イベントを集計
         ph = ",".join("?" * len(date_strs))
-        rows = conn.execute(
-            f"""SELECT DATE(started_at) as d, CAST(strftime('%H', started_at) AS INTEGER) as h, COUNT(*) as cnt
-                FROM events
-                WHERE DATE(started_at) IN ({ph})
-                GROUP BY d, h""",
+
+        # 食事 / お風呂: meal_sessions（confirmed=1のみ）
+        meal_rows = conn.execute(
+            f"""SELECT label, DATE(started_at) as d,
+                       CAST(strftime('%H', started_at) AS INTEGER) as h
+                  FROM meal_sessions
+                 WHERE confirmed = 1 AND DATE(started_at) IN ({ph})""",
             date_strs,
         ).fetchall()
-        date_idx = {ds: i for i, ds in enumerate(date_strs)}
-        for r in rows:
+        for r in meal_rows:
             i = date_idx.get(r["d"])
             if i is None or r["h"] is None:
                 continue
-            matrix[i][r["h"]] = r["cnt"]
+            label = r["label"] or ""
+            if label == "お風呂":
+                categories["baths"]["matrix"][i][r["h"]] += 1
+                categories["baths"]["total"] += 1
+            elif label in ("朝食", "昼食", "夕食", "間食", "おやつ", "夜食") or label.startswith("外食"):
+                categories["meals"]["matrix"][i][r["h"]] += 1
+                categories["meals"]["total"] += 1
 
-        # サマリー
-        meals_row = conn.execute(
-            f"""SELECT COUNT(*) as cnt FROM meal_sessions
-                WHERE label IN ('朝食','昼食','夕食','間食','おやつ')
-                AND DATE(started_at) IN ({ph})""",
+        # トイレ / 冷蔵庫 / 脱衣所モーション: events から集計
+        source_to_category = {
+            "toilet_door": ("toilet", "open"),
+            "fridge": ("fridge", "open"),
+            "bath_motion": ("motion", "motion"),
+        }
+        ev_rows = conn.execute(
+            f"""SELECT source, event_type, DATE(started_at) as d,
+                       CAST(strftime('%H', started_at) AS INTEGER) as h
+                  FROM events
+                 WHERE DATE(started_at) IN ({ph})
+                   AND source IN ('toilet_door', 'fridge', 'bath_motion')""",
             date_strs,
-        ).fetchone()
-        summary["meals"] = meals_row["cnt"] if meals_row else 0
-        baths_row = conn.execute(
-            f"""SELECT COUNT(*) as cnt FROM meal_sessions
-                WHERE label = 'お風呂' AND DATE(started_at) IN ({ph})""",
-            date_strs,
-        ).fetchone()
-        summary["baths"] = baths_row["cnt"] if baths_row else 0
-        toilets_row = conn.execute(
-            f"""SELECT COUNT(*) as cnt FROM events
-                WHERE source = 'toilet' AND event_type = 'open'
-                AND DATE(started_at) IN ({ph})""",
-            date_strs,
-        ).fetchone()
-        summary["toilets"] = toilets_row["cnt"] if toilets_row else 0
+        ).fetchall()
+        for r in ev_rows:
+            mapping = source_to_category.get(r["source"])
+            if not mapping:
+                continue
+            cat_key, expected_et = mapping
+            if r["event_type"] != expected_et:
+                continue
+            i = date_idx.get(r["d"])
+            if i is None or r["h"] is None:
+                continue
+            categories[cat_key]["matrix"][i][r["h"]] += 1
+            categories[cat_key]["total"] += 1
     finally:
         conn.close()
 
-    max_cnt = max((max(row) for row in matrix), default=0)
     return {
         "dates": [d.strftime("%m-%d (%a)") for d in dates],
-        "matrix": matrix,
-        "max": max_cnt,
-        "summary": summary,
+        "categories": categories,
     }
 
 
@@ -1575,7 +1800,20 @@ async def family_view(request: Request):
 
     is_today = (selected_date == now.strftime("%Y-%m-%d"))
 
-    events = get_events_by_date(selected_date, 200)
+    # camera イベントは件数が多すぎて他のイベントが埋もれるため家族UIでは非表示
+    events = [e for e in get_events_by_date(selected_date, 400) if e.get("source") != "camera"][:200]
+
+    # サマリ化: 生イベントを「行動」へ集約（複数センサ組合せで「何が起こったか」を予測）
+    from ..event_summarizer import summarize_events
+    persons_for_summary = {}
+    try:
+        conn_p = get_conn()
+        for r in conn_p.execute("SELECT id, name FROM persons"):
+            persons_for_summary[r["id"]] = r["name"]
+        conn_p.close()
+    except Exception:
+        pass
+    activities = summarize_events(events, persons_for_summary)
 
     conn = get_conn()
     try:
@@ -1591,6 +1829,7 @@ async def family_view(request: Request):
     from ..settings import list_settings
     return templates.TemplateResponse(request, "family.html", {
         "events": events,
+        "activities": activities,
         "persons": persons,
         "now": now,
         "grandma_meal_count": len(grandma_sessions),

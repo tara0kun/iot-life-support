@@ -52,7 +52,10 @@ CREATE TABLE IF NOT EXISTS meal_sessions (
     started_at TIMESTAMP NOT NULL,
     ended_at TIMESTAMP NOT NULL,
     event_count INTEGER DEFAULT 0,
-    label TEXT                                  -- 朝食/昼食/夕食/間食 自動推定
+    label TEXT,                                 -- 朝食/昼食/夕食/間食 自動推定
+    confirmed INTEGER DEFAULT 0,                -- 0=未確定（LINE確認待ち）, 1=家族確認済, -1=誤検知として却下
+    confirmed_by TEXT,                          -- LINE sender_id
+    confirmed_at TIMESTAMP
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_person_time
@@ -178,8 +181,8 @@ CREATE TABLE IF NOT EXISTS rice_classifications (
     power_w REAL NOT NULL,                         -- 検知時の電力
     hour_of_day INTEGER NOT NULL,                  -- 0-23
     lid_recently_opened INTEGER DEFAULT 0,         -- 蓋開30秒以内なら1
-    classification TEXT NOT NULL                   -- cook/keep_warm/lid_only/unknown
-        CHECK(classification IN ('cook', 'keep_warm', 'lid_only', 'unknown')),
+    classification TEXT NOT NULL                   -- cook/keep_warm/lid_only/lid_meal/unknown
+        CHECK(classification IN ('cook', 'keep_warm', 'lid_only', 'lid_meal', 'unknown')),
     classified_by TEXT,                            -- LINE sender_id
     classified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     auto_decided INTEGER DEFAULT 0                 -- 0=家族手動 1=システム自動判定
@@ -212,6 +215,30 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_notif_context
     ON pending_notifications(notification_type, context_key);
 CREATE INDEX IF NOT EXISTS idx_pending_notif_pending
     ON pending_notifications(completed_at, last_notified_at);
+
+CREATE TABLE IF NOT EXISTS bath_classifications (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    hour_of_day INTEGER NOT NULL,                  -- 0-23
+    -- 検知時の信号スナップショット
+    door_was_closed INTEGER DEFAULT 0,             -- ドアが閉じていたか（祖母推定の手掛かり）
+    humidity_baseline REAL,                        -- 検知前5分の平均湿度
+    humidity_peak REAL,                            -- 検知中の最大湿度
+    humidity_delta REAL,                           -- peak - baseline
+    temperature_delta REAL,                        -- 温度変化量
+    motion_count INTEGER DEFAULT 0,                -- 脱衣所モーション回数
+    active_person_id INTEGER,                      -- 検知時の active_person（カメラ識別）
+    -- 確定結果（LINE回答 or 自動判定）
+    confirmed_person_id INTEGER,                   -- NULL=未回答、0=誰もいない（湯はり/清掃）、>0=人物ID
+    confirmed_kind TEXT,                           -- 'bathing'/'yu_filling'/'cleaning'/'unknown'
+    confirmation_method TEXT,                      -- 'line_reply'/'auto_active_person'/'auto_learned'
+    confirmed_by TEXT,                             -- 回答した LINE user_id
+    confirmed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_bath_cls_pending
+    ON bath_classifications(confirmed_person_id, detected_at);
+CREATE INDEX IF NOT EXISTS idx_bath_cls_features
+    ON bath_classifications(hour_of_day, door_was_closed, active_person_id);
 """
 
 
@@ -241,8 +268,78 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         conn.commit()
         _seed_default_persons(conn)
+        _migrate_rice_classifications_check(conn)
+        _migrate_meal_sessions_confirmed(conn)
     finally:
         conn.close()
+
+
+def _migrate_meal_sessions_confirmed(conn: sqlite3.Connection) -> None:
+    """meal_sessions に confirmed/confirmed_by/confirmed_at 列を追加。
+
+    既存セッション（移行前）は confirmed=1 とみなして既存表示を維持する。
+    """
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(meal_sessions)").fetchall()]
+        if "confirmed" not in cols:
+            conn.executescript("""
+                ALTER TABLE meal_sessions ADD COLUMN confirmed INTEGER DEFAULT 0;
+                ALTER TABLE meal_sessions ADD COLUMN confirmed_by TEXT;
+                ALTER TABLE meal_sessions ADD COLUMN confirmed_at TIMESTAMP;
+                UPDATE meal_sessions SET confirmed = 1 WHERE confirmed IS NULL OR confirmed = 0;
+            """)
+            conn.commit()
+            __import__('logging').getLogger("db").info(
+                "meal_sessions に confirmed カラムを追加（既存は確定済として移行）"
+            )
+    except Exception as e:
+        __import__('logging').getLogger("db").warning(
+            "meal_sessions マイグレーション失敗: %s", e
+        )
+
+
+def _migrate_rice_classifications_check(conn: sqlite3.Connection) -> None:
+    """rice_classifications.classification の CHECK 制約を 'lid_meal' 含むものに更新。
+
+    SQLite は CHECK 制約を ALTER できないため、既存テーブルが古いCHECK
+    （cook/keep_warm/lid_only/unknown のみ）を持っている場合はテーブル再作成で更新する。
+    データは保持される。
+    """
+    try:
+        # 現テーブルのスキーマDDLを取得
+        row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='rice_classifications'"
+        ).fetchone()
+        if not row or "lid_meal" in (row[0] or ""):
+            return  # 既に新CHECK含む or テーブル無し
+        # 旧CHECKを含む → 再作成して移行
+        conn.executescript("""
+            ALTER TABLE rice_classifications RENAME TO rice_classifications_old;
+            CREATE TABLE rice_classifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER,
+                power_w REAL NOT NULL,
+                hour_of_day INTEGER NOT NULL,
+                lid_recently_opened INTEGER DEFAULT 0,
+                classification TEXT NOT NULL
+                    CHECK(classification IN ('cook', 'keep_warm', 'lid_only', 'lid_meal', 'unknown')),
+                classified_by TEXT,
+                classified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                auto_decided INTEGER DEFAULT 0
+            );
+            INSERT INTO rice_classifications
+                SELECT * FROM rice_classifications_old;
+            DROP TABLE rice_classifications_old;
+            CREATE INDEX IF NOT EXISTS idx_rice_cls_features
+                ON rice_classifications(power_w, hour_of_day, lid_recently_opened);
+        """)
+        conn.commit()
+        log = __import__('logging').getLogger("db")
+        log.info("rice_classifications テーブルをマイグレーションしました（lid_meal 追加）")
+    except Exception as e:
+        __import__('logging').getLogger("db").warning(
+            "rice_classifications マイグレーション失敗: %s", e
+        )
 
 
 UNASSIGNED_PERSON_ID = 0

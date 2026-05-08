@@ -31,7 +31,10 @@ def main():
         print("LINE通知マスタースイッチOFF → 再通知スキップ")
         return
 
-    cutoff = (datetime.now() - timedelta(minutes=RENOTIFY_INTERVAL_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+    # pending_notifications.last_notified_at は CURRENT_TIMESTAMP (UTC) で保存されるため
+    # cutoff も UTC で計算する。datetime.now() を使うとタイムゾーン分のズレで
+    # 30分間隔の制約が無視され、5分おきに再通知が連発する原因になっていた。
+    cutoff = (datetime.utcnow() - timedelta(minutes=RENOTIFY_INTERVAL_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
 
     conn = get_conn()
     try:

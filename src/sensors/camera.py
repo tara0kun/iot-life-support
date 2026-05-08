@@ -31,7 +31,7 @@ class CameraConfig:
     ip: str
     username: str
     password: str
-    stream: str = "stream2"  # stream1=高画質, stream2=低画質
+    stream: str = "stream1"  # stream1=2K(2560x1440), stream2=360p。顔認識はstream1でないと検出不可
     poll_interval: float = 2.0
     save_detections: bool = True
     save_dir: Path = Path("data/captures")
