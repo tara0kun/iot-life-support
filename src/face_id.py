@@ -30,6 +30,11 @@ TOLERANCE = 0.5
 CANDIDATE_SAVE_INTERVAL_SEC = 60  # 同一未識別顔を連続保存しない最小間隔
 CANDIDATE_MAX_PER_DAY = 200       # 1日の保存上限（ストレージ保護）
 
+# 顔の最小サイズ（pixel）— これ未満は誤検出（カーテンの模様や影など）として除外
+CANDIDATE_MIN_FACE_SIZE = 80
+# 既存候補との類似度しきい値: この距離以下は「同一人物の重複」として保存しない
+CANDIDATE_DEDUP_DISTANCE = 0.4
+
 
 class FaceIdentifier:
     def __init__(self) -> None:
@@ -136,7 +141,12 @@ class FaceIdentifier:
         self,
         items: list[tuple[np.ndarray, tuple, list[float], float]],
     ) -> None:
-        """未識別の顔を data/faces/candidates/ に保存。後でUIから遠隔ラベル付け可能。"""
+        """未識別の顔を data/faces/candidates/ に保存。後でUIから遠隔ラベル付け可能。
+
+        フィルタ:
+        - 顔サイズが小さすぎる（< CANDIDATE_MIN_FACE_SIZE px）→ 誤検出として除外
+        - 既存候補と類似（距離 < CANDIDATE_DEDUP_DISTANCE）→ 重複として除外
+        """
         from datetime import datetime
         import time
         # 連続保存抑制（前回保存から N 秒経過していないとスキップ）
@@ -161,10 +171,46 @@ class FaceIdentifier:
         except Exception:
             index = []
 
+        # 既存候補の encoding をまとめておく（重複判定用）
+        existing_encodings = []
+        for c in index:
+            enc = c.get("encoding")
+            if enc:
+                try:
+                    existing_encodings.append(np.array(enc))
+                except Exception:
+                    pass
+
         ts_str = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        saved_count = 0
         for i, (image, loc, encoding, best_dist) in enumerate(items):
             try:
                 top, right, bottom, left = loc
+                face_w = right - left
+                face_h = bottom - top
+                # フィルタ1: 顔サイズが小さすぎる → 誤検出
+                if face_w < CANDIDATE_MIN_FACE_SIZE or face_h < CANDIDATE_MIN_FACE_SIZE:
+                    log.info(
+                        "[face_candidate] サイズ不足で除外 %dx%d (< %d px)",
+                        face_w, face_h, CANDIDATE_MIN_FACE_SIZE,
+                    )
+                    continue
+
+                # フィルタ2: 既存候補との類似度チェック（重複除外）
+                if existing_encodings:
+                    try:
+                        enc_arr = np.array(encoding)
+                        distances = face_recognition.face_distance(existing_encodings, enc_arr)
+                        min_d = float(np.min(distances)) if len(distances) > 0 else 1.0
+                        if min_d < CANDIDATE_DEDUP_DISTANCE:
+                            log.info(
+                                "[face_candidate] 既存候補と類似 (dist=%.2f < %.2f) → 重複として除外",
+                                min_d, CANDIDATE_DEDUP_DISTANCE,
+                            )
+                            continue
+                    except Exception as e:
+                        log.warning("候補顔の重複チェック失敗: %s", e)
+
                 # 余白付きでクロップ
                 pad = 30
                 t = max(0, top - pad)
@@ -180,14 +226,20 @@ class FaceIdentifier:
                     "timestamp": datetime.now().isoformat(timespec="seconds"),
                     "encoding": encoding,
                     "closest_distance": best_dist,
+                    "face_size": [face_w, face_h],
                 })
+                # 直前に追加した encoding は次の重複判定にも使う（同フレーム内の重複も防げる）
+                existing_encodings.append(np.array(encoding))
+                saved_count += 1
             except Exception as e:
                 log.warning("候補顔保存失敗: %s", e)
 
-        try:
-            CANDIDATES_INDEX.write_text(json.dumps(index, ensure_ascii=False))
-        except Exception as e:
-            log.warning("候補顔インデックス保存失敗: %s", e)
+        if saved_count > 0:
+            try:
+                CANDIDATES_INDEX.write_text(json.dumps(index, ensure_ascii=False))
+                log.info("[face_candidate] 候補顔 %d件 を保存", saved_count)
+            except Exception as e:
+                log.warning("候補顔インデックス保存失敗: %s", e)
 
         self._last_candidate_save = time.time()
 
