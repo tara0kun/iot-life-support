@@ -1357,6 +1357,16 @@ async def line_webhook(request: Request):
                     reply = await handle_lock_confirm_postback(data, sender_id)
                 elif data.startswith("sess_confirm:"):
                     reply = await handle_session_confirm_postback(data, sender_id)
+                elif data == "feedback_start":
+                    reply = (
+                        "💬 意見・質問の送り方\n\n"
+                        "「意見 ＜内容＞」と書いてメッセージを送ってください。\n\n"
+                        "例:\n"
+                        "意見 ご飯写真がうまく送れません\n"
+                        "質問 通知を減らせますか？\n"
+                        "要望 〇〇という機能がほしい\n"
+                        "バグ 画面が真っ白になる"
+                    )
             except Exception as e:
                 _webhook_log.error("postback処理エラー: %s", e)
                 reply = "⚠️ 処理に失敗しました"
@@ -1380,7 +1390,19 @@ async def line_webhook(request: Request):
         if reply is None and _is_url_request(text):
             reply = _build_url_reply()
 
-        if reply:
+        if isinstance(reply, dict) and reply.get("_type") == "menu":
+            # メニュー: Quick Reply 形式で送信（URI と postback 混在）
+            from ..notifier import send_line_with_quick_reply
+            menu_text = reply.get("text", "メニュー")
+            menu_items = reply.get("items", [])
+            try:
+                await asyncio.to_thread(
+                    send_line_with_quick_reply,
+                    menu_text, menu_items, user_id=sender_id,
+                )
+            except Exception as e:
+                _webhook_log.error("メニュー送信失敗: %s", e)
+        elif reply:
             try:
                 await asyncio.to_thread(reply_line_message, reply_token, reply)
             except Exception as e:
@@ -1500,6 +1522,124 @@ async def family_weekly_report(request: Request):
     })
 
 
+# ============================================================
+# 顔学習（受動収集 + 遠隔ラベル付け）
+# ============================================================
+
+@app.get("/api/face-candidates")
+async def api_face_candidates(request: Request):
+    """未識別顔の候補一覧（カメラが自動収集したもの）"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    from ..face_id import CANDIDATES_INDEX, CANDIDATES_DIR
+    if not CANDIDATES_INDEX.exists():
+        return {"candidates": []}
+    try:
+        index = json.loads(CANDIDATES_INDEX.read_text())
+    except Exception:
+        index = []
+    # 存在チェック + 新しい順
+    valid = [c for c in index if (CANDIDATES_DIR / c["file"]).exists()]
+    valid.sort(key=lambda c: c.get("timestamp", ""), reverse=True)
+    return {"candidates": valid[:200]}
+
+
+@app.get("/face-candidates/{file_name}")
+async def serve_face_candidate(request: Request, file_name: str):
+    """候補顔画像を配信（家族UI内で表示用、認証必須）"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    from ..face_id import CANDIDATES_DIR
+    if "/" in file_name or ".." in file_name:
+        raise HTTPException(status_code=400)
+    fpath = CANDIDATES_DIR / file_name
+    if not fpath.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(fpath, media_type="image/jpeg")
+
+
+@app.post("/api/face-candidates/label")
+async def api_face_candidate_label(request: Request):
+    """候補顔をラベル付けして既存 person に encoding を追加。
+
+    body: {"file": "...", "person_id": int, "name": str}
+    """
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    file_name = body.get("file", "")
+    person_id = body.get("person_id")
+    name = body.get("name", "").strip()
+    if not file_name or not person_id or not name:
+        raise HTTPException(status_code=400, detail="file, person_id, name 必須")
+
+    from ..face_id import CANDIDATES_INDEX, CANDIDATES_DIR, FaceIdentifier
+    if not CANDIDATES_INDEX.exists():
+        raise HTTPException(status_code=404, detail="候補リストなし")
+    try:
+        index = json.loads(CANDIDATES_INDEX.read_text())
+    except Exception:
+        raise HTTPException(status_code=500, detail="候補リスト破損")
+
+    target = next((c for c in index if c["file"] == file_name), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="候補顔が見つかりません")
+
+    # FaceIdentifier に登録
+    fid = FaceIdentifier()
+    success = fid.register_from_encoding(int(person_id), name, target["encoding"])
+    if not success:
+        raise HTTPException(status_code=500, detail="登録失敗")
+
+    # 候補リストから削除＋画像も削除（学習に使ったので）
+    index = [c for c in index if c["file"] != file_name]
+    try:
+        CANDIDATES_INDEX.write_text(json.dumps(index, ensure_ascii=False))
+        (CANDIDATES_DIR / file_name).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return {"ok": True, "person_id": person_id, "name": name,
+            "registered_count": fid.registered_count}
+
+
+@app.post("/api/face-candidates/dismiss")
+async def api_face_candidate_dismiss(request: Request):
+    """候補顔を「学習対象外」として削除（不審者・通行人など）"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    file_name = body.get("file", "")
+    if not file_name:
+        raise HTTPException(status_code=400)
+    from ..face_id import CANDIDATES_INDEX, CANDIDATES_DIR
+    try:
+        index = json.loads(CANDIDATES_INDEX.read_text()) if CANDIDATES_INDEX.exists() else []
+        index = [c for c in index if c["file"] != file_name]
+        CANDIDATES_INDEX.write_text(json.dumps(index, ensure_ascii=False))
+        (CANDIDATES_DIR / file_name).unlink(missing_ok=True)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"ok": True}
+
+
+@app.get("/family/face-learning", response_class=HTMLResponse)
+async def family_face_learning(request: Request):
+    """顔学習ページ — 候補顔の一覧とラベル付けUI"""
+    if not _is_family_authenticated(request):
+        return RedirectResponse("/family/login", status_code=303)
+    conn = get_conn()
+    try:
+        persons = [dict(r) for r in conn.execute(
+            "SELECT id, name FROM persons WHERE id > 0 ORDER BY id"
+        ).fetchall()]
+    finally:
+        conn.close()
+    return templates.TemplateResponse(request, "face_learning.html", {
+        "persons": persons,
+    })
+
+
 @app.get("/api/learning-stats")
 async def api_learning_stats(request: Request):
     """学習データの蓄積状況を返す（家族UIで可視化）。"""
@@ -1557,16 +1697,48 @@ async def api_learning_stats(request: Request):
             elif c == -1:
                 sess_summary["rejected"] = r["cnt"]
 
-        # 通知応答統計: confirm 完了済の action 内訳
+        # 通知応答統計: 詳細内訳（確認済/誤検知/不明/他の家族）
         notif_rows = conn.execute(
             """SELECT notification_type,
                       COUNT(*) as total,
+                      SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) as completed,
                       SUM(CASE WHEN completed_action LIKE '%誤検知%' THEN 1 ELSE 0 END) as dismissed,
-                      SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) as completed
+                      SUM(CASE WHEN completed_action LIKE '%不明%' THEN 1 ELSE 0 END) as unknown_count,
+                      SUM(CASE WHEN completed_action LIKE '%他の家族%' THEN 1 ELSE 0 END) as other_family_count,
+                      SUM(CASE WHEN completed_at IS NULL THEN 1 ELSE 0 END) as pending
                  FROM pending_notifications
-                GROUP BY notification_type"""
+                GROUP BY notification_type
+                ORDER BY total DESC"""
         ).fetchall()
         notif_stats = [dict(r) for r in notif_rows]
+
+        # センサー反応回数（直近24h）
+        sensor_24h_rows = conn.execute(
+            """SELECT source, COUNT(*) as cnt FROM events
+                WHERE started_at >= datetime('now', '-24 hours', 'localtime')
+                  AND source NOT IN ('camera', 'bathroom_meter')
+                GROUP BY source ORDER BY cnt DESC"""
+        ).fetchall()
+        sensor_24h = [dict(r) for r in sensor_24h_rows]
+
+        # センサー反応回数（直近7日合計）
+        sensor_7d_rows = conn.execute(
+            """SELECT source, COUNT(*) as cnt FROM events
+                WHERE started_at >= datetime('now', '-7 days', 'localtime')
+                  AND source NOT IN ('camera', 'bathroom_meter')
+                GROUP BY source ORDER BY cnt DESC"""
+        ).fetchall()
+        sensor_7d = [dict(r) for r in sensor_7d_rows]
+
+        # 候補顔の溜まり数（受動学習のキュー深さ）
+        from ..face_id import CANDIDATES_INDEX
+        candidate_count = 0
+        try:
+            if CANDIDATES_INDEX.exists():
+                import json as _json
+                candidate_count = len(_json.loads(CANDIDATES_INDEX.read_text()))
+        except Exception:
+            pass
     finally:
         conn.close()
 
@@ -1579,6 +1751,9 @@ async def api_learning_stats(request: Request):
         },
         "sessions": sess_summary,
         "notifications": notif_stats,
+        "sensor_24h": sensor_24h,
+        "sensor_7d": sensor_7d,
+        "face_candidates_pending": candidate_count,
     }
 
 

@@ -59,6 +59,10 @@ def match_command(text: str) -> str:
         return "last_meal"
     if any(kw in lower for kw in ("ヘルプ", "help", "コマンド", "使い方")):
         return "help"
+    if any(kw in lower for kw in ("メニュー", "menu")):
+        return "menu"
+    if t.startswith("意見") or t.startswith("質問") or t.startswith("要望") or t.startswith("バグ"):
+        return "feedback"
     if any(kw.lower() in lower for kw in (
         "リンク", "url", "つながらない", "繋がらない",
         "見れない", "みれない", "アクセス", "開けない", "接続",
@@ -202,6 +206,7 @@ def handle_last_meal() -> str:
 def handle_help() -> str:
     return (
         "📖 使えるコマンド\n\n"
+        "「メニュー」— 主要メニューをボタンで表示\n"
         "「登録 <名前>」— 家族として登録（例: 登録 母）\n"
         "「登録解除」— 自分の登録を解除\n"
         "「登録一覧」— 登録済み家族を確認\n"
@@ -209,8 +214,90 @@ def handle_help() -> str:
         "「最後の食事」— 直近の食事時刻\n"
         "「リンク」— 最新の公開URL\n"
         "「ロック解除」— 炊飯器ロックを解除（確認コード付き）\n"
+        "「意見 ＜内容＞」— 開発者への質問・要望\n"
         "「ヘルプ」— このメッセージ"
     )
+
+
+def handle_menu() -> dict:
+    """主要メニューをLINEで表示する辞書を返す。
+
+    handle_message() 側がこれを Quick Reply としてレンダリングする。
+    URL アクションは LINE 側で開かれる。
+    """
+    base_url = _load_public_base_url()
+    return {
+        "_type": "menu",
+        "text": "📋 メニュー\n下のボタンから選んでください",
+        "items": [
+            {"label": "🏠 家族管理画面", "uri": f"{base_url}/family"},
+            {"label": "📚 使い方ガイド", "uri": f"{base_url}/guide/"},
+            {"label": "📷 顔学習", "uri": f"{base_url}/family/face-learning"},
+            {"label": "📷 食事写真", "uri": f"{base_url}/family"},
+            {"label": "💬 意見・質問", "data": "feedback_start"},
+            {"label": "🆘 困った時", "uri": f"{base_url}/guide/troubleshooting"},
+        ],
+    }
+
+
+def _load_public_base_url() -> str:
+    """data/tunnel_url.txt から最新の Cloudflare Tunnel URL を取得。"""
+    from pathlib import Path
+    url_file = Path(__file__).resolve().parent.parent / "data" / "tunnel_url.txt"
+    if url_file.exists():
+        try:
+            url = url_file.read_text().strip()
+            if url:
+                return url.rstrip("/")
+        except Exception:
+            pass
+    import os
+    return os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
+
+
+def handle_feedback(text: str, sender_id: str) -> str:
+    """意見・質問を開発者（admin）へ転送 + DB 保存。"""
+    body = text.split(maxsplit=1)
+    content = body[1].strip() if len(body) > 1 else ""
+    if not content:
+        return (
+            "📝 意見・質問の送り方\n\n"
+            "「意見 ご飯写真がうまく送れません」のように、\n"
+            "「意見」「質問」「要望」「バグ」のいずれかに続けて内容を書いてください。"
+        )
+
+    from .notifier import resolve_confirmer_name, send_line_message, _admin_user_id
+    from .db import transaction
+    name = resolve_confirmer_name(sender_id)
+
+    # DB 保存（feedback テーブルがあれば、なくてもログには残る）
+    try:
+        with transaction() as c:
+            c.execute(
+                """CREATE TABLE IF NOT EXISTS feedback (
+                       id INTEGER PRIMARY KEY AUTOINCREMENT,
+                       sender_id TEXT, sender_name TEXT,
+                       content TEXT NOT NULL,
+                       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                   )"""
+            )
+            c.execute(
+                "INSERT INTO feedback(sender_id, sender_name, content) VALUES(?, ?, ?)",
+                (sender_id, name, content),
+            )
+    except Exception as e:
+        log.warning("feedback 保存失敗: %s", e)
+
+    # 開発者(admin) へ即時転送
+    admin = _admin_user_id()
+    if admin:
+        msg = f"💬 {name}さんから意見・質問\n\n{content}"
+        try:
+            send_line_message(msg, user_id=admin)
+        except Exception as e:
+            log.warning("feedback 転送失敗: %s", e)
+
+    return f"✅ {name}さん、ご意見ありがとうございます。開発者に伝えました。"
 
 
 def handle_unlock_request(sender_id: str) -> str:
@@ -992,4 +1079,8 @@ async def dispatch(text: str, sender_id: str) -> str | None:
         return handle_last_meal()
     if cmd == "help":
         return handle_help()
+    if cmd == "menu":
+        return handle_menu()  # dict 返却 → webhook側で Quick Reply としてレンダリング
+    if cmd == "feedback":
+        return handle_feedback(text, sender_id)
     return None

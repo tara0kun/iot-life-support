@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>顔学習 - ばあちゃんIoTサポート</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Yu Gothic", sans-serif;
+    background: #F5F8FA; color: #2C3E50; margin: 0; padding: 0;
+  }
+  .topbar {
+    position: sticky; top: 0; z-index: 10;
+    background: #4A7C59; color: white; padding: 12px 16px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .topbar a { color: white; text-decoration: none; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  .desc {
+    background: #FFF8E1; border-left: 4px solid #FFA726;
+    padding: 10px 14px; border-radius: 0 8px 8px 0;
+    font-size: 14px; color: #5D4037; margin-bottom: 16px;
+  }
+  .candidate-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 16px;
+  }
+  .card {
+    background: white; border-radius: 12px; overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08); padding: 0;
+  }
+  .card img {
+    width: 100%; aspect-ratio: 1/1; object-fit: cover; display: block;
+    background: #E0E0E0;
+  }
+  .card-body { padding: 10px 12px; }
+  .card-time { font-size: 11px; color: #90A4AE; margin-bottom: 6px; }
+  .card-dist { font-size: 10px; color: #7986CB; margin-bottom: 8px; }
+  select {
+    width: 100%; padding: 8px; border-radius: 6px;
+    border: 2px solid #CFD8DC; font-size: 14px; font-family: inherit;
+    margin-bottom: 8px; background: white;
+  }
+  .btn-row { display: flex; gap: 6px; }
+  button {
+    flex: 1; padding: 8px 6px; border-radius: 6px;
+    border: 2px solid; cursor: pointer; font-family: inherit;
+    font-size: 13px; font-weight: 700; transition: all 0.15s;
+  }
+  .btn-register { background: #4A7C59; color: white; border-color: #4A7C59; }
+  .btn-register:active { background: #2E5634; }
+  .btn-register:disabled { background: #B0BEC5; border-color: #B0BEC5; cursor: not-allowed; }
+  .btn-dismiss { background: white; color: #607D8B; border-color: #B0BEC5; }
+  .btn-dismiss:active { background: #ECEFF1; }
+  .empty {
+    background: white; padding: 40px; text-align: center;
+    border-radius: 12px; color: #90A4AE;
+  }
+  .status-msg {
+    position: fixed; bottom: 20px; right: 20px;
+    background: #4A7C59; color: white;
+    padding: 12px 18px; border-radius: 24px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    transition: all 0.3s;
+    transform: translateY(100px);
+  }
+  .status-msg.show { transform: translateY(0); }
+  .stats-bar {
+    background: white; padding: 12px 16px; border-radius: 8px;
+    margin-bottom: 14px; font-size: 14px;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a href="/family">← 家族管理画面</a>
+  <span style="margin-left:auto;font-weight:700;">📷 顔学習</span>
+</div>
+<div class="container">
+
+<h1>未識別の顔をラベル付け</h1>
+<div class="desc">
+  カメラが「未識別」と判定した顔が自動で集まります。「これは祖母さん」など指定すると学習データに追加されます。<br>
+  通行人や他人の場合は「学習対象外」を押すと削除されます。
+</div>
+
+<div class="stats-bar">
+  <span>未対応の候補顔: <strong id="count">-</strong> 件</span>
+  <button onclick="location.reload()" style="flex:0;padding:6px 14px;">🔄 更新</button>
+</div>
+
+<div id="grid" class="candidate-grid"></div>
+<div id="status" class="status-msg"></div>
+</div>
+
+<script>
+const persons = {{ persons | tojson }};
+
+async function loadCandidates() {
+  const resp = await fetch('/api/face-candidates', { credentials: 'same-origin' });
+  if (!resp.ok) {
+    document.getElementById('grid').innerHTML = '<div class="empty">読込失敗</div>';
+    return;
+  }
+  const data = await resp.json();
+  document.getElementById('count').textContent = data.candidates.length;
+  const grid = document.getElementById('grid');
+  if (data.candidates.length === 0) {
+    grid.innerHTML = '<div class="empty">未識別の顔はありません 👍</div>';
+    return;
+  }
+  grid.innerHTML = '';
+  data.candidates.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.file = c.file;
+    const time = c.timestamp ? c.timestamp.replace('T', ' ').slice(0, 16) : '';
+    const dist = c.closest_distance != null ? `近さ: ${(1 - c.closest_distance).toFixed(2)}` : '';
+    card.innerHTML = `
+      <img src="/face-candidates/${c.file}" alt="候補顔" loading="lazy">
+      <div class="card-body">
+        <div class="card-time">${time}</div>
+        <div class="card-dist">${dist}</div>
+        <select class="person-select">
+          <option value="">-- 誰ですか？ --</option>
+          ${persons.map(p => `<option value="${p.id}|${p.name}">${p.name}</option>`).join('')}
+        </select>
+        <div class="btn-row">
+          <button class="btn-register" onclick="register(this)">この人</button>
+          <button class="btn-dismiss" onclick="dismiss(this)">対象外</button>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+async function register(btn) {
+  const card = btn.closest('.card');
+  const file = card.dataset.file;
+  const sel = card.querySelector('.person-select');
+  if (!sel.value) {
+    showStatus('誰か選択してください');
+    return;
+  }
+  btn.disabled = true; btn.textContent = '登録中...';
+  const [pid, name] = sel.value.split('|');
+  try {
+    const resp = await fetch('/api/face-candidates/label', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({ file, person_id: parseInt(pid), name })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      card.style.opacity = 0; card.style.transform = 'scale(0.8)';
+      setTimeout(() => card.remove(), 300);
+      showStatus(`✅ ${name}さんとして登録（合計 ${data.registered_count} 件）`);
+      updateCount(-1);
+    } else {
+      btn.disabled = false; btn.textContent = 'この人';
+      showStatus('登録失敗');
+    }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = 'この人';
+    showStatus('通信エラー');
+  }
+}
+
+async function dismiss(btn) {
+  const card = btn.closest('.card');
+  const file = card.dataset.file;
+  if (!confirm('この顔を「学習対象外」として削除しますか？')) return;
+  try {
+    const resp = await fetch('/api/face-candidates/dismiss', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      credentials: 'same-origin',
+      body: JSON.stringify({ file })
+    });
+    if (resp.ok) {
+      card.style.opacity = 0;
+      setTimeout(() => card.remove(), 300);
+      updateCount(-1);
+    }
+  } catch(e) {}
+}
+
+function showStatus(msg) {
+  const el = document.getElementById('status');
+  el.textContent = msg;
+  el.classList.add('show');
+  setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function updateCount(delta) {
+  const el = document.getElementById('count');
+  el.textContent = parseInt(el.textContent) + delta;
+}
+
+loadCandidates();
+</script>
+</body>
+</html>

@@ -223,15 +223,27 @@ def send_line_with_quick_reply(message: str, quick_items: list[dict], user_id: s
 
     items = []
     for it in quick_items[:13]:  # LINEは最大13個まで
-        items.append({
-            "type": "action",
-            "action": {
-                "type": "postback",
-                "label": it["label"][:20],
-                "data": it["data"],
-                "displayText": it.get("display_text", it["label"]),
-            },
-        })
+        if it.get("uri"):
+            # URLボタン（家族UIやガイドへの遷移）
+            items.append({
+                "type": "action",
+                "action": {
+                    "type": "uri",
+                    "label": it["label"][:20],
+                    "uri": it["uri"],
+                },
+            })
+        elif it.get("data"):
+            # postback（ボタン押下時にサーバ側で処理）
+            items.append({
+                "type": "action",
+                "action": {
+                    "type": "postback",
+                    "label": it["label"][:20],
+                    "data": it["data"],
+                    "displayText": it.get("display_text", it["label"]),
+                },
+            })
 
     headers = {
         "Content-Type": "application/json",

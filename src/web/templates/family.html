@@ -462,6 +462,14 @@
     <div style="padding:0 16px 16px;" id="learning-stats-content">
       <div style="font-size:13px;color:#666;">読み込み中...</div>
     </div>
+    <div style="padding:0 16px 16px;border-top:1px solid #EEE;margin-top:8px;">
+      <a href="/family/face-learning" style="display:inline-block;padding:10px 18px;background:#4A7C59;color:white;text-decoration:none;border-radius:6px;font-weight:600;">
+        📷 顔学習ページへ（未識別顔のラベル付け）
+      </a>
+      <div style="font-size:12px;color:#666;margin-top:6px;">
+        カメラが「誰だかわからない」と判定した顔をまとめてラベル付けできます。
+      </div>
+    </div>
   </details>
 
   <!-- 7日間アクティビティ（項目別タブ） -->
@@ -1004,16 +1012,57 @@ async function loadLearningStats() {
       riceRows.push(`<tr><td>${labels[cls] || cls}</td><td>${cnt}</td><td>${data.rice.auto[cls] || 0}</td></tr>`);
     }
 
-    // 通知応答
+    // ソース名の日本語化
+    const sourceLabels = {
+      "rice_cooker": "炊飯器電源",
+      "rice_cooker_lid": "炊飯器の蓋",
+      "fridge": "冷蔵庫",
+      "toilet_door": "トイレ",
+      "bath_door": "風呂ドア",
+      "bath_motion": "脱衣所モーション",
+      "family_report": "家族手動",
+      "tablet_report": "祖母タブレット",
+      "family_prompt": "家族の伝言"
+    };
+
+    // 通知応答（詳細）
+    const notifTypeLabels = {
+      "rice_action": "炊飯器の動作",
+      "session_confirm": "食事候補",
+      "bath_classification": "お風呂候補",
+      "lock_confirm": "ロック確認",
+      "device_locked": "ロック通知",
+      "meal_alert": "食事多回数警告",
+      "long_toilet_stay": "トイレ長時間",
+      "bath_emergency": "浴室緊急",
+      "anomaly_inactivity": "活動なし",
+      "anomaly_night_rice": "深夜炊飯",
+      "tablet_unverified": "祖母タブレット未確認",
+      "hair_dryer_missing": "ドライヤー未使用",
+      "bath_reminder": "入浴リマインド",
+      "attribute_session": "セッション割当",
+    };
     const notifRows = data.notifications.map(n => {
       const dismissedRate = n.completed > 0 ? Math.round(100 * n.dismissed / n.completed) : 0;
+      const label = notifTypeLabels[n.notification_type] || n.notification_type;
       return `<tr>
-        <td>${n.notification_type}</td>
-        <td>${n.total}</td>
-        <td>${n.completed}</td>
-        <td>${n.dismissed} (${dismissedRate}%)</td>
+        <td>${label}</td>
+        <td style="text-align:center;">${n.total}</td>
+        <td style="text-align:center;">${n.completed}</td>
+        <td style="text-align:center;">${n.dismissed} (${dismissedRate}%)</td>
+        <td style="text-align:center;">${n.unknown_count}</td>
+        <td style="text-align:center;">${n.other_family_count}</td>
+        <td style="text-align:center;color:${n.pending > 0 ? '#E65100' : '#999'};">${n.pending}</td>
       </tr>`;
     }).join('');
+
+    // センサー反応回数
+    const sensor24hRows = data.sensor_24h.map(s =>
+      `<tr><td>${sourceLabels[s.source] || s.source}</td><td style="text-align:right;">${s.cnt}</td></tr>`
+    ).join('');
+    const sensor7dRows = data.sensor_7d.map(s =>
+      `<tr><td>${sourceLabels[s.source] || s.source}</td><td style="text-align:right;">${s.cnt}</td></tr>`
+    ).join('');
 
     el.innerHTML = `
       <div style="font-size:13px;color:#666;margin-bottom:12px;">
@@ -1050,12 +1099,40 @@ async function loadLearningStats() {
         </div>
       </div>
 
+      <div style="background:#E8F5E9;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#1B5E20;margin-bottom:6px;">📡 センサー反応回数（直近24時間）</div>
+        ${sensor24hRows ? `<table style="width:100%;font-size:13px;"><tbody>${sensor24hRows}</tbody></table>` : '<div style="font-size:12px;color:#666;">直近24時間の反応なし</div>'}
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer;font-size:12px;color:#666;">直近7日間も見る</summary>
+          ${sensor7dRows ? `<table style="width:100%;font-size:12px;margin-top:6px;"><tbody>${sensor7dRows}</tbody></table>` : '<div style="font-size:12px;color:#666;">7日間の反応なし</div>'}
+        </details>
+      </div>
+
+      <div style="background:#FFF3E0;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#E65100;margin-bottom:6px;">📷 顔学習キュー</div>
+        <div style="font-size:13px;">
+          未識別の候補顔: <strong>${data.face_candidates_pending}</strong> 件
+          ${data.face_candidates_pending > 0 ? ' <a href="/family/face-learning" style="color:#1976D2;font-weight:700;">→ ラベル付けする</a>' : ''}
+        </div>
+      </div>
+
       <div style="background:#F5F5F5;padding:12px;border-radius:8px;">
-        <div style="font-weight:700;margin-bottom:6px;">📨 通知への応答</div>
-        <table style="width:100%;font-size:12px;">
-          <thead><tr><th style="text-align:left;">通知種類</th><th>合計</th><th>応答済</th><th>誤検知扱い</th></tr></thead>
+        <div style="font-weight:700;margin-bottom:6px;">📨 通知への応答（詳細）</div>
+        <table style="width:100%;font-size:11px;">
+          <thead><tr style="background:#E0E0E0;">
+            <th style="text-align:left;padding:4px;">通知種類</th>
+            <th style="text-align:center;padding:4px;">合計</th>
+            <th style="text-align:center;padding:4px;">応答済</th>
+            <th style="text-align:center;padding:4px;">誤検知</th>
+            <th style="text-align:center;padding:4px;">不明</th>
+            <th style="text-align:center;padding:4px;">他家族</th>
+            <th style="text-align:center;padding:4px;">未対応</th>
+          </tr></thead>
           <tbody>${notifRows}</tbody>
         </table>
+        <div style="font-size:10px;color:#666;margin-top:6px;">
+          「不明」「他家族」が多い通知種類は、判定材料が不足している可能性。「未対応」が多いと運用が回っていない。
+        </div>
       </div>
     `;
   } catch(e) {
