@@ -9,6 +9,7 @@
 | [tablet-setup.md](tablet-setup.md) | 設定する人（家族） | 祖母タブレットの初期設定（一番重要） |
 | [grandma-usage.md](grandma-usage.md) | 祖母 | タブレットの使い方（イラスト多め） |
 | [family-setup.md](family-setup.md) | 家族 | 自分の LINE と家族画面のセットアップ |
+| [line-operation.md](line-operation.md) | 家族 | **LINE操作ガイド**（メニュー・コマンド・通知対応） |
 | [family-reference.md](family-reference.md) | 家族 | 機能リファレンス（センサー意味、通知の種類） |
 | [troubleshooting.md](troubleshooting.md) | 全員 | トラブル時のFAQ |
 

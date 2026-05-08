@@ -934,6 +934,7 @@ GUIDE_PAGES = {
     "grandma-usage": ("祖母用 タブレットの使い方", "grandma-usage.md"),
     "family-setup": ("家族用 セットアップ手順", "family-setup.md"),
     "family-reference": ("家族用 機能リファレンス", "family-reference.md"),
+    "line-operation": ("LINE操作ガイド", "line-operation.md"),
     "troubleshooting": ("トラブルシューティング", "troubleshooting.md"),
 }
 
@@ -950,6 +951,9 @@ async def guide_page(request: Request, slug: str):
 
 
 async def _render_guide(request: Request, slug: str) -> HTMLResponse:
+    # README.md など .md 付きリンクで来るケースに対応（slug=tablet-setup.md → tablet-setup）
+    if slug.endswith(".md"):
+        slug = slug[:-3]
     if slug not in GUIDE_PAGES:
         raise HTTPException(status_code=404, detail="ガイドが見つかりません")
     title, fname = GUIDE_PAGES[slug]
