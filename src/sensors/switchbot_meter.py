@@ -34,37 +34,65 @@ class MeterReading:
 
 # SwitchBot 温湿度計（防水版含む）の Service Data UUID（ベンダー固有）
 SWITCHBOT_SERVICE_UUID = "0000fd3d-0000-1000-8000-00805f9b34fb"
+# SwitchBot のメーカーID（little-endian で 0x0969 = 2409 decimal）
+SWITCHBOT_COMPANY_ID = 0x0969
 
 
-def _parse_meter_advertisement(service_data: dict) -> MeterReading | None:
-    """SwitchBot Meter / OutdoorMeter の Service Data を解析する。
+def _parse_meter_advertisement(
+    service_data: dict, manufacturer_data: dict | None = None
+) -> MeterReading | None:
+    """SwitchBot Meter / OutdoorMeter の広告パケットを解析する。
 
-    フォーマット参考: https://github.com/OpenWonderLabs/SwitchBotAPI-BLE
-    Outdoor Meter (W3400010): byte0=device_type(0x77 or 'w'),
-      byte1=status, byte2=battery, byte3-5=temp/humidity (各種版)
+    モデルにより温湿度の格納場所が異なる:
+      - Indoor Meter (T/i): Service Data の byte3-5 に温度/湿度
+      - Outdoor Meter (w, W3400010): Manufacturer Data の byte8-10 に温度/湿度
+        Service Data は device_type + battery のみ（3バイト）
+
+    Service Data フォーマット:
+      byte0=device_type ('w'=屋外, 'T'/'i'=屋内)
+      byte1=status flags, byte2=battery(下位7bit)
+
+    Manufacturer Data (Outdoor): MAC(6) + 予備(2) + temp_dec(1) + temp_int|sign(1) + humidity(1)
     """
-    raw = service_data.get(SWITCHBOT_SERVICE_UUID)
-    if not raw or len(raw) < 6:
+    sd = service_data.get(SWITCHBOT_SERVICE_UUID)
+    if not sd or len(sd) < 3:
         return None
     try:
-        # device type: byte0
-        device_type = chr(raw[0] & 0x7f)  # 0x77='w'(温湿度計), 0x54='T'(古い), etc.
+        device_type = chr(sd[0] & 0x7f)
         if device_type not in ("w", "T", "i"):
             return None
-        battery = raw[2] & 0x7f
-        # 温度: byte3 が小数, byte4 が整数（下位7bit）, 符号は byte4 上位bit
-        temp_decimal = raw[3] & 0x0f
-        temp_int = raw[4] & 0x7f
-        temp_sign = -1 if (raw[4] & 0x80) == 0 else 1
-        temperature = temp_sign * (temp_int + temp_decimal / 10.0)
-        # 湿度: byte5 下位7bit
-        humidity = raw[5] & 0x7f
-        return MeterReading(
-            timestamp=datetime.now(),
-            temperature_c=temperature,
-            humidity_pct=int(humidity),
-            battery_pct=int(battery) if 0 < battery <= 100 else None,
-        )
+        battery = sd[2] & 0x7f
+
+        # Outdoor Meter ('w'): 温湿度は Manufacturer Data に
+        if device_type == "w" and manufacturer_data:
+            md = manufacturer_data.get(SWITCHBOT_COMPANY_ID)
+            if md and len(md) >= 11:
+                temp_decimal = md[8] & 0x0f
+                temp_int = md[9] & 0x7f
+                temp_sign = -1 if (md[9] & 0x80) == 0 else 1
+                temperature = temp_sign * (temp_int + temp_decimal / 10.0)
+                humidity = md[10] & 0x7f
+                return MeterReading(
+                    timestamp=datetime.now(),
+                    temperature_c=temperature,
+                    humidity_pct=int(humidity),
+                    battery_pct=int(battery) if 0 < battery <= 100 else None,
+                )
+
+        # Indoor Meter (T/i): 温湿度は Service Data の byte3-5
+        if len(sd) >= 6:
+            temp_decimal = sd[3] & 0x0f
+            temp_int = sd[4] & 0x7f
+            temp_sign = -1 if (sd[4] & 0x80) == 0 else 1
+            temperature = temp_sign * (temp_int + temp_decimal / 10.0)
+            humidity = sd[5] & 0x7f
+            return MeterReading(
+                timestamp=datetime.now(),
+                temperature_c=temperature,
+                humidity_pct=int(humidity),
+                battery_pct=int(battery) if 0 < battery <= 100 else None,
+            )
+        return None
     except (IndexError, ValueError):
         return None
 
@@ -108,7 +136,10 @@ class SwitchBotMeterMonitor:
             nonlocal latest_reading
             if device.address.upper() != self.target_mac:
                 return
-            r = _parse_meter_advertisement(advertisement_data.service_data or {})
+            r = _parse_meter_advertisement(
+                advertisement_data.service_data or {},
+                advertisement_data.manufacturer_data or {},
+            )
             if r:
                 latest_reading = r
 

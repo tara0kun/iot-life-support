@@ -135,10 +135,34 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
             )
             return
 
-    # 炊飯器: 高電力なら確実に炊飯、それ以外は学習データを参照して自動判定を試みる
+    # 炊飯器: 高電力なら確実に炊飯、それ以外は学習データ + 蓋センサ状態を組み合わせて推定
     if name == "rice_cooker" and r.power_w < RICE_COOKING_CERTAIN_W:
         hour = datetime.now().hour
         prediction = _predict_rice_action(r.power_w, hour, lid_recent)
+
+        # 蓋が開いていないかつ、保温の学習データが1件でもあれば「保温」と推定して通知抑制
+        # 蓋を開けずに電力が動く = 炊飯器内部のヒーターサイクル → 保温で確定的
+        if prediction is None and not lid_recent:
+            from src.db import get_conn
+            try:
+                conn = get_conn()
+                kw_count = conn.execute(
+                    """SELECT COUNT(*) FROM rice_classifications
+                        WHERE classification = 'keep_warm'
+                          AND auto_decided = 0
+                          AND ABS(power_w - ?) <= ?""",
+                    (r.power_w, RICE_AUTO_POWER_WINDOW),
+                ).fetchone()[0]
+                conn.close()
+                if kw_count >= 1:
+                    prediction = ("keep_warm", 0.7)
+                    log.info(
+                        "[rice_cooker] 蓋閉+保温学習%d件 → 保温と推定（電力%.0fW）",
+                        kw_count, r.power_w,
+                    )
+            except Exception as e:
+                log.warning("保温学習チェック失敗: %s", e)
+
         if prediction:
             cls, conf = prediction
             log.info(
@@ -179,6 +203,92 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
         await _maybe_record_hair_wash()
 
 
+async def _request_session_confirmation(session_id: int) -> None:
+    """新規未確定セッションについて家族にLINEで確認を送信。
+
+    家族の選択:
+      - 祖母が食事した
+      - 祖父が食事した
+      - 母/他の家族が食事した
+      - 食事ではない（誤検知）
+    回答に応じて confirmed=1 / -1 にマークし person_id を確定する。
+    """
+    from src.notifier import broadcast_with_quick_reply, record_pending_notification
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, started_at, label, event_count FROM meal_sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return
+    label = row["label"] or "セッション"
+    started = row["started_at"]
+    if isinstance(started, str) and " " in started:
+        time_str = started.split(" ")[1][:5]
+    else:
+        time_str = str(started)
+
+    # お風呂セッションは bath_classification 系で別途確認するためスキップ
+    if label == "お風呂":
+        return
+
+    msg = (
+        f"🍱 {time_str}頃 「{label}」の動きをセンサーが検知しました\n"
+        f"（{row['event_count']}回の動き）\n\n"
+        "誰の食事ですか？"
+    )
+    items = [
+        {"label": "祖母さん", "data": f"sess_confirm:{session_id}:1"},
+        {"label": "祖父さん", "data": f"sess_confirm:{session_id}:3"},
+        {"label": "母さん", "data": f"sess_confirm:{session_id}:2"},
+        {"label": "他の家族", "data": f"sess_confirm:{session_id}:other"},
+        {"label": "食事じゃない", "data": f"sess_confirm:{session_id}:reject"},
+    ]
+    try:
+        sent = await asyncio.to_thread(broadcast_with_quick_reply, msg, items)
+        if sent > 0:
+            await asyncio.to_thread(
+                record_pending_notification,
+                "session_confirm", f"session_{session_id}", msg, items,
+            )
+            log.info("[session_confirm] 確認送信 sid=%d", session_id)
+    except Exception as e:
+        log.warning("セッション確認LINE送信失敗: %s", e)
+
+
+async def _request_lock_confirmation(meal_count: int, minutes_ago: int) -> None:
+    """炊飯器ロック実行前に家族にLINEで確認を取る（誤検知防止）。
+
+    家族の [はい] 押下で実際にロック実行、[いいえ] でスキップ。
+    """
+    from src.notifier import broadcast_with_quick_reply, record_pending_notification
+    from datetime import datetime as _dt
+    now = _dt.now()
+    ctx = now.strftime("%Y-%m-%d_%H%M_lockreq")
+    msg = (
+        f"🍚 祖母さんが本日{meal_count}回目の食事を検知しました\n"
+        f"前回の食事から {minutes_ago} 分経過\n\n"
+        "炊飯器をロックしますか？"
+    )
+    items = [
+        {"label": "ロックする", "data": f"lock_confirm:{ctx}:yes"},
+        {"label": "ロックしない", "data": f"lock_confirm:{ctx}:no"},
+    ]
+    try:
+        sent = await asyncio.to_thread(broadcast_with_quick_reply, msg, items)
+        if sent > 0:
+            await asyncio.to_thread(
+                record_pending_notification,
+                "lock_confirm", ctx, msg, items,
+            )
+            log.info("[lock_confirm] 確認送信 ctx=%s", ctx)
+    except Exception as e:
+        log.warning("ロック確認LINE送信失敗: %s", e)
+
+
 async def _ask_rice_action_classification(event_id: int, power_w: float) -> None:
     """炊飯器の曖昧な電力検知時、家族にLINE Quick Replyで分類を仰ぐ。
 
@@ -209,7 +319,8 @@ async def _ask_rice_action_classification(event_id: int, power_w: float) -> None
     items = [
         {"label": "炊飯", "data": f"rice_action:{event_id}:cook"},
         {"label": "保温", "data": f"rice_action:{event_id}:keep_warm"},
-        {"label": "蓋開のみ", "data": f"rice_action:{event_id}:lid_only"},
+        {"label": "蓋を開けただけ", "data": f"rice_action:{event_id}:lid_only"},
+        {"label": "開けてご飯食べた", "data": f"rice_action:{event_id}:lid_meal"},
         {"label": "不明", "data": f"rice_action:{event_id}:unknown"},
     ]
     try:
@@ -302,9 +413,10 @@ async def _maybe_record_hair_wash() -> None:
 
 
 _bath_monitor: BathMonitor | None = None
+_bath_detector = None  # BathDetector instance（後で初期化）
 
 # T110のエイリアスで設置場所を判定（Tapoアプリでリネームする想定）
-BATH_DOOR_ALIASES = {"浴室ドア", "bath_door", "風呂ドア"}
+BATH_DOOR_ALIASES = {"浴室ドア", "bath_door", "風呂ドア", "風呂"}
 BATH_MOTION_ALIASES = {"脱衣所", "bath_motion", "脱衣所モーション"}
 RICE_COOKER_LID_ALIASES = {"炊飯器", "炊飯器の蓋", "rice_cooker_lid", "Rice Cooker"}
 FRIDGE_ALIASES = {"冷蔵庫", "fridge", "Refrigerator"}
@@ -340,13 +452,16 @@ def _alias_to_source(alias: str) -> str:
 
 async def on_contact_change(event: ContactEvent) -> None:
     import time
+    from datetime import datetime as _dt
     alias = event.alias
-    # 浴室ドアセンサーの場合 → BathMonitor に委譲
+    # 浴室ドアセンサーの場合 → BathMonitor + BathDetector に通知
     if alias in BATH_DOOR_ALIASES and _bath_monitor:
         if event.is_open:
             await _bath_monitor.door_opened()
         else:
             await _bath_monitor.door_closed()
+    if alias in BATH_DOOR_ALIASES and _bath_detector is not None:
+        _bath_detector.feed_door(event.is_open, _dt.now())
 
     source = _alias_to_source(alias)
 
@@ -365,9 +480,12 @@ async def on_contact_change(event: ContactEvent) -> None:
 
 async def on_motion_detected(event: ContactEvent) -> None:
     """T100モーションセンサー: 脱衣所など各設置場所の動き検知。"""
+    from datetime import datetime as _dt
     alias = event.alias
     if alias in BATH_MOTION_ALIASES and _bath_monitor:
         await _bath_monitor.motion_detected()
+    if alias in BATH_MOTION_ALIASES and _bath_detector is not None:
+        _bath_detector.feed_motion(_dt.now())
     source = _alias_to_source(alias) if alias in BATH_MOTION_ALIASES else alias
     # 直近のカメラ識別人物を帰属候補に（脱衣所/トイレ等の動きは祖母であることが多いが念のため）
     inferred_pid = get_active_person()
@@ -483,10 +601,18 @@ async def _dryer_reminder_loop():
     """入浴終了後30分経ってもドライヤー使用が無い場合、家族に確認通知。
 
     1日1回のみ通知（重複防止）。
+    HAIR_DRYER_NODE_ID が未設定（=0）の場合、そもそもドライヤー使用を検知できないので
+    このループは起動しない（必ず誤発火する＝オオカミ少年通知になるため）。
     """
     from datetime import datetime, timedelta
     from src.db import get_conn
     from src.notifier import send_actionable_notification
+
+    # ドライヤー監視が無効ならスキップ
+    env = _load_env()
+    if env.get("HAIR_DRYER_NODE_ID", "0") == "0":
+        log.info("HAIR_DRYER_NODE_ID 未設定 → ドライヤーリマインドループは起動しない")
+        return
 
     notified_today: set[str] = set()  # date string
     while True:
@@ -632,14 +758,22 @@ async def _notify_unattributed_sessions(notified_session_ids: set[int]) -> None:
 async def session_aggregator(interval: int = 60) -> None:
     prev_session_count: int | None = None
     notified_session_ids: set[int] = set()
+    confirm_asked_ids: set[int] = set()
 
     while True:
         await asyncio.sleep(interval)
         try:
-            created = aggregate_sessions()
-            if not created:
+            created_ids = aggregate_sessions()
+            if not created_ids:
                 continue
-            log.info("セッション集約: %d 件作成", created)
+            log.info("セッション集約: %d 件作成（未確定）", len(created_ids))
+
+            # 各新規セッションに対してLINEで確認を送信
+            for sid in created_ids:
+                if sid in confirm_asked_ids:
+                    continue
+                confirm_asked_ids.add(sid)
+                await _request_session_confirmation(sid)
 
             # 未確定セッション(person_id=0)を検出して家族にLINE Quick Reply通知
             await _notify_unattributed_sessions(notified_session_ids)
@@ -665,15 +799,15 @@ async def session_aggregator(interval: int = 60) -> None:
                     log.warning("祖母の食事回数が%d回に到達 → LINE通知", current_count)
                     await asyncio.to_thread(notify_meal_alert, "祖母", current_count, last_time_str)
 
-                # Layer 2: 炊飯器を自動ロック（次の使用を防止）
+                # Layer 2: 炊飯器ロックは家族確認後に実行（誤検知防止）
                 if current_count >= 2:
                     warning = should_warn_recent_meal(GRANDMA_ID)
                     if warning:
-                        log.info("直近食事あり(%s分前) → 炊飯器ロック", warning["minutes_ago"])
-                        locked = await lock_device("rice_cooker", RICE_COOKER_NODE_ID,
-                                                   reason=f"本日{current_count}回目の食事検知")
-                        if locked:
-                            await asyncio.to_thread(notify_device_locked, "rice_cooker")
+                        log.info(
+                            "直近食事あり(%s分前) → ロック確認をLINEに送信",
+                            warning["minutes_ago"],
+                        )
+                        await _request_lock_confirmation(current_count, warning["minutes_ago"])
 
             prev_session_count = current_count
 
@@ -748,7 +882,57 @@ async def main() -> None:
     if sb_enabled and sb_mac:
         from src.sensors.switchbot_meter import SwitchBotMeterMonitor, MeterReading
         from src.bath_humidity_detector import BathHumidityDetector
+        from src.bath_detector import BathDetector, BathCandidate
+        from src.db import DB_PATH
         _humidity_detector = BathHumidityDetector()
+
+        async def _on_bath_candidate(c: "BathCandidate", record_id: int) -> None:
+            """お風呂利用候補検知時、家族にLINE Quick Replyで誰か聞く（学習データ収集）。"""
+            from src.notifier import broadcast_with_quick_reply, record_pending_notification
+            door_hint = "ドア閉" if c.door_was_closed else "ドア開"
+            motion_hint = f"脱衣所モーション{c.motion_count}回" if c.motion_count else "モーション無"
+            active = ""
+            if c.active_person_id:
+                conn = get_conn()
+                try:
+                    row = conn.execute(
+                        "SELECT name FROM persons WHERE id = ?", (c.active_person_id,)
+                    ).fetchone()
+                    if row:
+                        active = f" / カメラ識別: {row['name']}"
+                finally:
+                    conn.close()
+            msg = (
+                f"🛁 浴室で湿度上昇を検知（湿度 {c.humidity_baseline:.0f}→{c.humidity_peak:.0f}%, "
+                f"温度+{c.temperature_delta:.1f}℃, {door_hint}, {motion_hint}{active}）\n\n"
+                "誰がお風呂に入っていますか？"
+            )
+            items = [
+                {"label": "祖母", "data": f"bath_cls:{record_id}:grandma"},
+                {"label": "祖父", "data": f"bath_cls:{record_id}:grandpa"},
+                {"label": "母", "data": f"bath_cls:{record_id}:mother"},
+                {"label": "他", "data": f"bath_cls:{record_id}:other"},
+                {"label": "湯はり中", "data": f"bath_cls:{record_id}:yu_filling"},
+                {"label": "清掃", "data": f"bath_cls:{record_id}:cleaning"},
+                {"label": "誰もいない", "data": f"bath_cls:{record_id}:no_one"},
+            ]
+            try:
+                sent = await asyncio.to_thread(broadcast_with_quick_reply, msg, items)
+                if sent > 0:
+                    await asyncio.to_thread(
+                        record_pending_notification,
+                        "bath_classification", f"bath_{record_id}", msg, items,
+                    )
+            except Exception as e:
+                log.warning("bath_classification 通知失敗: %s", e)
+
+        global _bath_detector
+        _bath_detector = BathDetector(
+            db_path=str(DB_PATH),
+            on_candidate=_on_bath_candidate,
+            get_active_person_fn=get_active_person,
+        )
+        log.info("BathDetector 初期化（学習データ収集モード）")
 
         async def _on_meter_reading(r: "MeterReading") -> None:
             await event_bus.record_event(
@@ -756,6 +940,14 @@ async def main() -> None:
                 event_type="reading",
                 value=float(r.humidity_pct),
             )
+            # bath_detector に湿度・温度を供給（候補検知時はLINE通知へ）
+            try:
+                await _bath_detector.feed_humidity(
+                    float(r.humidity_pct), float(r.temperature_c), r.timestamp
+                )
+            except Exception as e:
+                log.warning("bath_detector feed失敗: %s", e)
+
             events_out = _humidity_detector.feed(r.humidity_pct, r.temperature_c, r.timestamp)
             for ev_type, payload in events_out:
                 await event_bus.record_event(
@@ -823,9 +1015,10 @@ async def main() -> None:
                 poll_interval=float(env.get("POLL_INTERVAL", "5")),
             ),
             on_change=on_contact_change,
+            on_motion=on_motion_detected,
         )
         tasks.append(asyncio.create_task(contact.run()))
-        log.info("T110開閉センサー監視を開始")
+        log.info("T110/T100センサー監視を開始")
 
     # C220 カメラ + 顔認識
     camera_ip = env.get("CAMERA_IP", "")

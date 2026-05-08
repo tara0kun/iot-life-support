@@ -145,6 +145,35 @@
   .garden-row-label { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
   .garden-row-label span { font-size: 12px; color: #558B2F; font-weight: 500; }
 
+  /* 「できた」確認モーダル: 押し間違い防止のため二段確認 */
+  .confirm-modal-bg {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55); z-index: 9999;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  .confirm-modal-bg.show { display: flex; }
+  .confirm-modal {
+    background: white; border-radius: 24px; max-width: 560px; width: 100%;
+    padding: 32px 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+    text-align: center;
+  }
+  .confirm-title { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+  .confirm-activity { font-size: 32px; font-weight: 800; color: var(--primary); margin: 16px 0; }
+  .confirm-question { font-size: 18px; color: var(--text-muted); margin-bottom: 24px; }
+  .confirm-buttons {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  }
+  .confirm-btn {
+    padding: 22px 12px; border: 3px solid; border-radius: 18px;
+    font-size: 22px; font-weight: 800; cursor: pointer;
+    font-family: inherit; transition: all 0.2s;
+    min-height: 80px;
+  }
+  .confirm-btn.yes { border-color: var(--success); background: #E8F8F0; color: #1B5E20; }
+  .confirm-btn.yes:active { background: var(--success); color: white; }
+  .confirm-btn.no { border-color: #B0BEC5; background: #F5F5F5; color: #455A64; }
+  .confirm-btn.no:active { background: #B0BEC5; color: white; }
+
   /* できたボタン（タッチ領域は確保、狭セルでもはみ出さない） */
   .stamp-btn {
     margin-top: 8px; padding: 10px 8px; border: 2px solid var(--success); border-radius: 12px;
@@ -346,6 +375,30 @@
     <div class="flower-sub" id="flowerSub"></div>
   </div>
 
+  <!-- 今日の食事写真（祖母が自分の食事を見て思い出すため） -->
+  {% if meal_photos_today and meal_photos_today | length > 0 %}
+  <div class="card" style="background:linear-gradient(180deg,#FFF8E1 0%, #FFECB3 100%);">
+    <div class="card-label" style="color:#E65100;">今日 食べたごはん</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:10px;">
+      {% for p in meal_photos_today %}
+      <div style="background:white;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+        <img src="/photos/{{ p.file_name }}" alt="{{ p.label }}" style="width:100%;aspect-ratio:1/1;object-fit:cover;display:block;">
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="font-size:16px;font-weight:700;color:#37474F;">{{ p.label or "ごはん" }}</div>
+          <div style="font-size:13px;color:#90A4AE;margin-top:2px;">
+            {% if p.taken_at and ' ' in (p.taken_at | string) %}
+              {{ (p.taken_at | string).split(' ')[1][:5] }}
+            {% else %}
+              {{ p.taken_at }}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- スタンプカード -->
   <div class="card">
     <div class="card-label">今日の 記録</div>
@@ -368,6 +421,19 @@
 
   <!-- 検証アラート（ボタン押下時に表示） -->
   <div id="verify-alert-area"></div>
+
+  <!-- 「できた」確認モーダル: 押し間違い対策で二段確認 -->
+  <div id="confirm-modal-bg" class="confirm-modal-bg" role="dialog" aria-modal="true">
+    <div class="confirm-modal">
+      <div class="confirm-title">本当にしましたか？</div>
+      <div class="confirm-activity" id="confirm-activity-name">―</div>
+      <div class="confirm-question">押し間違えていない？</div>
+      <div class="confirm-buttons">
+        <button class="confirm-btn no" onclick="cancelTabletRecord()">いいえ<br>まだです</button>
+        <button class="confirm-btn yes" onclick="confirmTabletRecord()">はい<br>できました</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 私の庭 -->
   <div class="card garden-card">
@@ -968,13 +1034,48 @@ async function dismissPrompt(id, btn) {
   } catch(e) {}
 }
 
-// 祖母「できた」ボタン処理 — 4ケース対応
+// 「できた」ボタン押下: まず確認モーダルを開く（押し間違い防止）
+let _pendingActivity = null;
+let _pendingBtn = null;
+function tabletRecord(activity, btn) {
+  _pendingActivity = activity;
+  _pendingBtn = btn;
+  document.getElementById('confirm-activity-name').textContent = activity;
+  document.getElementById('confirm-modal-bg').classList.add('show');
+  if (window.speak) window.speak(`${activity} を本当にしましたか？`, { rate: 0.85 });
+}
+
+function cancelTabletRecord() {
+  document.getElementById('confirm-modal-bg').classList.remove('show');
+  // 「いいえ、まだです」 → 記録せず終了。優しいメッセージで誤押下を肯定的にカバー
+  const area = document.getElementById('verify-alert-area');
+  if (area) {
+    area.innerHTML = `<div class="verify-alert" style="background:#F1F8E9;border:2px solid #AED581;">
+      <div class="va-title" style="color:#33691E;">わかりました、ゆっくりで大丈夫です</div>
+      <div class="va-sub" style="color:#558B2F;">できたら、もう一度押してくださいね</div>
+    </div>`;
+    setTimeout(() => { area.innerHTML = ''; }, 8000);
+  }
+  if (window.speak) window.speak("わかりました、ゆっくりで大丈夫です。できたらもう一度押してくださいね。", { rate: 0.85 });
+  _pendingActivity = null;
+  _pendingBtn = null;
+}
+
+async function confirmTabletRecord() {
+  document.getElementById('confirm-modal-bg').classList.remove('show');
+  if (!_pendingActivity || !_pendingBtn) return;
+  await _doRecordSubmit(_pendingActivity, _pendingBtn);
+  _pendingActivity = null;
+  _pendingBtn = null;
+}
+
+// 実際の記録処理 — 4ケース対応
 // A. sensor_confirmed     → ✓ + 「ありがとう、記録しました」音声
 // B. already_done_old     → 「もうすでに○○できてますよ HH:MMに」表示+音声、記録しない
 // C. no_sensor_data       → 「センサーが感知していません 家族に聞いてください」表示+音声
 // D. no_sensor (薬/就寝)  → 「家族に伝えてください」表示+音声
 // cooldown                → ボタンに ✓ を一時表示するだけ
-async function tabletRecord(activity, btn) {
+async function _doRecordSubmit(activity, btn) {
   btn.disabled = true;
   btn.textContent = '確認中...';
   try {
