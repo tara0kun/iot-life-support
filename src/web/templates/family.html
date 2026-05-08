@@ -453,6 +453,17 @@
     </div>
   </div>
 
+  <!-- 学習状況（システムがどれくらい学習したか） -->
+  <details class="section-card" style="padding:0;overflow:hidden;">
+    <summary style="cursor:pointer;padding:16px;font-weight:600;font-size:1.05em;">
+      📚 システムの学習状況
+      <span style="font-size:0.8em;color:#999;margin-left:8px;">▼ 開く</span>
+    </summary>
+    <div style="padding:0 16px 16px;" id="learning-stats-content">
+      <div style="font-size:13px;color:#666;">読み込み中...</div>
+    </div>
+  </details>
+
   <!-- 7日間アクティビティ（項目別タブ） -->
   <div class="section-card">
     <div class="section-title">7日間の活動記録</div>
@@ -977,6 +988,86 @@ function renderHeatmapTable() {
   });
   table.appendChild(tbody);
 }
+
+async function loadLearningStats() {
+  try {
+    const resp = await fetch('/api/learning-stats', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const el = document.getElementById('learning-stats-content');
+    if (!el) return;
+
+    // 炊飯器分類
+    const riceRows = [];
+    const labels = {cook: '炊飯', keep_warm: '保温', lid_only: '蓋だけ', lid_meal: '蓋+食事', unknown: '不明'};
+    for (const [cls, cnt] of Object.entries(data.rice.manual)) {
+      riceRows.push(`<tr><td>${labels[cls] || cls}</td><td>${cnt}</td><td>${data.rice.auto[cls] || 0}</td></tr>`);
+    }
+
+    // 通知応答
+    const notifRows = data.notifications.map(n => {
+      const dismissedRate = n.completed > 0 ? Math.round(100 * n.dismissed / n.completed) : 0;
+      return `<tr>
+        <td>${n.notification_type}</td>
+        <td>${n.total}</td>
+        <td>${n.completed}</td>
+        <td>${n.dismissed} (${dismissedRate}%)</td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="font-size:13px;color:#666;margin-bottom:12px;">
+        家族の判断がどれくらい蓄積されているか、システムが何回自動判定したかを表示します。
+      </div>
+
+      <div style="background:#FFF8E1;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#E65100;margin-bottom:6px;">🍚 炊飯器の動作分類</div>
+        <table style="width:100%;font-size:13px;">
+          <thead><tr style="background:#FFE0B2;"><th style="padding:4px;">分類</th><th>家族手動</th><th>自動判定</th></tr></thead>
+          <tbody>${riceRows.join('')}</tbody>
+        </table>
+        <div style="font-size:11px;color:#666;margin-top:6px;">
+          家族手動: ${data.rice.total_manual}件 / システム自動: ${data.rice.total_auto}件
+          ${data.rice.total_manual >= 3 ? ' ✅ 自動判定有効化中' : ' ⚠️ 学習データ蓄積中（3件以上で自動化）'}
+        </div>
+      </div>
+
+      <div style="background:#E1F5FE;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#01579B;margin-bottom:6px;">🛁 お風呂の利用判定</div>
+        <div style="font-size:13px;">
+          検知件数: <strong>${data.bath.total}</strong> 件 |
+          家族確認済: <strong>${data.bath.confirmed}</strong> 件 |
+          未確認: <strong>${data.bath.pending}</strong> 件
+        </div>
+      </div>
+
+      <div style="background:#F3E5F5;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#4A148C;margin-bottom:6px;">🍱 食事/活動セッション</div>
+        <div style="font-size:13px;">
+          確認済: <strong>${data.sessions.confirmed}</strong> 件 |
+          未確認: <strong>${data.sessions.pending}</strong> 件 |
+          誤検知扱い: <strong>${data.sessions.rejected}</strong> 件
+        </div>
+      </div>
+
+      <div style="background:#F5F5F5;padding:12px;border-radius:8px;">
+        <div style="font-weight:700;margin-bottom:6px;">📨 通知への応答</div>
+        <table style="width:100%;font-size:12px;">
+          <thead><tr><th style="text-align:left;">通知種類</th><th>合計</th><th>応答済</th><th>誤検知扱い</th></tr></thead>
+          <tbody>${notifRows}</tbody>
+        </table>
+      </div>
+    `;
+  } catch(e) {
+    console.error('learning stats error', e);
+  }
+}
+window.addEventListener('DOMContentLoaded', () => {
+  // details が開かれた時に読み込む（初回展開のみ）
+  const details = document.querySelector('details');  // 一旦最初の details で代替
+  // 簡易版: 常に裏で読み込んでおく
+  loadLearningStats();
+});
 
 async function loadHeatmap() {
   try {

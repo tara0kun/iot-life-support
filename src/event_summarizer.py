@@ -142,9 +142,16 @@ def summarize_events(events: list[dict], persons_by_id: dict[int, str] | None = 
                 start_ts = _to_dt(opener.get("started_at")) or ts
                 duration_sec = int((ts - start_ts).total_seconds())
                 icon, base_label = PAIR_SOURCES[source]
+                # トイレ・冷蔵庫: 10秒未満は通り過ぎ／確認だけと判断してサマリ非表示
+                if source in ("toilet_door", "fridge") and duration_sec < 10:
+                    continue
+                # トイレ: 5分以上は長時間滞在として警告ラベル
+                label = f"{base_label}使用"
+                if source == "toilet_door" and duration_sec >= 5 * 60:
+                    label = f"⚠️ {base_label}に長時間滞在"
                 a = _Activity(
                     icon=icon,
-                    label=f"{base_label}使用",
+                    label=label,
                     started_at=start_ts,
                     ended_at=ts,
                     person_id=person_id or opener.get("person_id"),

@@ -36,7 +36,34 @@ CRITICAL_CATEGORIES: set[str] = {
     "anomaly_fridge_open",   # 冷蔵庫開きっぱなし
     "meal_alert",            # 食べすぎアラート
     "device_locked",         # 自動ロック / 手動ロック
+    "long_toilet_stay",      # トイレに長時間（5分以上）滞在
 }
+
+# 深夜帯（1〜5時）でも通知を許可するカテゴリ（トイレ・緊急のみ）
+NIGHT_ALLOWED_CATEGORIES: set[str] = {
+    "bath_emergency",        # 緊急: 浴室で動きなし
+    "anomaly_inactivity",    # 緊急: センサー無反応
+    "anomaly_night_rice",    # 深夜炊飯は本来通知すべき異常
+    "long_toilet_stay",      # トイレ長時間滞在は深夜でも通知（転倒等のリスク）
+}
+
+NIGHT_QUIET_START_HOUR = 1   # 1:00〜
+NIGHT_QUIET_END_HOUR = 5     # 5:00 までの通知を抑制
+
+
+def _is_night_quiet_hours() -> bool:
+    """現在時刻が夜間通知抑制時間帯（1:00〜5:00）か判定。"""
+    h = datetime.now().hour
+    return NIGHT_QUIET_START_HOUR <= h < NIGHT_QUIET_END_HOUR
+
+
+def _should_suppress_for_night(category: str) -> bool:
+    """深夜帯で抑制対象か。緊急系・トイレ関連は通す。"""
+    if not _is_night_quiet_hours():
+        return False
+    if category in NIGHT_ALLOWED_CATEGORIES:
+        return False
+    return True
 
 
 def is_critical_category(category: str) -> bool:
@@ -358,6 +385,12 @@ def send_actionable_notification(category: str, context_key: str, message: str,
       extra_items: 追加したいQuick Replyボタン
       default_choices: True なら「了解」「対応不要」の標準2択を入れる。False なら extra_items のみ
     """
+    # 深夜帯（1〜5時）の通知抑制（緊急系・深夜異常検知のみ通す）
+    if _should_suppress_for_night(category):
+        log.info("[notify] 深夜帯のため抑制: category=%s", category)
+        # pending には記録しない（再通知ループに乗らないように）
+        return 0
+
     items: list[dict] = []
     if default_choices:
         items = [

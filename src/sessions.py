@@ -127,8 +127,8 @@ def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
 
     炊飯器/IH の単独 power_on は、蓋開イベントが同セッション内にない限り
     食事として認めない（保温パルス・蓋開時の温度補正反応を除外）。
-    蓋センサー未設置時は「蓋開イベントが永遠に来ない」ため、結果として
-    炊飯器単独の検知は食事として集約されない（ユーザー要望通り）。
+    bath_motion / bathroom_meter は単独では食事の判定材料に含めない
+    （脱衣所モーションが多発してメガクラスターになる問題対策）。
     """
     sources = {e.source for e in events}
 
@@ -152,12 +152,32 @@ def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
             # 他センサーゼロ → 食事ではない（保温パルス・蓋開反応・炊飯中）
             return False
 
-    # 複数センサー（カメラ除く 2件以上）→ 食事
-    if len(sources - {"camera"}) >= 2:
+    # 食事の判定材料から除外するソース:
+    #   - bath_motion: 脱衣所モーション、頻発するため単独では食事と関係ない
+    #   - bathroom_meter: 湿度センサー、定期受信のためノイズ
+    #   - toilet_door: トイレは食事と無関係
+    # これらが含まれていても、他の食事関連ソースと併発しなければ食事ではない
+    food_relevant_sources = sources - {"camera", "bath_motion", "bathroom_meter", "toilet_door"}
+
+    # 時間帯チェック: 深夜(22-5時)は「炊飯器の蓋開」必須で誤検知を厳しく抑制
+    first_ts = min((e.started_at for e in events if e.started_at), default=None)
+    is_late_night = first_ts is not None and (first_ts.hour >= 22 or first_ts.hour < 5)
+    if is_late_night and not _has_rice_lid_open(events):
+        # 深夜は冷蔵庫の水分補給などが多いので、蓋開がない限り食事と認めない
+        return False
+
+    # 蓋開センサー（rice_cooker_lid）が含まれて、かつ他の食事関連ソースもある → 食事
+    if "rice_cooker_lid" in food_relevant_sources and len(food_relevant_sources) >= 2:
         return True
-    # 冷蔵庫複数回 → 食事
-    if sources == {"fridge"} and len(events) >= 2:
+
+    # 蓋開がない場合: 食事関連ソース3種類以上を要求（厳しめ）
+    # 例: 冷蔵庫 + 炊飯器電力 + 何か = 食事候補（ただし蓋開がないと弱い）
+    if len(food_relevant_sources) >= 3:
         return True
+
+    # 冷蔵庫単独や 2種類だけ（蓋開なし）は食事として認めない
+    # （ユーザー要望: 冷蔵庫だけで食事判定しない）
+
     # カメラ単独 → 滞在時間で判定
     if sources == {"camera"}:
         total = 0.0
