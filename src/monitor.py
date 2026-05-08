@@ -203,6 +203,29 @@ async def on_plug_start(name: str, r: PlugReading) -> None:
         await _maybe_record_hair_wash()
 
 
+async def _request_long_toilet_alert(duration_sec: float) -> None:
+    """トイレに長時間滞在 → 家族に確認LINE。
+
+    認知症の祖母が転倒等で動けなくなっている可能性があるため、家族に状況確認を促す。
+    """
+    from datetime import datetime as _dt
+    from src.notifier import send_actionable_notification
+    minutes = int(duration_sec / 60)
+    ctx = _dt.now().strftime("%Y-%m-%d_%H%M_long_toilet")
+    msg = (
+        f"⚠️ トイレに {minutes} 分以上滞在しています\n"
+        f"時刻: {_dt.now().strftime('%H:%M')}\n\n"
+        "祖母さんが転倒等で動けなくなっていないか、確認してあげてください。"
+    )
+    try:
+        await asyncio.to_thread(
+            send_actionable_notification, "long_toilet_stay", ctx, msg
+        )
+        log.warning("[toilet] 長時間滞在アラート: %d分", minutes)
+    except Exception as e:
+        log.warning("長時間トイレアラート送信失敗: %s", e)
+
+
 async def _request_session_confirmation(session_id: int) -> None:
     """新規未確定セッションについて家族にLINEで確認を送信。
 
@@ -298,16 +321,31 @@ async def _ask_rice_action_classification(event_id: int, power_w: float) -> None
     """
     from src.db import get_conn
     from src.notifier import broadcast_with_quick_reply, record_pending_notification
-    # 蓋センサー稼働確認（過去24時間に rice_cooker_lid イベントが1件以上あるか）
+    # 蓋センサー稼働確認 + 直近の蓋開検知必須化
+    # 「蓋が開いていない」 = 保温/ヒーター応答 = 食事の可能性ゼロなので問い合わせも発火させない
+    # （これまで保温パルスのたびに問い合わせが来ていた問題の根本治癒）
     conn = get_conn()
     try:
         lid_active = conn.execute(
             "SELECT 1 FROM events WHERE source='rice_cooker_lid' AND started_at >= datetime('now','-24 hours') LIMIT 1"
         ).fetchone() is not None
+        # 直近10分以内に蓋が開いた形跡があるか
+        lid_recent_open = conn.execute(
+            """SELECT 1 FROM events
+                WHERE source='rice_cooker_lid' AND event_type='open'
+                  AND started_at >= datetime('now', '-10 minutes')
+                LIMIT 1"""
+        ).fetchone() is not None
     finally:
         conn.close()
     if not lid_active:
         log.info("[rice_cooker] 蓋センサー未稼働 → 分類問い合わせを抑制")
+        return
+    if not lid_recent_open:
+        log.info(
+            "[rice_cooker] 直近10分に蓋開なし(%.0fW) → 保温/ヒーター応答とみなし問い合わせ抑制",
+            power_w,
+        )
         return
 
     now_str = datetime.now().strftime("%H:%M")
@@ -428,6 +466,11 @@ SHAMPOO_ALIASES = {"シャンプー", "シャンプーボトル", "shampoo", "sh
 LID_OPEN_SUPPRESS_SECONDS = 30
 _recent_lid_opens: dict[str, float] = {}  # device_name -> last_open_unix_time
 
+# トイレ滞在時間の判定（秒）
+TOILET_SHORT_PASS_SECONDS = 10      # 10秒未満は「通り過ぎ」扱い（サマリでは表示するが、アラートは出さない）
+TOILET_LONG_STAY_SECONDS = 5 * 60   # 5分以上で長時間滞在アラート
+_recent_toilet_opens: dict[str, float] = {}  # 'last' -> open unix time
+
 
 def _alias_to_source(alias: str) -> str:
     """T110/T100のエイリアスから内部ソース名へ変換。"""
@@ -469,6 +512,10 @@ async def on_contact_change(event: ContactEvent) -> None:
     if source == "rice_cooker_lid" and event.is_open:
         _recent_lid_opens["rice_cooker_lid"] = time.time()
 
+    # トイレドアの open 時刻を保持（close 時に滞在時間を計算）
+    if source == "toilet_door" and event.is_open:
+        _recent_toilet_opens["last"] = time.time()
+
     # 直近のカメラ識別人物を帰属候補に
     inferred_pid = get_active_person()
     await event_bus.record_event(
@@ -476,6 +523,14 @@ async def on_contact_change(event: ContactEvent) -> None:
         event_type="open" if event.is_open else "close",
         person_id=inferred_pid,
     )
+
+    # トイレ close 時: 滞在時間を計算して長時間ならアラート
+    if source == "toilet_door" and not event.is_open:
+        last_open = _recent_toilet_opens.get("last", 0.0)
+        if last_open:
+            duration_sec = time.time() - last_open
+            if duration_sec >= TOILET_LONG_STAY_SECONDS:
+                await _request_long_toilet_alert(duration_sec)
 
 
 async def on_motion_detected(event: ContactEvent) -> None:
@@ -516,17 +571,41 @@ def _record_camera_identification(person_id: int, name: str) -> None:
 
 
 def get_active_person() -> int | None:
-    """直近 ACTIVE_PERSON_WINDOW_MIN 分以内にカメラで識別された人物の person_id を返す。
+    """直近にカメラで識別された人物の person_id を返す（時間相関を考慮）。
 
-    複数人いる場合は「最後にカメラに映った人」を返す。
+    時間重み付け方式:
+      - 直近2分以内の識別 → 信頼度高
+      - 2-5分前の識別 → 中
+      - 5-15分前 → 低（最新一致のみ採用）
+      - 15分超 → None
+    複数の人物が混在する場合は出現回数も考慮した重み付けスコアで決定。
     識別ログがなければ None（→ センサー帰属できず NULL のまま）。
     """
     import time
-    cutoff = time.time() - ACTIVE_PERSON_WINDOW_MIN * 60
+    now = time.time()
+    cutoff = now - ACTIVE_PERSON_WINDOW_MIN * 60
     recent = [r for r in _camera_identification_log if r[0] >= cutoff]
     if not recent:
         return None
-    return recent[-1][1]   # 最新エントリの person_id
+
+    # 直近2分以内に識別されている人がいれば優先（高信頼度）
+    very_recent = [r for r in recent if r[0] >= now - 120]
+    if very_recent:
+        # 直近2分の中で最新の識別を採用
+        return very_recent[-1][1]
+
+    # 各 person_id の重み付けスコアを計算（新しいほど重み大）
+    # 重み = 1 - (経過秒数 / window_seconds) の単純な減衰
+    scores: dict[int, float] = {}
+    window = ACTIVE_PERSON_WINDOW_MIN * 60
+    for ts, pid, _name in recent:
+        weight = max(0.0, 1.0 - (now - ts) / window)
+        scores[pid] = scores.get(pid, 0.0) + weight
+
+    if not scores:
+        return None
+    # 最大スコアの person_id を返す
+    return max(scores.items(), key=lambda x: x[1])[0]
 
 
 async def on_person_detected(frame: CameraFrame) -> None:

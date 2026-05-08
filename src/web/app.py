@@ -1500,6 +1500,88 @@ async def family_weekly_report(request: Request):
     })
 
 
+@app.get("/api/learning-stats")
+async def api_learning_stats(request: Request):
+    """学習データの蓄積状況を返す（家族UIで可視化）。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    conn = get_conn()
+    try:
+        # 炊飯器分類: 家族手動と自動判定の比率、分類内訳
+        rice_rows = conn.execute(
+            """SELECT classification, auto_decided, COUNT(*) as cnt
+                 FROM rice_classifications
+                GROUP BY classification, auto_decided"""
+        ).fetchall()
+        rice_summary = {
+            "manual": {},  # 家族手動分類
+            "auto": {},    # システム自動分類
+            "total_manual": 0,
+            "total_auto": 0,
+        }
+        for r in rice_rows:
+            cls = r["classification"]
+            cnt = r["cnt"]
+            if r["auto_decided"]:
+                rice_summary["auto"][cls] = cnt
+                rice_summary["total_auto"] += cnt
+            else:
+                rice_summary["manual"][cls] = cnt
+                rice_summary["total_manual"] += cnt
+
+        # お風呂分類: 確認済み件数
+        bath_rows = conn.execute(
+            """SELECT confirmed_kind, confirmation_method, COUNT(*) as cnt
+                 FROM bath_classifications
+                GROUP BY confirmed_kind, confirmation_method"""
+        ).fetchall()
+        bath_total = sum(r["cnt"] for r in bath_rows)
+        bath_confirmed = sum(r["cnt"] for r in bath_rows if r["confirmation_method"] == "line_reply")
+        bath_pending = sum(r["cnt"] for r in bath_rows if r["confirmation_method"] is None)
+
+        # セッション分類: 確認済み / 未確認 / 却下
+        session_rows = conn.execute(
+            """SELECT confirmed, COUNT(*) as cnt FROM meal_sessions GROUP BY confirmed"""
+        ).fetchall()
+        sess_summary = {
+            "confirmed": 0,    # 1: 家族確認済
+            "pending": 0,      # 0: 未確認
+            "rejected": 0,     # -1: 誤検知
+        }
+        for r in session_rows:
+            c = r["confirmed"]
+            if c == 1:
+                sess_summary["confirmed"] = r["cnt"]
+            elif c == 0:
+                sess_summary["pending"] = r["cnt"]
+            elif c == -1:
+                sess_summary["rejected"] = r["cnt"]
+
+        # 通知応答統計: confirm 完了済の action 内訳
+        notif_rows = conn.execute(
+            """SELECT notification_type,
+                      COUNT(*) as total,
+                      SUM(CASE WHEN completed_action LIKE '%誤検知%' THEN 1 ELSE 0 END) as dismissed,
+                      SUM(CASE WHEN completed_at IS NOT NULL THEN 1 ELSE 0 END) as completed
+                 FROM pending_notifications
+                GROUP BY notification_type"""
+        ).fetchall()
+        notif_stats = [dict(r) for r in notif_rows]
+    finally:
+        conn.close()
+
+    return {
+        "rice": rice_summary,
+        "bath": {
+            "total": bath_total,
+            "confirmed": bath_confirmed,
+            "pending": bath_pending,
+        },
+        "sessions": sess_summary,
+        "notifications": notif_stats,
+    }
+
+
 @app.get("/api/heatmap")
 async def api_heatmap(request: Request, days: int = 7):
     """過去N日×24時間のイベント密度を項目ごとに返す（家族UI用）。
@@ -1800,8 +1882,17 @@ async def family_view(request: Request):
 
     is_today = (selected_date == now.strftime("%Y-%m-%d"))
 
-    # camera イベントは件数が多すぎて他のイベントが埋もれるため家族UIでは非表示
-    events = [e for e in get_events_by_date(selected_date, 400) if e.get("source") != "camera"][:200]
+    # camera と bathroom_meter の通常 reading は件数が多すぎて他のイベントが
+    # 埋もれるため家族UIでは非表示（shower_start/abnormal_temp などの特筆イベントは残す）
+    raw_events = get_events_by_date(selected_date, 800)
+    events = []
+    for e in raw_events:
+        if e.get("source") == "camera":
+            continue
+        if e.get("source") == "bathroom_meter" and e.get("event_type") == "reading":
+            continue
+        events.append(e)
+    events = events[:200]
 
     # サマリ化: 生イベントを「行動」へ集約（複数センサ組合せで「何が起こったか」を予測）
     from ..event_summarizer import summarize_events
