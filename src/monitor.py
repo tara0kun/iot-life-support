@@ -243,6 +243,16 @@ async def _request_session_confirmation(session_id: int) -> None:
             "SELECT id, started_at, label, event_count FROM meal_sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
+        # このセッションに含まれるソース別の反応回数を取得（判定根拠）
+        source_rows = conn.execute(
+            """SELECT e.source, COUNT(*) as cnt
+                 FROM session_events se
+                 JOIN events e ON e.id = se.event_id
+                WHERE se.session_id = ?
+                GROUP BY e.source
+                ORDER BY cnt DESC""",
+            (session_id,),
+        ).fetchall()
     finally:
         conn.close()
     if not row:
@@ -258,9 +268,22 @@ async def _request_session_confirmation(session_id: int) -> None:
     if label == "お風呂":
         return
 
+    # 判定根拠を組み立て: どのセンサーが何回反応したか
+    source_labels = {
+        "rice_cooker": "炊飯器電源",
+        "rice_cooker_lid": "炊飯器の蓋",
+        "fridge": "冷蔵庫",
+        "toilet_door": "トイレ",
+        "bath_door": "風呂",
+        "bath_motion": "脱衣所",
+        "camera": "カメラ",
+    }
+    basis_parts = [f"{source_labels.get(s['source'], s['source'])}×{s['cnt']}" for s in source_rows]
+    basis_str = "、".join(basis_parts) if basis_parts else "（センサー詳細不明）"
+
     msg = (
         f"🍱 {time_str}頃 「{label}」の動きをセンサーが検知しました\n"
-        f"（{row['event_count']}回の動き）\n\n"
+        f"判定根拠: {basis_str}\n\n"
         "誰の食事ですか？"
     )
     items = [
