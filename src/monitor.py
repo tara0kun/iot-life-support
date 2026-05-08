@@ -347,17 +347,25 @@ async def _ask_rice_action_classification(event_id: int, power_w: float) -> None
     # 蓋センサー稼働確認 + 直近の蓋開検知必須化
     # 「蓋が開いていない」 = 保温/ヒーター応答 = 食事の可能性ゼロなので問い合わせも発火させない
     # （これまで保温パルスのたびに問い合わせが来ていた問題の根本治癒）
+    #
+    # ⚠️ events.started_at は Python datetime.now() (JST) で保存されているため、
+    #    SQLite の datetime('now') (UTC) と比較するとタイムゾーン不一致でバグる。
+    #    Python 側で JST cutoff を計算して比較する。
+    cutoff_24h = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff_10min = (datetime.now() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
     conn = get_conn()
     try:
         lid_active = conn.execute(
-            "SELECT 1 FROM events WHERE source='rice_cooker_lid' AND started_at >= datetime('now','-24 hours') LIMIT 1"
+            "SELECT 1 FROM events WHERE source='rice_cooker_lid' AND started_at >= ? LIMIT 1",
+            (cutoff_24h,),
         ).fetchone() is not None
         # 直近10分以内に蓋が開いた形跡があるか
         lid_recent_open = conn.execute(
             """SELECT 1 FROM events
                 WHERE source='rice_cooker_lid' AND event_type='open'
-                  AND started_at >= datetime('now', '-10 minutes')
-                LIMIT 1"""
+                  AND started_at >= ?
+                LIMIT 1""",
+            (cutoff_10min,),
         ).fetchone() is not None
     finally:
         conn.close()
