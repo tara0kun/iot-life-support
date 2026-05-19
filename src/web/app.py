@@ -1644,6 +1644,85 @@ async def family_face_learning(request: Request):
     })
 
 
+@app.get("/api/pending-notifications")
+async def api_pending_notifications(request: Request):
+    """未対応の pending_notifications 一覧を返す（家族UIの「未対応リスト」用）。"""
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT id, notification_type, context_key, message,
+                      quick_reply_json, created_at, last_notified_at, notify_count
+                 FROM pending_notifications
+                WHERE completed_at IS NULL
+                ORDER BY created_at DESC
+                LIMIT 100"""
+        ).fetchall()
+    finally:
+        conn.close()
+    items = []
+    for r in rows:
+        d = dict(r)
+        # quick_reply_json をパースして actions に変換
+        try:
+            d["actions"] = json.loads(d.get("quick_reply_json") or "[]")
+        except Exception:
+            d["actions"] = []
+        d.pop("quick_reply_json", None)
+        items.append(d)
+    return {"pending": items}
+
+
+@app.post("/api/pending-notifications/{notif_id}/respond")
+async def api_pending_respond(request: Request, notif_id: int):
+    """家族UIから未対応通知に対応する（postback 相当の処理を呼び出す）。
+
+    body: {"data": "<postback data string>"}
+    """
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=401)
+    body = await request.json()
+    data = body.get("data", "")
+    if not data:
+        raise HTTPException(status_code=400, detail="data 必須")
+
+    # 家族UI ユーザーを sender_id として使う（family_ui_admin 等の固定識別子）
+    sender_id = "family_ui"
+
+    from ..line_commands import (
+        handle_confirm_postback, handle_confirm_dismiss_postback,
+        handle_rice_action_postback, handle_bath_classification_postback,
+        handle_lock_confirm_postback, handle_session_confirm_postback,
+        handle_attribute_postback, handle_merge_postback,
+    )
+    reply: str | None = None
+    try:
+        if data.startswith("attribute:"):
+            reply = await handle_attribute_postback(data, sender_id)
+        elif data.startswith("merge:"):
+            reply = await handle_merge_postback(data, sender_id)
+        elif data.startswith("confirm:"):
+            reply = await handle_confirm_postback(data, sender_id)
+        elif data.startswith("confirm_dismiss:"):
+            reply = await handle_confirm_dismiss_postback(data, sender_id)
+        elif data.startswith("rice_action:"):
+            reply = await handle_rice_action_postback(data, sender_id)
+        elif data.startswith("bath_cls:"):
+            reply = await handle_bath_classification_postback(data, sender_id)
+        elif data.startswith("lock_confirm:"):
+            reply = await handle_lock_confirm_postback(data, sender_id)
+        elif data.startswith("sess_confirm:"):
+            reply = await handle_session_confirm_postback(data, sender_id)
+        else:
+            raise HTTPException(status_code=400, detail=f"不明なアクション: {data[:30]}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"処理失敗: {e}")
+    return {"ok": True, "reply": reply}
+
+
 @app.get("/api/learning-stats")
 async def api_learning_stats(request: Request):
     """学習データの蓄積状況を返す（家族UIで可視化）。"""

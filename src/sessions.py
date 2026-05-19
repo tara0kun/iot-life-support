@@ -63,6 +63,11 @@ MERGE_WINDOW_MINUTES = 60
 
 
 def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
+    # クラスタリングから除外:
+    # - family_report / tablet_report / family_override: 手動記録なので集約対象外
+    # - bathroom_meter (reading): 10秒おきに発火、クラスタが永久に切れずモンスター化する
+    # - bath_motion: 頻発するセンサー、bath_detector で独立処理
+    # - camera (person_detected): 頻発、クラスタリング上のノイズ
     cur = conn.execute(
         """
         SELECT e.id, e.person_id, e.source, e.event_type, e.started_at, e.ended_at, e.value
@@ -70,7 +75,10 @@ def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
           LEFT JOIN session_events se ON se.event_id = e.id
          WHERE se.event_id IS NULL
            AND e.started_at >= ?
-           AND e.source NOT IN ('family_report', 'tablet_report', 'family_override')
+           AND e.source NOT IN (
+               'family_report', 'tablet_report', 'family_override',
+               'bathroom_meter', 'bath_motion', 'camera'
+           )
          ORDER BY COALESCE(e.person_id, 0), e.started_at
         """,
         (since,),

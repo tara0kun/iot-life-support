@@ -237,6 +237,7 @@ async def _request_session_confirmation(session_id: int) -> None:
     回答に応じて confirmed=1 / -1 にマークし person_id を確定する。
     """
     from src.notifier import broadcast_with_quick_reply, record_pending_notification
+    from src.db import get_conn
     conn = get_conn()
     try:
         row = conn.execute(
@@ -267,6 +268,20 @@ async def _request_session_confirmation(session_id: int) -> None:
     # お風呂セッションは bath_classification 系で別途確認するためスキップ
     if label == "お風呂":
         return
+
+    # 古すぎるセッションには通知しない（夜中の「18:50の通知」問題対策）
+    # セッション開始時刻が現在から 2時間以上前なら、リアルタイムの確認価値なし
+    from datetime import datetime as _dt2
+    try:
+        started_dt = _dt2.fromisoformat(str(started).split('.')[0]) if isinstance(started, str) else started
+        if (_dt2.now() - started_dt).total_seconds() > 2 * 3600:
+            log.info(
+                "[session_confirm] セッション %d は古すぎる(%s開始) → LINE通知スキップ、家族UIで対応",
+                session_id, time_str,
+            )
+            return
+    except Exception as e:
+        log.warning("セッション時刻チェック失敗: %s", e)
 
     # 判定根拠を組み立て: どのセンサーが何回反応したか
     source_labels = {
@@ -999,6 +1014,7 @@ async def main() -> None:
         async def _on_bath_candidate(c: "BathCandidate", record_id: int) -> None:
             """お風呂利用候補検知時、家族にLINE Quick Replyで誰か聞く（学習データ収集）。"""
             from src.notifier import broadcast_with_quick_reply, record_pending_notification
+            from src.db import get_conn
             door_hint = "ドア閉" if c.door_was_closed else "ドア開"
             motion_hint = f"脱衣所モーション{c.motion_count}回" if c.motion_count else "モーション無"
             active = ""
@@ -1149,6 +1165,7 @@ async def main() -> None:
                 username=camera_user,
                 password=camera_pass,
                 poll_interval=2.0,
+                save_detections=False,  # 検知フレームは保存しない（87GB問題対策）
                 save_dir=Path(__file__).resolve().parent.parent / "data" / "captures",
             ),
             on_person=on_person_detected,
