@@ -453,6 +453,17 @@
     </div>
   </div>
 
+  <!-- 未対応通知一覧（LINE で再通知する代わりに UI でスタック表示） -->
+  <div class="section-card" id="pending-notifications-section">
+    <div class="section-title">
+      📨 未対応の確認 <span id="pending-count-badge" style="background:#E65100;color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:6px;">0</span>
+    </div>
+    <div class="section-desc">LINE で対応されなかった通知が溜まると、ここに表示されます。各通知のボタンでその場で対応できます。</div>
+    <div id="pending-list" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+      <div style="font-size:13px;color:#666;">読み込み中...</div>
+    </div>
+  </div>
+
   <!-- 学習状況（システムがどれくらい学習したか） -->
   <details class="section-card" style="padding:0;overflow:hidden;">
     <summary style="cursor:pointer;padding:16px;font-weight:600;font-size:1.05em;">
@@ -996,6 +1007,78 @@ function renderHeatmapTable() {
   });
   table.appendChild(tbody);
 }
+
+// 未対応通知一覧
+async function loadPendingNotifications() {
+  try {
+    const resp = await fetch('/api/pending-notifications', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const list = document.getElementById('pending-list');
+    const badge = document.getElementById('pending-count-badge');
+    badge.textContent = data.pending.length;
+    if (data.pending.length === 0) {
+      list.innerHTML = '<div style="font-size:13px;color:#388E3C;padding:10px;background:#E8F5E9;border-radius:6px;">✅ 未対応の通知はありません</div>';
+      return;
+    }
+    const typeLabels = {
+      "rice_action": "🍚 炊飯器の動作確認",
+      "session_confirm": "🍱 食事候補の確認",
+      "bath_classification": "🛁 お風呂候補の確認",
+      "lock_confirm": "🔒 ロック確認",
+      "device_locked": "🔒 ロック完了通知",
+      "meal_alert": "⚠️ 食事多回数警告",
+      "long_toilet_stay": "🚨 トイレ長時間",
+      "bath_emergency": "🚨 浴室緊急",
+      "anomaly_inactivity": "⚠️ 活動なし",
+      "anomaly_night_rice": "⚠️ 深夜炊飯",
+      "attribute_session": "👤 人物割当",
+      "bath_reminder": "🛁 入浴リマインド",
+    };
+    list.innerHTML = data.pending.map(p => {
+      const label = typeLabels[p.notification_type] || p.notification_type;
+      const created = p.created_at ? p.created_at.replace('T', ' ').slice(0, 16) : '';
+      const msg = (p.message || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+      const btnHtml = p.actions.map(a => {
+        if (a.uri) {
+          return `<a href="${a.uri}" target="_blank" style="display:inline-block;padding:6px 12px;background:white;border:1px solid #1976D2;color:#1976D2;border-radius:6px;text-decoration:none;font-size:13px;margin:2px;">${a.label}</a>`;
+        }
+        return `<button onclick="respondPending(${p.id}, '${a.data}', this)" style="padding:6px 12px;background:white;border:1px solid #1976D2;color:#1976D2;border-radius:6px;font-size:13px;margin:2px;cursor:pointer;">${a.label}</button>`;
+      }).join('');
+      return `
+        <div data-id="${p.id}" style="border-left:3px solid #FFA726;background:#FFF8E1;padding:10px 14px;border-radius:0 6px 6px 0;">
+          <div style="font-weight:600;color:#E65100;font-size:13px;margin-bottom:4px;">${label}</div>
+          <div style="font-size:13px;color:#37474F;line-height:1.5;">${msg}</div>
+          <div style="font-size:11px;color:#90A4AE;margin-top:4px;">作成: ${created} UTC</div>
+          <div style="margin-top:8px;">${btnHtml}</div>
+        </div>`;
+    }).join('');
+  } catch(e) { console.error('pending load error', e); }
+}
+
+async function respondPending(notifId, data, btn) {
+  btn.disabled = true; btn.textContent = '送信中...';
+  try {
+    const resp = await fetch(`/api/pending-notifications/${notifId}/respond`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ data })
+    });
+    if (resp.ok) {
+      const card = btn.closest('[data-id]');
+      if (card) { card.style.opacity = 0; setTimeout(() => card.remove(), 300); }
+      setTimeout(loadPendingNotifications, 500);
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      btn.disabled = false; btn.textContent = '失敗';
+      alert('対応失敗: ' + (err.detail || resp.status));
+    }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '通信エラー';
+  }
+}
+
+window.addEventListener('DOMContentLoaded', loadPendingNotifications);
+setInterval(loadPendingNotifications, 30 * 1000);  // 30秒おきに自動更新
 
 async function loadLearningStats() {
   try {

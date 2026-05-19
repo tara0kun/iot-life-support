@@ -560,8 +560,14 @@ def mark_notification_completed(notification_type: str, context_key: str,
         return False
 
 
-def update_webhook_url(url: str) -> bool:
-    """LINE Messaging APIのwebhook URLを更新する（Cloudflare Tunnel再起動時用）。"""
+def update_webhook_url(url: str, max_retries: int = 5, retry_interval_sec: int = 6) -> bool:
+    """LINE Messaging APIのwebhook URLを更新する（Cloudflare Tunnel再起動時用）。
+
+    Cloudflare Tunnel 発行直後は DNS が伝播していないことがあり、
+    LINE 側が「Invalid webhook endpoint URL」を返すケースがあるため、
+    リトライしながら更新を試みる。
+    """
+    import time as _time
     env = _load_env()
     token = env.get("LINE_CHANNEL_ACCESS_TOKEN", "")
     if not token:
@@ -571,21 +577,26 @@ def update_webhook_url(url: str) -> bool:
         "Content-Type": "application/json",
         "Authorization": f"Bearer {token}",
     }
-    try:
-        resp = requests.put(
-            "https://api.line.me/v2/bot/channel/webhook/endpoint",
-            headers=headers,
-            json={"endpoint": url},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            log.info("LINE webhook URL更新成功: %s", url)
-            return True
-        log.warning("LINE webhook更新失敗: %d %s", resp.status_code, resp.text[:200])
-        return False
-    except Exception as e:
-        log.error("LINE webhook更新エラー: %s", e)
-        return False
+    for attempt in range(1, max_retries + 1):
+        try:
+            resp = requests.put(
+                "https://api.line.me/v2/bot/channel/webhook/endpoint",
+                headers=headers,
+                json={"endpoint": url},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                log.info("LINE webhook URL更新成功 (attempt=%d): %s", attempt, url)
+                return True
+            log.warning(
+                "LINE webhook更新失敗 (attempt=%d/%d): %d %s",
+                attempt, max_retries, resp.status_code, resp.text[:200],
+            )
+        except Exception as e:
+            log.error("LINE webhook更新エラー (attempt=%d/%d): %s", attempt, max_retries, e)
+        if attempt < max_retries:
+            _time.sleep(retry_interval_sec)
+    return False
 
 
 def notify_meal_alert(person_name: str, meal_count: int, last_meal_time: str) -> bool:

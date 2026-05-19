@@ -33,7 +33,8 @@ class CameraConfig:
     password: str
     stream: str = "stream1"  # stream1=2K(2560x1440), stream2=360p。顔認識はstream1でないと検出不可
     poll_interval: float = 2.0
-    save_detections: bool = True
+    save_detections: bool = False   # 検知フレームの保存はデフォルト無効
+    # （受動的顔学習は別系統で data/faces/candidates/ に保存される）
     save_dir: Path = Path("data/captures")
 
 
