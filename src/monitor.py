@@ -329,8 +329,9 @@ async def _request_lock_confirmation(meal_count: int, minutes_ago: int) -> None:
     from datetime import datetime as _dt
     now = _dt.now()
     ctx = now.strftime("%Y-%m-%d_%H%M_lockreq")
+    time_str = now.strftime("%H:%M")
     msg = (
-        f"🍚 祖母さんが本日{meal_count}回目の食事を検知しました\n"
+        f"🍚 {time_str} 祖母さんが本日{meal_count}回目の食事を検知しました\n"
         f"前回の食事から {minutes_ago} 分経過\n\n"
         "炊飯器をロックしますか？"
     )
@@ -1028,9 +1029,11 @@ async def main() -> None:
                         active = f" / カメラ識別: {row['name']}"
                 finally:
                     conn.close()
+            time_str = c.detected_at.strftime("%H:%M")
             msg = (
-                f"🛁 浴室で湿度上昇を検知（湿度 {c.humidity_baseline:.0f}→{c.humidity_peak:.0f}%, "
-                f"温度+{c.temperature_delta:.1f}℃, {door_hint}, {motion_hint}{active}）\n\n"
+                f"🛁 {time_str}頃 浴室で湿度上昇を検知\n"
+                f"湿度 {c.humidity_baseline:.0f}→{c.humidity_peak:.0f}%, "
+                f"温度+{c.temperature_delta:.1f}℃, {door_hint}, {motion_hint}{active}\n\n"
                 "誰がお風呂に入っていますか？"
             )
             items = [
