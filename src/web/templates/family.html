@@ -1035,9 +1035,27 @@ async function loadPendingNotifications() {
       "attribute_session": "👤 人物割当",
       "bath_reminder": "🛁 入浴リマインド",
     };
+    // メッセージ本文から事象発生時刻を抽出
+    // 各種パターン: 「HH:MM頃」「時刻: HH:MM」「HH:MM に」「HH:MM 」
+    function extractEventTime(msg) {
+      if (!msg) return null;
+      const patterns = [
+        /(\d{1,2}:\d{2})\s*頃/,         // 「17:49頃」
+        /時刻\s*[::]\s*(\d{1,2}:\d{2})/, // 「時刻: 09:08」
+        /(\d{1,2}:\d{2})\s*に[「『]/,    // 「05:54 に朝食」
+        /^[^\n]*?(\d{1,2}:\d{2})\s/,    // 先頭行の最初の時刻
+      ];
+      for (const re of patterns) {
+        const m = msg.match(re);
+        if (m) return m[1];
+      }
+      return null;
+    }
+
     list.innerHTML = data.pending.map(p => {
       const label = typeLabels[p.notification_type] || p.notification_type;
       const created = p.created_at ? p.created_at.replace('T', ' ').slice(0, 16) : '';
+      const eventTime = extractEventTime(p.message);
       const msg = (p.message || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
       const btnHtml = p.actions.map(a => {
         if (a.uri) {
@@ -1045,11 +1063,18 @@ async function loadPendingNotifications() {
         }
         return `<button onclick="respondPending(${p.id}, '${a.data}', this)" style="padding:6px 12px;background:white;border:1px solid #1976D2;color:#1976D2;border-radius:6px;font-size:13px;margin:2px;cursor:pointer;">${a.label}</button>`;
       }).join('');
+      // 事象時刻が抽出できれば目立つように表示
+      const timeBadge = eventTime
+        ? `<div style="display:inline-block;background:#E65100;color:white;font-weight:700;font-size:16px;padding:3px 10px;border-radius:14px;margin-right:8px;vertical-align:middle;">📅 ${eventTime}</div>`
+        : `<div style="display:inline-block;background:#9E9E9E;color:white;font-size:12px;padding:3px 8px;border-radius:10px;margin-right:8px;vertical-align:middle;">時刻不明</div>`;
       return `
         <div data-id="${p.id}" style="border-left:3px solid #FFA726;background:#FFF8E1;padding:10px 14px;border-radius:0 6px 6px 0;">
-          <div style="font-weight:600;color:#E65100;font-size:13px;margin-bottom:4px;">${label}</div>
+          <div style="margin-bottom:6px;">
+            ${timeBadge}
+            <span style="font-weight:600;color:#E65100;font-size:14px;vertical-align:middle;">${label}</span>
+          </div>
           <div style="font-size:13px;color:#37474F;line-height:1.5;">${msg}</div>
-          <div style="font-size:11px;color:#90A4AE;margin-top:4px;">作成: ${created} UTC</div>
+          <div style="font-size:11px;color:#90A4AE;margin-top:4px;">通知作成: ${created} UTC</div>
           <div style="margin-top:8px;">${btnHtml}</div>
         </div>`;
     }).join('');
