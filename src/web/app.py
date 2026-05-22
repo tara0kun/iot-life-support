@@ -930,6 +930,7 @@ GUIDE_DIR = BASE.parent.parent / "docs" / "guide"
 
 GUIDE_PAGES = {
     "": ("📚 ガイド一覧", "README.md"),
+    "daily-usage": ("🌟 毎日の使い方（家族向け簡略版）", "daily-usage.md"),
     "tablet-setup": ("祖母タブレット セットアップ手順", "tablet-setup.md"),
     "grandma-usage": ("祖母用 タブレットの使い方", "grandma-usage.md"),
     "family-setup": ("家族用 セットアップ手順", "family-setup.md"),
