@@ -1180,6 +1180,12 @@ async def main() -> None:
     # セッション集約
     tasks.append(asyncio.create_task(session_aggregator(60)))
 
+    # メモリプロファイラ (.env MEMORY_PROFILE=1 で有効化)
+    if env.get("MEMORY_PROFILE") == "1":
+        from src.memory_profiler import run_profiler
+        tasks.append(asyncio.create_task(run_profiler()))
+        log.info("メモリプロファイラ起動 (MEMORY_PROFILE=1)")
+
     log.info("=== 全センサー統合監視 稼働中 (%d タスク) ===", len(tasks))
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for i, r in enumerate(results):
@@ -1188,4 +1194,11 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    # メモリプロファイラ用の tracemalloc は早期に開始する必要がある
+    import os
+    from dotenv import load_dotenv
+    load_dotenv()
+    if os.environ.get("MEMORY_PROFILE") == "1":
+        from src.memory_profiler import start_tracing
+        start_tracing()
     asyncio.run(main())
