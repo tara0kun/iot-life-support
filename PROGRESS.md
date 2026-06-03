@@ -1,6 +1,6 @@
 # 認知症祖母IoTサポート プロジェクト 進捗記録
 
-最終更新: 2026-05-22
+最終更新: 2026-06-03
 
 ---
 
@@ -84,6 +84,22 @@
 - LINE 通知遅延: **1〜21分**（過去11時間超の深夜通知あり）
 - サービス連続稼働: 4〜8日無停止
 - 受動的顔学習: 候補顔が定期的に追加されている
+
+### 🆕 5/23-6/3 セッション追加（インフラ恒久化）
+
+| 日付 | 課題 | 対策 | コミット |
+|---|---|---|---|
+| 6/3 | T110×4/T100 が13日サイレント。Tapoアプリ上は正常 → 調査で全Tapo機器のIPがDHCP更新で変動していたと判明 | **動的IP検出 `src/sensors/hub_discovery.py`**。キャッシュ→.env→ブロードキャスト探索の3段で自動回復 | `a4c14f1` |
+| 6/3 | data/captures に古いキャプチャ109MB残留（L004 保険） | TTL 14日→1日、`rotate_logs.sh` を cron 04:00 で恒久化 | `3fa8a2f` |
+| 6/3 | iot-monitor の RSS が 5日で 1.2GB に達する報告。原因不明 | **tracemalloc プロファイラ `src/memory_profiler.py`** 投入。Python heap は完全に安定、増加分はすべて dlib の C 拡張バッファ（同時に映る人物数で決まる、~1.5GB で頭打ち）と確定診断 | `5f4d006` |
+| 6/3 | Cloudflare Quick Tunnel URL が再起動で変動 → 家族のブックマーク更新が毎回必要 | **Tailscale Funnel に移行**、URL永久固定 `https://tara0.taile9fa63.ts.net`。LINE webhook 自動再登録の依存も消滅、cloudflared 廃止 | (本コミット) |
+
+### ✅ 運用観察結果（6/3 時点）
+
+- 公開URL: **固定** (https://tara0.taile9fa63.ts.net)、再起動でも変わらない
+- Tapo 機器の IP 変動: 動的検出で自動回復するため再発しても問題なし
+- メモリ使用: 1.5GB 付近で頭打ち、線形リーク無し
+- ディスク使用: 11% (data/captures 109MB → 3.9MB、logs 55MB → 7MB)
 
 ### ✅ 5/8 までに対処済（運用観察待ち）
 
@@ -992,7 +1008,7 @@ python scripts/seed_mock_data.py --clear --scenario 4  # 充実した1日
 12. **mDNS有効**: `[hostname].local` でラズパイにアクセス可（IP変更に強い）
 13. **LINE公式アカウント**: [LINE公式アカウントID]（通知用）
 14. **タブレットトークン**: `.env`の`TABLET_TOKEN`（外部アクセス用）
-15. **Cloudflare Tunnel**: アカウントなし版（Quick Tunnel）。URLは再起動で変わるがLINEで自動通知
+15. **公開トンネル**: **Tailscale Funnel（6/3〜）**、固定URL `https://tara0.taile9fa63.ts.net`。Cloudflare Quick Tunnel は廃止
 16. **crontab登録済み**: 定期通知(9,12,18,22時)、トンネル自動起動、DBバックアップ(3時)、ヘルスチェック(5分おき)
 17. **お風呂で祖母が意識喪失した過去あり** → T110+T100による浴室監視は安全面で重要
 18. **浴室ドアのT110エイリアスは「浴室ドア」にリネーム必須**（monitor.pyが名前で判別）
