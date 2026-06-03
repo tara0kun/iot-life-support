@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Awaitable
 
-from kasa import Discover
+from .hub_discovery import resolve_hub
 
 log = logging.getLogger("sensors.contact")
 
@@ -45,16 +45,14 @@ class ContactSensorMonitor:
         self._last_state: dict[str, bool] = {}
 
     async def _connect_hub(self):
-        dev = await Discover.discover_single(
-            self.cfg.hub_ip,
-            username=self.cfg.username,
-            password=self.cfg.password,
-        )
-        await dev.update()
+        # キャッシュ/設定IP/ブロードキャスト探索の順でH100を解決
+        dev = await resolve_hub(self.cfg.hub_ip, self.cfg.username, self.cfg.password)
+        if dev is None:
+            raise RuntimeError("H100が見つかりません")
         return dev
 
     async def run(self) -> None:
-        log.info("T110監視開始 (hub=%s)", self.cfg.hub_ip)
+        log.info("T110監視開始 (configured hub=%s)", self.cfg.hub_ip)
         self._running = True
         hub = None
         for attempt in range(5):
