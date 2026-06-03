@@ -1,4 +1,4 @@
-# 引き継ぎメモ（最終更新: 2026-05-22）
+# 引き継ぎメモ（最終更新: 2026-06-03）
 
 > 認知症の祖母をIoTで支援するプロジェクトの開発引き継ぎドキュメント。
 > 次回 Claude セッションで「**HANDOFF.md と PROGRESS.md を読んで続きを進めて**」と伝えればコンテキスト復元できる。
@@ -9,7 +9,7 @@
 
 - **ステータス**: 完全に遠隔運用フェーズへ移行。モンスタークラスター・時間ズレ通知の根本治癒完了。家族UIの未対応通知一覧で対応する方式が確立
 - **ブランチ**: `dev` 8コミット先行（5/15-5/22 セッションで実装）、main から計 **55+ コミット先行**
-- **ネットワーク**: WiFi（IODATA-2G、wlan0=192.168.0.31）+ Tailscale (100.123.131.127)、Cloudflare Tunnel は **systemd化** で auto-restart
+- **ネットワーク**: WiFi（IODATA-2G、wlan0=192.168.0.31）+ Tailscale (100.123.131.127)、**Tailscale Funnel で固定URL公開**（6/3〜、cloudflared は廃止済）
 - **顔認識**: 祖母・はるか登録、受動収集 60px 閾値に調整済（5/14 までは80px でカット）
 - **LINE通知**: マスタースイッチ ON、再通知（30分おき）は廃止 → 家族UI でスタック対応方式
 
@@ -107,6 +107,21 @@
 - LINE 通知遅延: **1〜21分** （過去は11時間超の深夜通知あり）
 - サービス無停止稼働: iot-monitor / iot-matter は 4〜8日連続稼働、再起動0回
 
+### 🆕 5/23-6/3 セッション追加（インフラ恒久化）
+
+| # | 変更 | コミット |
+|---|---|---|
+| 39 | **H100ハブIPの動的検出** (`src/sensors/hub_discovery.py`)。DHCPリース更新で HUB_IP=192.168.0.30 が陳腐化し T110×4/T100 が13日サイレントになった事故への恒久対策。キャッシュ→.env→ブロードキャスト探索の3段フォールバック | `a4c14f1` |
+| 40 | **data/captures TTL を 14日→1日** へ短縮 + `rotate_logs.sh` を `cron 0 4 * * *` で恒久化。L004 (87GB問題) の再発防止保険 | `3fa8a2f` |
+| 41 | **メモリリーク調査用 tracemalloc プロファイラ** (`src/memory_profiler.py`)。`.env MEMORY_PROFILE=1` で有効化、5分後ベースライン+30分毎スナップショット、結果は `logs/memory_profile.log`。Python heap は完全に安定、増加分はすべて dlib の C 拡張バッファと判明 | `5f4d006` |
+| 42 | **Cloudflare Quick Tunnel → Tailscale Funnel 移行**。URL が永久固定 `https://tara0.taile9fa63.ts.net` に。`scripts/switch_to_tailscale_funnel.sh` で切替を一発化、LINE webhook 自動再登録機構の依存も消滅 | (本コミットで同梱) |
+
+### ⚠️ 既知の問題・運用観察（6/3 現在）
+
+- **メモリ使用**: iot-monitor の RSS は起動から階段状に増えて約 1.5GB で頭打ち（dlib のピーク時バッファ、同時に映る人物数で決まる）。Python heap リークは tracemalloc で否定済み
+- **DHCP リース更新**で Tapo 機器の IP が変わる現象を 6/3 に再確認 → 動的検出で自動回復するようになったが、ルーター側で MAC 固定 DHCP リースを設定するとさらに安心
+- 顔登録: 祖母・はるか のみ。祖父・ゆきこ・みきこ・まきこ・なお は person 登録あるが encoding 未紐付（必要なら帰省時に登録）
+
 ---
 
 ## 🌐 リモート接続情報（Tailscale）
@@ -180,8 +195,8 @@ python scripts/toggle_notifications.py off
 - **Tapo T100 × 1**: 脱衣所モーション
 - **Tapo C220 カメラ**: 192.168.0.29、stream1 (2K) で顔認識動作中
 - **SwitchBot 防水温湿度計**: BLE 直接読取り、MAC=DE:64:44:06:49:2A
-- **Cloudflare Tunnel**: `https://promo-astrology-equal-transcript.trycloudflare.com`（毎再起動でURL変動）
-- **LINE webhook**: 動的URL更新（family-prompt 送信時に自動再登録）
+- **公開URL（6/3〜 永久固定）**: `https://tara0.taile9fa63.ts.net` — Tailscale Funnel 経由。cloudflared (Quick Tunnel) は廃止
+- **LINE webhook**: `https://tara0.taile9fa63.ts.net/line/webhook`（URL固定なので動的更新は不要）
 
 ### ⏳ 未設置/今後
 | 機材 | 設置予定場所 | 用途 |
@@ -355,8 +370,10 @@ python scripts/recheck_pending.py
 |---|---|
 | ラズパイに繋がらない | `ssh taraberrypi`（Tailscale）/ `ssh tara0@tara0.local`（mDNS） |
 | LINE通知が止まらない | `python scripts/toggle_notifications.py off` |
-| LINE「ヘルプ」に応答なし | webhook URL不整合の可能性。`bash scripts/notify_url.sh` で再登録 |
-| 公開URL不明 | LINE に「リンク」と送る or `cat data/tunnel_url.txt` |
+| LINE「ヘルプ」に応答なし | webhook URL = `https://tara0.taile9fa63.ts.net/line/webhook` (固定) が登録済か確認 |
+| 公開URL不明 | **固定**: `https://tara0.taile9fa63.ts.net` (もう変動しない、cloudflared 廃止済) |
+| Tailscale Funnel が落ちた | `sudo tailscale funnel status` で確認、再有効化は `sudo tailscale funnel --bg 8000` |
+| Tapo 機器が応答しない（DHCP IP変動） | `src/sensors/hub_discovery.py` が自動で broadcast 探索 → 再起動で自動回復。`data/discovered_hub_ip.txt` にキャッシュ |
 | DB が壊れた | `python scripts/restore_db.py --latest --force` |
 | 炊飯器を開け閉めしただけで食事検知される | T110を蓋に貼って Tapoアプリで「炊飯器」とリネーム → 自動的に厳格モードに切替 |
 | LINE通知が孫1人にしか届かない | `LINE_ALLOWED_SENDERS` に複数入れる、または家族に「登録 名前」を送ってもらう |
