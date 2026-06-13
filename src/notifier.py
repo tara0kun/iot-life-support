@@ -126,9 +126,36 @@ def send_line_message(message: str, user_id: str | None = None) -> bool:
         else:
             log.warning("LINE通知失敗: %d %s", resp.status_code, resp.text[:200])
             return False
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        # ネットワーク断 / DNS失敗 → outbox に積み、cron で再送
+        log.error("LINE通知エラー (網経): %s → outboxへ", e)
+        _enqueue_outbox(user_id, [{"type": "text", "text": message}])
+        return False
     except Exception as e:
         log.error("LINE通知エラー: %s", e)
         return False
+
+
+def _enqueue_outbox(user_id: str, messages: list[dict]) -> None:
+    """ネットワーク断時のLINE失敗を再送キュー (data/line_outbox.jsonl) に保存。
+    scripts/retry_line_outbox.py が cron 1分毎に再送を試みる。
+    """
+    from pathlib import Path
+    from datetime import datetime
+    import json
+    outbox = Path("data/line_outbox.jsonl")
+    try:
+        outbox.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "queued_at": datetime.now().isoformat(),
+            "to": user_id,
+            "messages": messages,
+            "retry_count": 0,
+        }
+        with outbox.open("a") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as ex:
+        log.error("outbox 書込失敗: %s", ex)
 
 
 def _load_recipients() -> list[str]:
