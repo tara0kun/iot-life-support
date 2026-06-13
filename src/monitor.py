@@ -515,7 +515,8 @@ _recent_lid_opens: dict[str, float] = {}  # device_name -> last_open_unix_time
 
 # トイレ滞在時間の判定（秒）
 TOILET_SHORT_PASS_SECONDS = 10      # 10秒未満は「通り過ぎ」扱い（サマリでは表示するが、アラートは出さない）
-TOILET_LONG_STAY_SECONDS = 5 * 60   # 5分以上で長時間滞在アラート
+TOILET_LONG_STAY_SECONDS = 5 * 60       # 5分以上で長時間滞在アラート
+TOILET_DOOR_ABANDON_SECONDS = 30 * 60   # 30分以上なら「ドア放置」と見なしアラートしない
 _recent_toilet_opens: dict[str, float] = {}  # 'last' -> open unix time
 
 
@@ -576,7 +577,16 @@ async def on_contact_change(event: ContactEvent) -> None:
         last_open = _recent_toilet_opens.get("last", 0.0)
         if last_open:
             duration_sec = time.time() - last_open
-            if duration_sec >= TOILET_LONG_STAY_SECONDS:
+            # 30分以上の open→close はドアを開けっぱなしで放置された後に
+            # 誰かが閉めただけの可能性が高い（実際に 6〜10時間の誤アラートが出た）
+            # 真の長居 (5〜30分) のみアラート対象とする
+            if duration_sec >= TOILET_DOOR_ABANDON_SECONDS:
+                log.info(
+                    "[toilet] open→close %d分 (>=%d分): ドア放置と判断、アラートスキップ",
+                    int(duration_sec / 60),
+                    int(TOILET_DOOR_ABANDON_SECONDS / 60),
+                )
+            elif duration_sec >= TOILET_LONG_STAY_SECONDS:
                 await _request_long_toilet_alert(duration_sec)
 
 
