@@ -1,4 +1,4 @@
-# 引き継ぎメモ（最終更新: 2026-06-03）
+# 引き継ぎメモ（最終更新: 2026-07-10）
 
 > 認知症の祖母をIoTで支援するプロジェクトの開発引き継ぎドキュメント。
 > 次回 Claude セッションで「**HANDOFF.md と PROGRESS.md を読んで続きを進めて**」と伝えればコンテキスト復元できる。
@@ -116,11 +116,38 @@
 | 41 | **メモリリーク調査用 tracemalloc プロファイラ** (`src/memory_profiler.py`)。`.env MEMORY_PROFILE=1` で有効化、5分後ベースライン+30分毎スナップショット、結果は `logs/memory_profile.log`。Python heap は完全に安定、増加分はすべて dlib の C 拡張バッファと判明 | `5f4d006` |
 | 42 | **Cloudflare Quick Tunnel → Tailscale Funnel 移行**。URL が永久固定 `https://tara0.taile9fa63.ts.net` に。`scripts/switch_to_tailscale_funnel.sh` で切替を一発化、LINE webhook 自動再登録機構の依存も消滅 | (本コミットで同梱) |
 
-### ⚠️ 既知の問題・運用観察（6/3 現在）
+### 🆕 6/4-7/10 セッション追加（インフラ+安全性強化）
 
-- **メモリ使用**: iot-monitor の RSS は起動から階段状に増えて約 1.5GB で頭打ち（dlib のピーク時バッファ、同時に映る人物数で決まる）。Python heap リークは tracemalloc で否定済み
-- **DHCP リース更新**で Tapo 機器の IP が変わる現象を 6/3 に再確認 → 動的検出で自動回復するようになったが、ルーター側で MAC 固定 DHCP リースを設定するとさらに安心
+| # | 変更 | コミット |
+|---|---|---|
+| 43 | **トイレ長時間滞在アラート誤検知抑制**。open→close 30分以上は「ドア放置」と判定してアラートスキップ (609/371/287分 の異常アラート根治)。LINE outbox キューイング (`data/line_outbox.jsonl` + cron 毎分 retry) 併せて実装 | `f658013` (6/13) |
+| 44 | **週次システムスナップショット** (`scripts/system_snapshot.sh`, cron `0 4 * * 0`)。DB + 顔認識 encodings + .env + systemd unit を tar.gz で 4週保持。SD破損時の復旧時間短縮 | `08016b1` (7/1) |
+| 45 | **`journald` 永続化** (`/etc/systemd/journald.conf.d/40-rpi-volatile-storage.conf` に `Storage=persistent` + 500M/1month で上書き)。次回クラッシュの直前ログを残す | (手動設定、7/1) |
+| 46 | **家族UI ログインにレート制限** (`slowapi`, `/family/login` に `5/15minute`)。4桁PIN + Tailscale Funnel 公開の総当たり対策 | (7/10) |
+| 47 | **`requirements.txt` 導入** (`pip freeze` 105 パッケージ pinning)。SD破損時の再構築で完全再現可能に | (7/10) |
+| 48 | **`dev` → `main` merge** (63コミット分)。本番運用ブランチのズレを解消 | (7/10) |
+
+### ⚠️ 既知の問題・運用観察（7/10 現在）
+
+- **メモリ使用**: iot-monitor の RSS は起動から階段状に増えて約 1.5GB で頭打ち（dlib のピーク時バッファ）。10日連続稼働で完全にフラット (`memory_profile.log` で確認済)、`MEMORY_PROFILE=0` に戻して常用OK
+- **6/25-7/1 Pi 完全ダウン (6日間気付かず)**: 原因は物理電源断が最有力 (`EXT4-fs orphan cleanup on readonly fs` の痕跡)。復旧後 journald 永続化と週次スナップショットを追加、次回クラッシュ史を残せるように。**根本の再発防止 = 外部死活監視 (UptimeRobot 等) はまだ未実装**
+- **7/2 Tailscale Funnel パブリック DNS 失効**: 復旧後の Pi 起動で Funnel の DNS が NXDOMAIN 化 → `sudo tailscale funnel reset && sudo tailscale funnel --bg 8000` で復活。次回同じ症状が出たら同じコマンドで即復活
+- **6/13〜 IPv4 WAN 不安定 → 6/16 完全停止**: 祖母宅の PR-500KI (NTT HGW) が初期化状態、WN-DEAX1800GR (IODATA) はただの DHCP クライアント。BIGLOBE PPPoE 認証情報を PR-500KI に再入力する必要あり、詳細は下記 `## 🌐 祖母宅ネットワーク構成` 参照
 - 顔登録: 祖母・はるか のみ。祖父・ゆきこ・みきこ・まきこ・なお は person 登録あるが encoding 未紐付（必要なら帰省時に登録）
+- **pending_notifications 502件中 413件が 30日以上前** = 掃除されず累積。実害は小さいが今後 archive_pending_notifications 移動 cron を検討
+- **未対応 TODO**: 外部死活監視 / 電源物理接続の固定 (物理作業) / sshd root ログイン可否見直し
+
+### 🌐 祖母宅ネットワーク構成 (6/19 判明)
+
+```
+フレッツ光 → NTT GE-PON ONU (TA06005-B706)
+          → NTT PR-500KI (HGW, 192.168.1.1) ← ★IPv4 PPPoE 担当だがリセット状態
+          → IODATA WN-DEAX1800GR (WiFiルーター, 192.168.0.1, MAP-E対応) ← DHCP クライアント
+          → 子機 (Pi/Tapo/カメラ/タブレット)
+```
+
+PR-500KI 管理画面: `http://192.168.1.1/ntt/` (Pi から SSH LocalForward 8081 で家からアクセス可)
+Basic 認証: **過去に設定済でパスワード不明**、BIGLOBE PPPoE 認証情報も要再確認。復旧は NTT 116 電話 or 物理リセットボタン長押し + 再セットアップ。
 
 ---
 

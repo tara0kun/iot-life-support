@@ -1,6 +1,6 @@
 # 認知症祖母IoTサポート プロジェクト 進捗記録
 
-最終更新: 2026-06-03
+最終更新: 2026-07-10
 
 ---
 
@@ -100,6 +100,39 @@
 - Tapo 機器の IP 変動: 動的検出で自動回復するため再発しても問題なし
 - メモリ使用: 1.5GB 付近で頭打ち、線形リーク無し
 - ディスク使用: 11% (data/captures 109MB → 3.9MB、logs 55MB → 7MB)
+
+### 🆕 6/13-7/10 セッション追加（安全性・災害復旧）
+
+| 日付 | 課題 | 対策 | コミット |
+|---|---|---|---|
+| 6/13 | トイレ長時間滞在アラートが 609分/371分/287分 の異常値で家族に送信 | open→close 30分以上は「ドア放置」判定でアラートスキップ (`TOILET_DOOR_ABANDON_SECONDS`) | `f658013` |
+| 6/13 | LINE 送信のネット断時にメッセージ喪失 | `data/line_outbox.jsonl` に積み、`scripts/retry_line_outbox.py` を cron 毎分再送 | `f658013` |
+| 6/16 | 祖母宅 IPv4 WAN 完全停止 (BIGLOBE) → LINE エラー 1日 4,583件 | 診断で NTT PR-500KI がリセット状態と判明。BIGLOBE PPPoE 認証情報再入力が必要 (物理対応待ち) | (診断のみ、対応未) |
+| 6/25 | Pi 完全ダウン、6日間気付かず | 7/1 有線LAN + 電源再投入で復旧。物理電源断が最有力 | — |
+| 7/1 | 次回クラッシュ時に前回ログが揮発する構成 | journald 永続化 (`Storage=persistent` + 500M/1month) | 手動設定 |
+| 7/1 | SD破損時の復旧手段が DB バックアップのみで、`.env`/顔認識/systemd unit が消える | 週次システムスナップショット (`scripts/system_snapshot.sh`, cron `0 4 * * 0`) | `08016b1` |
+| 7/2 | 復旧後 Tailscale Funnel のパブリック DNS が NXDOMAIN 化、LINE 反応せず | `sudo tailscale funnel reset && sudo tailscale funnel --bg 8000` で復活 | — |
+| 7/10 | 家族UI ログインに総当たり対策なし (4桁PIN + パブリック公開) | `slowapi` で `/family/login` に `5/15minute` レート制限 | (7/10 コミット) |
+| 7/10 | 依存 105 パッケージが pinning ゼロ、Pi 破損時の再現不能 | `requirements.txt` に `pip freeze` を反映 | (7/10 コミット) |
+| 7/10 | `dev` が `main` より 63コミット先行 (本番実質 dev で稼働) | `dev` → `main` merge (fast-forward) | (7/10 コミット) |
+
+### ✅ 運用観察結果（7/10 時点）
+
+- 7/1 復旧以降 9日連続稼働、ヘルスチェック全項目 ✅
+- 通知応答率 **97%** (家族の運用が回っている)
+- events テーブル 45万件、`bathroom_meter` が 71% を占める (今後 TTL 削除検討)
+- 総 Python LOC 12,410、モジュール 55、cron 11 個、systemd unit 4 個
+- lessons: `iot-rpi L008` (DHCP変動) + `infra L005` (Tailscale Funnel) 追加済
+
+### ⚠️ 未対応 (優先度順)
+
+1. **外部死活監視** (Pi ダウン 6日気付かなかった問題の再発余地) — UptimeRobot 無料枠推奨
+2. **BIGLOBE PPPoE 認証情報の再入力** (PR-500KI が初期化状態、次回帰省時 or NTT 116 電話)
+3. **電源物理接続の固定** (USB-C 端子 / 壁コン直挿し、次回帰省時)
+4. **`pending_notifications` の archive 化 cron** (30日以上前 413件を archive_pending_notifications へ移動)
+5. **`bathroom_meter` の DB 保持ポリシー** (24h TTL or in-memory 集約への移行検討)
+6. **sshd `PermitRootLogin` 見直し** (現状不明、要確認)
+7. **`src/web/app.py` 2,253行の分割** (auth/api/dashboard を routers/ 配下へ)
 
 ### ✅ 5/8 までに対処済（運用観察待ち）
 

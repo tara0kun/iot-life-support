@@ -21,6 +21,9 @@ from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect, Form, HTTP
 from fastapi.responses import HTMLResponse, RedirectResponse, PlainTextResponse, FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from starlette.middleware.sessions import SessionMiddleware
 
 from ..db import get_conn, init_db, transaction
@@ -32,6 +35,12 @@ from .camera_stream import get_streamer
 
 app = FastAPI(title="IoT生活サポート")
 app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
+
+# 家族UI ログインへのブルートフォース攻撃対策 (Tailscale Funnel でパブリック公開のため)
+# get_remote_address は X-Forwarded-For を尊重 (Funnel の裏側で LINE/家族 IP を識別可能)
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 BASE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(BASE / "templates"))
@@ -424,6 +433,7 @@ async def family_login_page(request: Request):
 
 
 @app.post("/family/login")
+@limiter.limit("5/15minute")  # 4桁PIN 総当たり対策: 5回失敗で 15分ロック
 async def family_login(request: Request, password: str = Form(...)):
     expected = _load_family_password()
     given = hashlib.sha256(password.encode()).hexdigest()
