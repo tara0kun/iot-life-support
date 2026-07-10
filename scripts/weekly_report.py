@@ -86,22 +86,6 @@ def _bath_days(conn, dates: list[str]) -> int:
     return row["cnt"] if row else 0
 
 
-def _care_task_completion(conn, dates: list[str]) -> tuple[int, int]:
-    """家族タスク: (完了数, 予定数) を返す。"""
-    tasks = conn.execute(
-        "SELECT id FROM care_tasks WHERE enabled = 1"
-    ).fetchall()
-    if not tasks:
-        return 0, 0
-    total = len(tasks) * len(dates)
-    placeholders = ",".join("?" * len(dates))
-    done = conn.execute(
-        f"SELECT COUNT(*) as cnt FROM care_task_logs WHERE date IN ({placeholders})",
-        dates,
-    ).fetchone()["cnt"]
-    return done, total
-
-
 def _lock_count(conn, dates: list[str]) -> int:
     """炊飯器自動ロック発動回数。"""
     placeholders = ",".join("?" * len(dates))
@@ -123,7 +107,6 @@ def build_report() -> str:
         stamps = _stamp_achievements(conn, dates)
         med_taken, med_total = _medicine_rate(conn, dates)
         bath = _bath_days(conn, dates)
-        care_done, care_total = _care_task_completion(conn, dates)
         lock_count = _lock_count(conn, dates)
     finally:
         conn.close()
@@ -138,7 +121,6 @@ def build_report() -> str:
     stamp_total_pct = int(100 * sum(stamp_values) / (len(STAMP_LABELS) * len(dates))) if dates else 0
 
     med_pct = int(100 * med_taken / med_total) if med_total else 0
-    care_pct = int(100 * care_done / care_total) if care_total else 0
 
     # 日ごとの食事回数を視覚化（最大5回まで）
     chart_lines = []
@@ -169,8 +151,6 @@ def build_report() -> str:
         f"🛁 お風呂日数: {bath}/{len(dates)}日",
         f"🔒 自動ロック発動: {lock_count}回",
     ])
-    if care_total:
-        lines.append(f"📋 家族タスク完了率: {care_pct}% ({care_done}/{care_total})")
 
     # 気になる傾向
     lines.append("")

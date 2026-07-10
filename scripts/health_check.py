@@ -104,13 +104,17 @@ def check_systemd(unit: str) -> tuple[bool, str]:
 
 
 def check_tunnel() -> tuple[bool, str]:
-    """cloudflared プロセス存在 + URLファイルが新鮮か。"""
+    """Tailscale Funnel が稼働中か (6/3〜 cloudflared から移行)。"""
     try:
-        r = subprocess.run(["pgrep", "-f", "cloudflared tunnel"], capture_output=True, text=True, timeout=5)
-        if not r.stdout.strip():
-            return False, "cloudflared プロセスなし"
+        r = subprocess.run(
+            ["tailscale", "funnel", "status"],
+            capture_output=True, text=True, timeout=5,
+        )
+        # 'Funnel on' を含めば稼働中
+        if "Funnel on" not in r.stdout:
+            return False, "Tailscale Funnel が無効"
     except Exception as e:
-        return False, f"pgrep失敗: {e}"
+        return False, f"tailscale funnel status 失敗: {e}"
 
     url_file = ROOT / "data" / "tunnel_url.txt"
     if not url_file.exists():
@@ -184,7 +188,7 @@ def main():
         ("iot-web", check_web()),
         ("iot-matter", check_systemd("iot-matter")),
         ("iot-monitor", check_systemd("iot-monitor")),
-        ("cloudflare-tunnel", check_tunnel()),
+        ("tailscale-funnel", check_tunnel()),
         ("disk-space", check_disk()),
         ("database", check_db()),
         ("sensor-activity", check_recent_events()),

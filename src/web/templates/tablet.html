@@ -2,9 +2,10 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#2C3E50">
 <link rel="manifest" href="/static/manifest.json">
 <link rel="icon" href="/static/icon-192.png">
@@ -30,6 +31,15 @@
     --radius-sm: 16px;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
+  /* 誤操作防止（祖母タブレット用） */
+  html, body {
+    overscroll-behavior: none;        /* プルダウン更新・横スワイプで戻るを抑制 */
+    touch-action: pan-y;              /* 縦スクロールのみ許可 */
+    -webkit-touch-callout: none;      /* 長押しのメニュー表示を抑制 */
+    -webkit-user-select: none;        /* テキスト選択を抑制 */
+    user-select: none;
+    -webkit-tap-highlight-color: transparent; /* タップ時のハイライト無し */
+  }
   body {
     font-family: 'Noto Sans JP', 'Hiragino Kaku Gothic ProN', sans-serif;
     background: var(--bg);
@@ -37,6 +47,8 @@
     color: var(--text);
     -webkit-font-smoothing: antialiased;
   }
+  /* 入力フィールドだけは選択可能に戻す */
+  input, textarea { -webkit-user-select: text; user-select: text; }
   .container { max-width: 720px; margin: 0 auto; padding: 24px 20px 40px; }
 
   /* ヘッダー */
@@ -67,8 +79,8 @@
 
   /* お花エリア */
   .flower-card { text-align: center; background: linear-gradient(180deg, var(--card) 0%, var(--bg-warm) 100%); }
-  .flower-stage { margin: 16px 0 20px; }
-  .flower-stage svg { max-width: 160px; height: auto; }
+  .flower-stage { margin: 16px auto 20px; display: flex; justify-content: center; }
+  .flower-stage svg { max-width: 160px; height: auto; margin: 0 auto; display: block; }
   .flower-message { font-size: 20px; color: var(--text); font-weight: 700; letter-spacing: 1px; }
   .flower-sub { font-size: 14px; color: var(--text-muted); margin-top: 4px; }
 
@@ -78,18 +90,28 @@
   .flower-sway { animation: sway 3s ease-in-out infinite; transform-origin: bottom center; }
 
   /* スタンプカード（高齢者向けに拡大） */
-  .stamps-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 8px 0; }
-  @media (min-width: 600px) { .stamps-grid { grid-template-columns: repeat(7, 1fr); } }
+  /* グリッド: 小型は3列、それ以上は常に4列。
+     container max-width=720px なので8列だと1セル76pxしかなく「できた」が
+     収まらない問題があり、4列固定（8stampなら2行）に変更。 */
+  .stamps-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px; margin: 8px 0;
+  }
+  @media (min-width: 480px) {
+    .stamps-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  }
   .stamp {
-    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 4px 14px;
+    background: var(--bg); border-radius: var(--radius-sm); padding: 16px 8px 14px;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     border: 2px solid transparent; min-height: 110px; transition: all 0.3s ease;
+    min-width: 0;
   }
   .stamp.done { background: linear-gradient(135deg, #E8F8F0, #D5F5E3); border-color: var(--success); }
   .stamp.current { border-color: var(--accent-light); background: #FFF8EE; animation: stamp-pulse 2.5s infinite; }
   @keyframes stamp-pulse { 0%,100% { box-shadow: 0 0 0 0 rgba(243,156,18,0.2); } 50% { box-shadow: 0 0 0 6px rgba(243,156,18,0); } }
   .stamp-icon { width: 40px; height: 40px; }
-  .stamp-name { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 6px; }
+  .stamp-name { font-size: 14px; font-weight: 700; color: var(--text); margin-top: 6px; white-space: nowrap; }
   .stamp-check { font-size: 14px; color: var(--success); font-weight: 700; margin-top: 4px; }
   .stamp-time { font-size: 12px; color: var(--text-muted); font-weight: 500; }
 
@@ -123,12 +145,42 @@
   .garden-row-label { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; }
   .garden-row-label span { font-size: 12px; color: #558B2F; font-weight: 500; }
 
-  /* できたボタン（タッチ領域を拡大） */
+  /* 「できた」確認モーダル: 押し間違い防止のため二段確認 */
+  .confirm-modal-bg {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.55); z-index: 9999;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  .confirm-modal-bg.show { display: flex; }
+  .confirm-modal {
+    background: white; border-radius: 24px; max-width: 560px; width: 100%;
+    padding: 32px 24px; box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+    text-align: center;
+  }
+  .confirm-title { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+  .confirm-activity { font-size: 32px; font-weight: 800; color: var(--primary); margin: 16px 0; }
+  .confirm-question { font-size: 18px; color: var(--text-muted); margin-bottom: 24px; }
+  .confirm-buttons {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+  }
+  .confirm-btn {
+    padding: 22px 12px; border: 3px solid; border-radius: 18px;
+    font-size: 22px; font-weight: 800; cursor: pointer;
+    font-family: inherit; transition: all 0.2s;
+    min-height: 80px;
+  }
+  .confirm-btn.yes { border-color: var(--success); background: #E8F8F0; color: #1B5E20; }
+  .confirm-btn.yes:active { background: var(--success); color: white; }
+  .confirm-btn.no { border-color: #B0BEC5; background: #F5F5F5; color: #455A64; }
+  .confirm-btn.no:active { background: #B0BEC5; color: white; }
+
+  /* できたボタン（タッチ領域は確保、狭セルでもはみ出さない） */
   .stamp-btn {
-    margin-top: 8px; padding: 10px 22px; border: 2px solid var(--success); border-radius: 12px;
-    background: white; color: var(--success); font-size: 16px; font-weight: 700;
+    margin-top: 8px; padding: 10px 8px; border: 2px solid var(--success); border-radius: 12px;
+    background: white; color: var(--success); font-size: 15px; font-weight: 700;
     cursor: pointer; font-family: inherit; transition: all 0.2s;
-    min-width: 80px; min-height: 44px;
+    min-height: 44px; white-space: nowrap; box-sizing: border-box;
+    width: 100%; max-width: 100%;
   }
   .stamp-btn:hover { background: var(--success); color: white; }
   .stamp-btn:active { transform: scale(0.95); }
@@ -227,6 +279,36 @@
     </button>
   </div>
 
+  <!-- 食事写真撮影プロンプト（センサー検知後に動的表示） -->
+  <div id="meal-photo-prompt" style="display:none; background:linear-gradient(135deg,#FFE0B2,#FFCC80); border:3px solid #FB8C00; border-radius:18px; padding:22px 18px; margin:0 0 16px; text-align:center; box-shadow: 0 4px 12px rgba(251,140,0,0.2);">
+    <div style="font-size:28px; margin-bottom:8px;">🍚</div>
+    <div id="meal-photo-prompt-title" style="font-size:22px; font-weight:700; color:#E65100; margin-bottom:8px;">ごはんを食べましたね！</div>
+    <div style="font-size:16px; color:#5D4037; margin-bottom:14px;">写真を撮って みんなに見せましょう</div>
+    <button onclick="openMealCamera()" style="background:#FB8C00; color:white; border:none; border-radius:14px; padding:18px 32px; font-size:20px; font-weight:700; font-family:inherit; cursor:pointer; min-height:60px; box-shadow:0 4px 8px rgba(0,0,0,0.15);">
+      📷 写真をとる
+    </button>
+  </div>
+
+  <!-- カメラモーダル（撮影中だけ表示） -->
+  <div id="meal-camera-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.95); z-index:9999; flex-direction:column; align-items:center; justify-content:center; padding:16px;">
+    <div style="color:white; font-size:18px; margin-bottom:12px; font-weight:700;">📷 ごはんの写真をとる</div>
+    <video id="meal-camera-video" autoplay playsinline muted style="max-width:100%; max-height:60vh; border-radius:12px; background:black;"></video>
+    <canvas id="meal-camera-canvas" style="display:none;"></canvas>
+    <div id="meal-camera-preview" style="display:none; text-align:center;">
+      <img id="meal-camera-preview-img" style="max-width:100%; max-height:60vh; border-radius:12px;">
+    </div>
+    <div id="meal-camera-status" style="color:#FFD54F; font-size:15px; margin:12px 0; min-height:24px;"></div>
+    <div id="meal-camera-actions" style="display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+      <button id="meal-camera-shoot" onclick="captureMealPhoto()" style="background:#FB8C00; color:white; border:none; border-radius:50%; width:80px; height:80px; font-size:36px; cursor:pointer; box-shadow:0 4px 12px rgba(0,0,0,0.4);">📷</button>
+      <button onclick="closeMealCamera()" style="background:#757575; color:white; border:none; border-radius:14px; padding:14px 22px; font-size:16px; font-weight:700; font-family:inherit; cursor:pointer;">✕ やめる</button>
+    </div>
+    <div id="meal-camera-confirm" style="display:none; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:14px;">
+      <button onclick="sendMealPhoto()" style="background:#43A047; color:white; border:none; border-radius:14px; padding:18px 28px; font-size:18px; font-weight:700; font-family:inherit; cursor:pointer;">✅ おくる</button>
+      <button onclick="retakeMealPhoto()" style="background:#FB8C00; color:white; border:none; border-radius:14px; padding:18px 28px; font-size:18px; font-weight:700; font-family:inherit; cursor:pointer;">↩ とりなおす</button>
+      <button onclick="closeMealCamera()" style="background:#757575; color:white; border:none; border-radius:14px; padding:14px 22px; font-size:16px; font-weight:700; font-family:inherit; cursor:pointer;">✕ やめる</button>
+    </div>
+  </div>
+
   <div class="time-guide">
     <div class="label">今は</div>
     <div class="activity">{{ current_activity.text }}</div>
@@ -235,7 +317,7 @@
 
   <!-- 家族からのメッセージ -->
   {% for fp in family_prompts %}
-  <div class="alert-card remind" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
+  <div class="alert-card remind" data-priority="{{ fp.priority or 'normal' }}" data-msg-id="fp_{{ fp.id }}" style="background: linear-gradient(135deg, #E3F2FD, #BBDEFB); border: 2px solid #64B5F6;">
     <div class="alert-icon">
       <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#42A5F5" opacity="0.15"/><path d="M12 16 h24 v16 q0 4 -4 4 H16 q-4 0 -4-4Z" fill="#42A5F5" opacity="0.3"/><path d="M12 16 L24 26 L36 16" fill="none" stroke="#1565C0" stroke-width="2.5"/></svg>
     </div>
@@ -249,7 +331,7 @@
 
   <!-- 注意喚起 -->
   {% for a in alerts %}
-  <div class="alert-card {{ a.level }}">
+  <div class="alert-card {{ a.level }}" data-priority="{{ 'critical' if a.level == 'warn' else 'normal' }}" data-msg-id="alert_{{ a.type }}">
     <div class="alert-icon">
       {% if a.type == "meal_many" %}
       <svg viewBox="0 0 48 48"><circle cx="24" cy="24" r="22" fill="#FF9800" opacity="0.15"/><circle cx="24" cy="24" r="16" fill="#FF9800" opacity="0.2"/><path d="M24 10 L24 28" stroke="#E65100" stroke-width="4" stroke-linecap="round"/><circle cx="24" cy="35" r="3" fill="#E65100"/></svg>
@@ -293,11 +375,35 @@
     <div class="flower-sub" id="flowerSub"></div>
   </div>
 
+  <!-- 今日の食事写真（祖母が自分の食事を見て思い出すため） -->
+  {% if meal_photos_today and meal_photos_today | length > 0 %}
+  <div class="card" style="background:linear-gradient(180deg,#FFF8E1 0%, #FFECB3 100%);">
+    <div class="card-label" style="color:#E65100;">今日 食べたごはん</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;margin-top:10px;">
+      {% for p in meal_photos_today %}
+      <div style="background:white;border-radius:14px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.08);">
+        <img src="/photos/{{ p.file_name }}" alt="{{ p.label }}" style="width:100%;aspect-ratio:1/1;object-fit:cover;display:block;">
+        <div style="padding:8px 10px;text-align:center;">
+          <div style="font-size:16px;font-weight:700;color:#37474F;">{{ p.label or "ごはん" }}</div>
+          <div style="font-size:13px;color:#90A4AE;margin-top:2px;">
+            {% if p.taken_at and ' ' in (p.taken_at | string) %}
+              {{ (p.taken_at | string).split(' ')[1][:5] }}
+            {% else %}
+              {{ p.taken_at }}
+            {% endif %}
+          </div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <!-- スタンプカード -->
   <div class="card">
     <div class="card-label">今日の 記録</div>
     <div class="stamps-grid">
-      {% set button_activities = ["起床", "お薬", "お風呂", "就寝"] %}
+      {% set button_activities = ["起床", "お薬", "お風呂", "髪洗った", "就寝"] %}
       {% for s in stamps %}
       <div class="stamp {{ 'done' if s.done else '' }} {{ 'current' if s.current else '' }}">
         <div class="stamp-icon">{{ s.icon }}</div>
@@ -315,6 +421,19 @@
 
   <!-- 検証アラート（ボタン押下時に表示） -->
   <div id="verify-alert-area"></div>
+
+  <!-- 「できた」確認モーダル: 押し間違い対策で二段確認 -->
+  <div id="confirm-modal-bg" class="confirm-modal-bg" role="dialog" aria-modal="true">
+    <div class="confirm-modal">
+      <div class="confirm-title">本当にしましたか？</div>
+      <div class="confirm-activity" id="confirm-activity-name">―</div>
+      <div class="confirm-question">押し間違えていない？</div>
+      <div class="confirm-buttons">
+        <button class="confirm-btn no" onclick="cancelTabletRecord()">いいえ<br>まだです</button>
+        <button class="confirm-btn yes" onclick="confirmTabletRecord()">はい<br>できました</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 私の庭 -->
   <div class="card garden-card">
@@ -613,14 +732,23 @@ document.querySelectorAll('.garden-flower').forEach(el => {
 });
 
 // ============================================================
-// 音声読み上げ (Web Speech API)
+// 音声読み上げ (Web Speech API) — 拡張版
+// ============================================================
+//   A: WebSocket差分発話（新規アラートのみ読み上げ、既読はスキップ）
+//   C: 写真撮影プロンプトの音声誘導（speak() を公開API化）
+//   D: 時刻ベース定期発話（朝・昼・夕・夜の挨拶）
+//   E: 緊急通知の強調音声（priority=critical / level=warn を大きく繰り返し）
+//   G: 家族の priority 設定対応（silent=表示のみ、normal=通常、critical=強調）
 // ============================================================
 const TTS_KEY = 'tablet_tts_enabled';
+const TTS_INIT_KEY = 'tablet_tts_initialized';
+const TTS_SPOKEN_KEY = 'tablet_tts_spoken_ids';   // 既に読み上げたメッセージID
+const TTS_GREETING_KEY = 'tablet_tts_greeting';   // 時刻挨拶の重複防止
 const ttsSupported = 'speechSynthesis' in window;
 
 function isTTSEnabled() {
   const v = localStorage.getItem(TTS_KEY);
-  return v === null ? true : v === '1';  // デフォルトON
+  return v === null ? true : v === '1';
 }
 
 function setTTSEnabled(on) {
@@ -637,46 +765,264 @@ function updateTTSButton() {
   btn.style.color = isTTSEnabled() ? '#2E7D32' : '#999';
 }
 
+// グローバル speak（外部から呼べる: 写真撮影プロンプト等で利用）
 function speak(text, opts = {}) {
-  if (!ttsSupported || !isTTSEnabled()) return;
-  if (!text) return;
+  if (!ttsSupported || !isTTSEnabled() || !text) return;
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'ja-JP';
-  u.rate = opts.rate || 0.9;  // 祖母向けに少し遅め
+  u.rate = opts.rate || 0.9;
   u.pitch = opts.pitch || 1.0;
   u.volume = opts.volume || 1.0;
   speechSynthesis.speak(u);
+  // 緊急時は2回読み上げ
+  if (opts.repeat && opts.repeat > 1) {
+    for (let i = 1; i < opts.repeat; i++) {
+      setTimeout(() => {
+        const u2 = new SpeechSynthesisUtterance(text);
+        u2.lang = 'ja-JP';
+        u2.rate = opts.rate || 0.9;
+        u2.volume = opts.volume || 1.0;
+        speechSynthesis.speak(u2);
+      }, i * (text.length * 150 + 800));
+    }
+  }
 }
 
-function speakAlerts() {
+function _getSpokenIds() {
+  try { return JSON.parse(localStorage.getItem(TTS_SPOKEN_KEY) || '[]'); }
+  catch(e) { return []; }
+}
+function _setSpokenIds(ids) {
+  // 古いID（最新50件以外）は削除して肥大化を防ぐ
+  localStorage.setItem(TTS_SPOKEN_KEY, JSON.stringify(ids.slice(-50)));
+}
+
+// 新規アラートだけ発話（既読IDをlocalStorageで管理）
+function speakAlerts(forceAll = false) {
   if (!ttsSupported || !isTTSEnabled()) return;
-  speechSynthesis.cancel();  // 既存キューをクリア
+  speechSynthesis.cancel();
 
-  // 家族からのメッセージ優先
-  const famMsgs = document.querySelectorAll('.alert-card .alert-message');
-  const alertTexts = Array.from(famMsgs).map(el => el.textContent.trim()).filter(Boolean);
-  if (alertTexts.length === 0) return;
+  const cards = document.querySelectorAll('.alert-card[data-msg-id]');
+  if (cards.length === 0) return;
 
-  // 重要: ユーザー操作由来でないとブラウザが抑制する場合がある
-  // → 画面タップ後に読み上げる方針
-  alertTexts.forEach((t, i) => {
-    setTimeout(() => speak(t), i * 300);
+  const spoken = forceAll ? [] : _getSpokenIds();
+  const newIds = [];
+  const queue = [];
+
+  cards.forEach(card => {
+    const msgId = card.dataset.msgId;
+    if (spoken.includes(msgId)) return;
+    const priority = card.dataset.priority || 'normal';
+    if (priority === 'silent') {
+      newIds.push(msgId);  // 既読扱いだが発話しない
+      return;
+    }
+    const textEl = card.querySelector('.alert-message');
+    if (!textEl) return;
+    const text = textEl.textContent.trim();
+    if (!text) return;
+
+    // E: critical は遅めの速度+大音量+2回繰り返し
+    const opts = priority === 'critical'
+      ? { rate: 0.85, volume: 1.0, repeat: 2 }
+      : { rate: 0.9, volume: 1.0 };
+    queue.push({ text, opts, id: msgId });
   });
+
+  queue.forEach((item, i) => {
+    setTimeout(() => speak(item.text, item.opts), i * 600);
+    newIds.push(item.id);
+  });
+
+  if (newIds.length) {
+    _setSpokenIds([..._getSpokenIds(), ...newIds]);
+  }
 }
 
-// 初回タップで音声読み上げ（ブラウザのautoplay制約対策）
-let ttsInitialized = false;
+// D: 時刻ベース挨拶（毎時0〜3分の間に1回だけ発話）
+const TIME_GREETINGS = [
+  { hour: 7,  message: 'おはようございます' },
+  { hour: 8,  message: 'おはようございます。朝ごはんを食べましょう' },
+  { hour: 12, message: 'お昼の時間です' },
+  { hour: 15, message: 'おやつの時間です' },
+  { hour: 18, message: 'そろそろ夕ごはんの時間です' },
+  { hour: 21, message: 'そろそろお休みの時間ですよ' },
+];
+
+function checkTimeGreeting() {
+  if (!ttsSupported || !isTTSEnabled()) return;
+  const now = new Date();
+  if (now.getMinutes() > 3) return;  // 毎時0〜3分のみ
+  const h = now.getHours();
+  const greeting = TIME_GREETINGS.find(g => g.hour === h);
+  if (!greeting) return;
+  const key = `${now.toDateString()}_h${h}`;
+  if (localStorage.getItem(TTS_GREETING_KEY) === key) return;
+  localStorage.setItem(TTS_GREETING_KEY, key);
+  setTimeout(() => speak(greeting.message, { rate: 0.85 }), 1000);
+}
+
+// 初回タップで音声初期化（ブラウザのautoplay制約対策）
+let ttsInitialized = localStorage.getItem(TTS_INIT_KEY) === '1';
+
 function initTTSOnInteraction() {
   if (ttsInitialized) return;
   ttsInitialized = true;
-  speakAlerts();
+  localStorage.setItem(TTS_INIT_KEY, '1');
+  speakAlerts(true);  // 初回は全アラート読み上げ
 }
 document.addEventListener('click', initTTSOnInteraction, { once: true });
 document.addEventListener('touchstart', initTTSOnInteraction, { once: true });
 
 window.addEventListener('DOMContentLoaded', () => {
   updateTTSButton();
+  // 既に初期化済み（過去に祖母がタップ済み）なら、reload直後でも自動発話
+  if (ttsInitialized) {
+    setTimeout(() => speakAlerts(false), 800);  // DOM安定化待ち
+  }
 });
+
+// 1分おきに時刻挨拶チェック
+setInterval(checkTimeGreeting, 60 * 1000);
+// 初期チェックも1回
+setTimeout(checkTimeGreeting, 5000);
+
+// 「できた」ボタン押下時のフィードバック（B 機能）
+window.speakRecordSuccess = function(activity) {
+  speak(`${activity}、ありがとう。記録しました`, { rate: 0.95 });
+};
+
+// ============================================================
+// 食事写真撮影機能
+// ============================================================
+let mealCameraStream = null;
+let mealCameraSessionId = null;
+let mealCameraBlob = null;
+
+async function checkMealPhotoPrompt() {
+  try {
+    const resp = await fetch('/api/meal-photo-prompt');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const prompt = document.getElementById('meal-photo-prompt');
+    const titleEl = document.getElementById('meal-photo-prompt-title');
+    if (data.prompt) {
+      mealCameraSessionId = data.session_id;
+      if (titleEl) titleEl.textContent = `${data.label}を食べましたね！`;
+      prompt.style.display = 'block';
+      // 一度だけ音声誘導（同セッションIDで再発話しない）
+      const speakKey = `photo_prompt_spoken_${data.session_id}`;
+      if (!localStorage.getItem(speakKey)) {
+        if (window.speak) {
+          setTimeout(() => speak(
+            `${data.label}を食べましたね。写真を撮って、みんなに見せましょう`,
+            { rate: 0.85 }
+          ), 1500);
+        }
+        localStorage.setItem(speakKey, '1');
+      }
+    } else {
+      prompt.style.display = 'none';
+      mealCameraSessionId = null;
+    }
+  } catch(e) { /* ignore */ }
+}
+
+async function openMealCamera() {
+  const modal = document.getElementById('meal-camera-modal');
+  modal.style.display = 'flex';
+  document.getElementById('meal-camera-status').textContent = 'カメラを起動中...';
+  document.getElementById('meal-camera-actions').style.display = 'flex';
+  document.getElementById('meal-camera-confirm').style.display = 'none';
+  document.getElementById('meal-camera-preview').style.display = 'none';
+  const video = document.getElementById('meal-camera-video');
+  video.style.display = 'block';
+  try {
+    mealCameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 960 } },
+      audio: false,
+    });
+    video.srcObject = mealCameraStream;
+    document.getElementById('meal-camera-status').textContent = '料理が映るように向けて、撮るボタンを押してね';
+  } catch(e) {
+    document.getElementById('meal-camera-status').textContent =
+      'カメラを使えませんでした。タブレットの設定でカメラを許可してね。';
+    if (window.speak) speak('カメラを使う許可が必要です。家族に聞いてください。', {rate:0.85});
+  }
+}
+
+function captureMealPhoto() {
+  const video = document.getElementById('meal-camera-video');
+  const canvas = document.getElementById('meal-camera-canvas');
+  if (!video.videoWidth) return;
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext('2d').drawImage(video, 0, 0);
+  canvas.toBlob(blob => {
+    mealCameraBlob = blob;
+    // プレビュー表示
+    const previewImg = document.getElementById('meal-camera-preview-img');
+    previewImg.src = URL.createObjectURL(blob);
+    document.getElementById('meal-camera-preview').style.display = 'block';
+    video.style.display = 'none';
+    document.getElementById('meal-camera-actions').style.display = 'none';
+    document.getElementById('meal-camera-confirm').style.display = 'flex';
+    document.getElementById('meal-camera-status').textContent = 'これでよければ「おくる」、もう一度なら「とりなおす」';
+    if (window.speak) speak('良ければ送るボタン、もう一度なら撮り直すボタンを押してください', {rate:0.85});
+  }, 'image/jpeg', 0.85);
+}
+
+function retakeMealPhoto() {
+  const video = document.getElementById('meal-camera-video');
+  video.style.display = 'block';
+  document.getElementById('meal-camera-preview').style.display = 'none';
+  document.getElementById('meal-camera-actions').style.display = 'flex';
+  document.getElementById('meal-camera-confirm').style.display = 'none';
+  document.getElementById('meal-camera-status').textContent = '撮り直します。撮るボタンを押してね';
+  mealCameraBlob = null;
+}
+
+async function sendMealPhoto() {
+  if (!mealCameraBlob || !mealCameraSessionId) return;
+  document.getElementById('meal-camera-status').textContent = '送信中...';
+  document.getElementById('meal-camera-confirm').style.display = 'none';
+  const fd = new FormData();
+  fd.append('photo', mealCameraBlob, 'meal.jpg');
+  fd.append('session_id', mealCameraSessionId);
+  try {
+    const resp = await fetch('/api/meal-photo', { method: 'POST', body: fd });
+    if (resp.ok) {
+      document.getElementById('meal-camera-status').textContent = '✅ 送りました！ありがとう';
+      if (window.speak) speak('写真を送りました。ありがとう', {rate:0.95});
+      setTimeout(() => {
+        closeMealCamera();
+        location.reload();
+      }, 2000);
+    } else {
+      document.getElementById('meal-camera-status').textContent = '送信に失敗しました';
+      document.getElementById('meal-camera-confirm').style.display = 'flex';
+    }
+  } catch(e) {
+    document.getElementById('meal-camera-status').textContent = '通信エラー';
+    document.getElementById('meal-camera-confirm').style.display = 'flex';
+  }
+}
+
+function closeMealCamera() {
+  const modal = document.getElementById('meal-camera-modal');
+  modal.style.display = 'none';
+  if (mealCameraStream) {
+    mealCameraStream.getTracks().forEach(t => t.stop());
+    mealCameraStream = null;
+  }
+  mealCameraBlob = null;
+}
+
+// 起動時とその後5分おきに撮影プロンプトをチェック
+window.addEventListener('DOMContentLoaded', () => {
+  setTimeout(checkMealPhotoPrompt, 1500);
+});
+setInterval(checkMealPhotoPrompt, 5 * 60 * 1000);
 
 // 家族メッセージ確認
 async function dismissPrompt(id, btn) {
@@ -688,8 +1034,48 @@ async function dismissPrompt(id, btn) {
   } catch(e) {}
 }
 
-// 祖母「できた」ボタン処理
-async function tabletRecord(activity, btn) {
+// 「できた」ボタン押下: まず確認モーダルを開く（押し間違い防止）
+let _pendingActivity = null;
+let _pendingBtn = null;
+function tabletRecord(activity, btn) {
+  _pendingActivity = activity;
+  _pendingBtn = btn;
+  document.getElementById('confirm-activity-name').textContent = activity;
+  document.getElementById('confirm-modal-bg').classList.add('show');
+  if (window.speak) window.speak(`${activity} を本当にしましたか？`, { rate: 0.85 });
+}
+
+function cancelTabletRecord() {
+  document.getElementById('confirm-modal-bg').classList.remove('show');
+  // 「いいえ、まだです」 → 記録せず終了。優しいメッセージで誤押下を肯定的にカバー
+  const area = document.getElementById('verify-alert-area');
+  if (area) {
+    area.innerHTML = `<div class="verify-alert" style="background:#F1F8E9;border:2px solid #AED581;">
+      <div class="va-title" style="color:#33691E;">わかりました、ゆっくりで大丈夫です</div>
+      <div class="va-sub" style="color:#558B2F;">できたら、もう一度押してくださいね</div>
+    </div>`;
+    setTimeout(() => { area.innerHTML = ''; }, 8000);
+  }
+  if (window.speak) window.speak("わかりました、ゆっくりで大丈夫です。できたらもう一度押してくださいね。", { rate: 0.85 });
+  _pendingActivity = null;
+  _pendingBtn = null;
+}
+
+async function confirmTabletRecord() {
+  document.getElementById('confirm-modal-bg').classList.remove('show');
+  if (!_pendingActivity || !_pendingBtn) return;
+  await _doRecordSubmit(_pendingActivity, _pendingBtn);
+  _pendingActivity = null;
+  _pendingBtn = null;
+}
+
+// 実際の記録処理 — 4ケース対応
+// A. sensor_confirmed     → ✓ + 「ありがとう、記録しました」音声
+// B. already_done_old     → 「もうすでに○○できてますよ HH:MMに」表示+音声、記録しない
+// C. no_sensor_data       → 「センサーが感知していません 家族に聞いてください」表示+音声
+// D. no_sensor (薬/就寝)  → 「家族に伝えてください」表示+音声
+// cooldown                → ボタンに ✓ を一時表示するだけ
+async function _doRecordSubmit(activity, btn) {
   btn.disabled = true;
   btn.textContent = '確認中...';
   try {
@@ -699,29 +1085,69 @@ async function tabletRecord(activity, btn) {
     });
     const data = await resp.json();
     const area = document.getElementById('verify-alert-area');
-    if (data.verified) {
+    if (area) area.innerHTML = '';
+
+    if (data.reason === 'cooldown') {
       btn.classList.add('pressed');
       btn.textContent = '✓';
-      setTimeout(() => location.reload(), 1500);
-    } else {
-      btn.disabled = false;
-      btn.textContent = 'できた';
-      let msg = '';
-      if (data.reason === 'cooldown') {
-        msg = `<div class="va-title">さっき押しましたよ</div>
-               <div class="va-sub">しばらく待ってからもう一度押してください。</div>`;
-        btn.disabled = true;
-        btn.textContent = '待って';
-      } else if (data.reason === 'no_sensor') {
-        msg = `<div class="va-title">「${activity}」はセンサーで確認できません</div>
-               <div class="va-sub">家族に「${activity}した」と伝えてください。<br>家族が記録してくれます。</div>`;
-      } else {
-        msg = `<div class="va-title">「${activity}」の記録が見つかりません</div>
-               <div class="va-sub">本当にやりましたか？<br>やった場合は家族に伝えてください。</div>`;
-      }
-      area.innerHTML = `<div class="verify-alert fail">${msg}</div>`;
-      setTimeout(() => { area.innerHTML = ''; }, 10000);
+      setTimeout(() => { btn.disabled = false; btn.textContent = 'できた'; btn.classList.remove('pressed'); }, 2000);
+      return;
     }
+
+    if (data.verified) {
+      // A: センサー確認済み → 普通の成功
+      btn.classList.add('pressed');
+      btn.textContent = '✓';
+      if (window.speakRecordSuccess) window.speakRecordSuccess(activity);
+      setTimeout(() => location.reload(), 1500);
+      return;
+    }
+
+    // ボタンの見た目はリセット
+    btn.disabled = false;
+    btn.textContent = 'できた';
+
+    // 警告メッセージとアイコン
+    let title = '';
+    let sub = '';
+    let voiceText = '';
+    let icon = '⚠️';
+
+    if (data.reason === 'already_done_old') {
+      // B: 既に完了済み（窓外） → 重複防止メッセージ
+      title = `もうすでに ${activity} できてますよ`;
+      sub = data.last_time ? `${data.last_time} にできていました` : '';
+      voiceText = `もうすでに${activity}できてますよ。${data.last_time ? data.last_time + 'にできていました。' : ''}`;
+      icon = '✅';
+      // ボタンも「✓」に変えて押せないようにする（重複防止のUI表現）
+      btn.classList.add('pressed');
+      btn.textContent = '✓';
+    } else if (data.reason === 'no_sensor_data') {
+      // C: センサー記録なし → 家族確認誘導
+      title = 'センサーが感知していません';
+      sub = '家にいる家族に聞いてください';
+      voiceText = `センサーが${activity}を感知していません。家族に確認してください。`;
+      icon = '⚠️';
+    } else if (data.reason === 'no_sensor') {
+      // D: そもそもセンサー無し（お薬・就寝）→ 家族に伝える
+      title = `${activity} を家族に伝えてください`;
+      sub = '家族が記録してくれます';
+      voiceText = `${activity}を家族に伝えてください。家族が記録してくれます。`;
+      icon = 'ℹ️';
+    } else {
+      // フォールバック
+      title = data.message || '何か問題が起きました';
+      voiceText = title;
+    }
+
+    if (area) {
+      area.innerHTML = `<div class="verify-alert fail">
+        <div class="va-title">${icon} ${title}</div>
+        ${sub ? `<div class="va-sub">${sub}</div>` : ''}
+      </div>`;
+      setTimeout(() => { area.innerHTML = ''; }, 12000);
+    }
+    if (window.speak) window.speak(voiceText, { rate: 0.85 });
   } catch(e) {
     btn.disabled = false;
     btn.textContent = 'できた';
@@ -749,6 +1175,29 @@ requestWakeLock();
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') requestWakeLock();
 });
+
+// 誤操作防止（祖母タブレット用）
+// 1. 長押しメニュー（コンテキストメニュー）を抑制
+document.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// 2. ピンチズーム（2本指）を抑制
+document.addEventListener('gesturestart', (e) => e.preventDefault());
+document.addEventListener('gesturechange', (e) => e.preventDefault());
+
+// 3. 初回タップで全画面化を試行（ブラウザUIを隠す）
+//    Chrome/Safari では fullscreenAPI はユーザー操作起因が必要
+let fsRequested = false;
+function tryFullscreen() {
+  if (fsRequested) return;
+  fsRequested = true;
+  try {
+    const el = document.documentElement;
+    if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+    else if (el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+  } catch(e) {}
+}
+document.addEventListener('touchend', tryFullscreen, { once: true });
+document.addEventListener('click', tryFullscreen, { once: true });
 
 // 3分ごとにページ自動リロード（データ鮮度維持）
 setTimeout(() => location.reload(), 3 * 60 * 1000);

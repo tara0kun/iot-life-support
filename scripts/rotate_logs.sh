@@ -22,7 +22,7 @@ done
 # 14日以上前のアーカイブを削除
 find "$LOG_DIR" -name "*.log.gz" -mtime +$KEEP_DAYS -delete
 
-# data/captures/ も14日以上前は削除
-find "$HOME/IoT/data/captures" -type f -mtime +$KEEP_DAYS -delete 2>/dev/null
+# data/captures/ は1日で削除（顔学習用以外のデバッグキャプチャ、L004で対応）
+find "$HOME/IoT/data/captures" -type f -mtime +1 -delete 2>/dev/null
 
 echo "rotation complete ($(date))"

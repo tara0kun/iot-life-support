@@ -19,7 +19,6 @@ SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
     "notify_medicine_enabled": ("1", "お薬リマインダー通知"),
     "notify_bath_enabled": ("1", "お風呂リマインダー通知"),
     "notify_summary_enabled": ("1", "1日のまとめ通知"),
-    "notify_care_tasks_enabled": ("1", "家族タスクのリマインダー通知"),
     "notify_anomaly_enabled": ("1", "異常検知の通知（深夜炊飯器・無反応・冷蔵庫）"),
     "notify_weekly_report_enabled": ("1", "週次レポート通知"),
     "notify_url_change_enabled": ("1", "Cloudflare Tunnel URL変更通知"),
