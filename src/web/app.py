@@ -1261,7 +1261,7 @@ def _current_tunnel_url() -> str:
 def _build_url_reply() -> str:
     url = _current_tunnel_url()
     if not url:
-        return "⚠️ 現在公開URLが未発行です。ラズパイ側で `bash scripts/start_tunnel.sh` を実行してください。"
+        return "⚠️ 現在公開URLが未発行です。ラズパイ側で `sudo tailscale funnel --bg 8000` を実行してください。"
     token = _load_tablet_token()
     tablet_url = f"{url}/tablet?token={token}" if token else f"{url}/tablet"
     return (
@@ -1336,7 +1336,7 @@ async def line_webhook(request: Request):
         reply_token = ev.get("replyToken", "")
 
         # 全受信メッセージのsender_idをログ（家族追加時のID取得用）
-        print(f"RECV type={ev_type} sender={sender_id}", flush=True)
+        _webhook_log.info("RECV type=%s sender=%s", ev_type, sender_id)
 
         # メッセージ本文を先に取得（登録コマンド判定のため）
         text_for_check = ""

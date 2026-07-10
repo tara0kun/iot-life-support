@@ -373,5 +373,7 @@ def _seed_default_persons(conn: sqlite3.Connection) -> None:
 
 
 if __name__ == "__main__":
+    import logging
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
     init_db()
-    print(f"DB initialized at {DB_PATH}")
+    logging.getLogger("db").info("DB initialized at %s", DB_PATH)
