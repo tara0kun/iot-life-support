@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn
-from src.notifier import send_line_message
+from src.notifier import send_line_message, send_actionable_notification
 from src.settings import get_bool, get_int
 
 FLAG_DIR = Path(__file__).resolve().parent.parent / "data" / "anomaly_flags"
@@ -92,7 +92,8 @@ def check_inactivity():
         f"最終活動: {latest.strftime('%m/%d %H:%M')}\n\n"
         "様子を確認してください。"
     )
-    send_line_message(msg)
+    today = datetime.now().strftime("%Y-%m-%d")
+    send_actionable_notification("anomaly_inactivity", today, msg)
     _mark_notified("inactivity")
     print(f"無活動アラート送信（最終: {latest}）")
 
@@ -136,7 +137,8 @@ def check_night_rice():
         "認知症の徘徊・異常行動の可能性があります。\n"
         "至急様子を確認してください。"
     )
-    send_line_message(msg)
+    today = now.strftime("%Y-%m-%d")
+    send_actionable_notification("anomaly_night_rice", today, msg)
     _mark_notified("night_rice")
     print(f"深夜炊飯器アラート送信（{latest}）")
 
@@ -183,7 +185,8 @@ def check_fridge_open():
         f"{opened_at.strftime('%H:%M')} から {gap.total_seconds()/60:.0f}分経過\n\n"
         "食材が傷む可能性があります。閉めるようお伝えください。"
     )
-    send_line_message(msg)
+    today = now.strftime("%Y-%m-%d")
+    send_actionable_notification("anomaly_fridge_open", today, msg)
     _mark_notified("fridge_open")
     print(f"冷蔵庫アラート送信（{gap.total_seconds()/60:.0f}分経過）")
 

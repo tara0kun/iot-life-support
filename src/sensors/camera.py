@@ -23,6 +23,7 @@ class CameraFrame:
     frame: np.ndarray
     person_detected: bool
     face_count: int = 0
+    identified_persons: list[dict] | None = None  # face_id.identify() の結果
 
 
 @dataclass
@@ -30,9 +31,10 @@ class CameraConfig:
     ip: str
     username: str
     password: str
-    stream: str = "stream2"  # stream1=高画質, stream2=低画質
+    stream: str = "stream1"  # stream1=2K(2560x1440), stream2=360p。顔認識はstream1でないと検出不可
     poll_interval: float = 2.0
-    save_detections: bool = True
+    save_detections: bool = False   # 検知フレームの保存はデフォルト無効
+    # （受動的顔学習は別系統で data/faces/candidates/ に保存される）
     save_dir: Path = Path("data/captures")
 
 
@@ -41,9 +43,11 @@ class CameraMonitor:
         self,
         cfg: CameraConfig,
         on_person: Callable[[CameraFrame], Awaitable[None]] | None = None,
+        face_identifier=None,  # FaceIdentifier instance（None なら顔識別なし、人物検知のみ）
     ):
         self.cfg = cfg
         self._on_person = on_person
+        self._face_identifier = face_identifier
         self._running = False
         self._cap: cv2.VideoCapture | None = None
         self._hog = cv2.HOGDescriptor()
@@ -69,8 +73,9 @@ class CameraMonitor:
 
     def _detect(self, frame: np.ndarray) -> tuple[bool, int]:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Haar 顔検出: minSize を 60 → 40 に下げて遠めの顔も拾う
         faces = self._face_cascade.detectMultiScale(
-            gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60)
+            gray, scaleFactor=1.1, minNeighbors=4, minSize=(40, 40)
         )
         face_count = len(faces)
         person = face_count > 0
@@ -99,11 +104,34 @@ class CameraMonitor:
                 person, face_count = await asyncio.to_thread(self._detect, frame)
 
                 if person:
+                    # 顔認識: face_identifier 設定時は人物検知のたびに必ず試行する。
+                    # face_recognition 内部の検出器（HOGベース）は Haar より斜め顔・
+                    # 見下ろし角度に強いため、Haar が face_count=0 を返しても識別できる
+                    # ケースが多い。
+                    identified = None
+                    if self._face_identifier is not None:
+                        try:
+                            identified = await asyncio.to_thread(
+                                self._face_identifier.identify, frame
+                            )
+                            if identified:
+                                # face_recognition側で実際に検出した顔数で face_count を更新
+                                face_count = max(face_count, len(identified))
+                                names = [r.get("name", "?") for r in identified
+                                         if r.get("person_id")]
+                                if names:
+                                    log.info("顔認識: %s", ", ".join(names))
+                                else:
+                                    log.info("顔検出 %d件 / 識別はマッチなし", len(identified))
+                        except Exception as e:
+                            log.warning("顔識別エラー: %s", e)
+
                     cf = CameraFrame(
                         timestamp=datetime.now(),
                         frame=frame,
                         person_detected=True,
                         face_count=face_count,
+                        identified_persons=identified,
                     )
                     if self.cfg.save_detections:
                         ts = cf.timestamp.strftime("%Y%m%d_%H%M%S")

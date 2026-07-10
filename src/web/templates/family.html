@@ -93,54 +93,127 @@
   .rice-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .rice-item {
     display: flex; flex-direction: column; align-items: center; gap: 6px;
-    padding: 14px; border: 2px solid #E8E8E8; border-radius: 12px; background: #FAFAFA;
+    padding: 14px 8px; border: 2px solid #E8E8E8; border-radius: 12px; background: #FAFAFA;
+    min-width: 0;
   }
   .rice-item.set { border-color: var(--success); background: #E8F8F0; }
-  .rice-meal { font-size: 13px; font-weight: 700; color: var(--text); }
-  .rice-amount { font-size: 18px; font-weight: 700; color: var(--primary); min-height: 24px; }
+  .rice-meal { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; }
+  .rice-amount { font-size: 18px; font-weight: 700; color: var(--primary); min-height: 24px; white-space: nowrap; }
   .rice-input {
-    width: 80px; padding: 6px 8px; border: 2px solid #E0E0E0; border-radius: 8px;
-    font-size: 13px; font-family: inherit; text-align: center;
+    width: 100%; max-width: 80px; padding: 6px 8px; border: 2px solid #E0E0E0; border-radius: 8px;
+    font-size: 13px; font-family: inherit; text-align: center; box-sizing: border-box;
   }
   .rice-input:focus { border-color: var(--primary); outline: none; }
-  .rice-btn-group { display: flex; gap: 4px; }
+  .rice-btn-group { display: flex; gap: 4px; flex-wrap: wrap; justify-content: center; width: 100%; }
   .rice-save-btn {
-    padding: 4px 12px; border: none; border-radius: 6px; font-size: 11px;
-    font-family: inherit; cursor: pointer; font-weight: 700;
+    padding: 4px 10px; border: none; border-radius: 6px; font-size: 11px;
+    font-family: inherit; cursor: pointer; font-weight: 700; white-space: nowrap;
   }
   .rice-save-btn.save { background: var(--success); color: white; }
   .rice-save-btn.delete { background: #EEE; color: var(--text-light); }
   .rice-save-btn:hover { opacity: 0.85; }
+  @media (max-width: 480px) {
+    .rice-btn-group { flex-direction: column; gap: 4px; align-items: stretch; }
+    .rice-save-btn { padding: 6px 4px; }
+  }
+
+  /* 機器管理セクション */
+  .device-control-row {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    justify-content: space-between; margin-top: 12px;
+    padding: 14px 18px; background: #FAFAFA; border-radius: 12px; border: 2px solid #E8E8E8;
+  }
+  .device-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+  .device-label { font-weight: 700; font-size: 15px; color: var(--text); white-space: nowrap; }
+  .device-badge {
+    display: inline-flex; align-items: center; padding: 6px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 600; white-space: nowrap;
+  }
+  .device-badge.locked { background: #FDECEA; color: #C62828; border: 1px solid #F8BBD0; }
+  .device-badge.normal { background: #E8F5E9; color: #2E7D32; border: 1px solid #C8E6C9; }
+  .device-action-btn {
+    border: none; padding: 10px 22px; border-radius: 8px; cursor: pointer;
+    font-size: 14px; font-weight: 700; font-family: inherit; white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+  .device-action-btn:hover { opacity: 0.85; }
+  .device-action-btn.unlock { background: #43A047; color: #fff; }
+  .device-action-btn.lock { background: #E65100; color: #fff; }
+  @media (max-width: 480px) {
+    .device-control-row { gap: 10px; padding: 12px 14px; }
+    .device-action-btn { width: 100%; padding: 12px; }
+  }
+
+  /* 炊飯量セクション（横並び→狭幅で折り返し） */
+  .rice-config {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  }
+  .rice-current {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    padding: 6px 14px; border: 2px solid #E8E8E8; border-radius: 10px;
+    background: #FAFAFA; min-width: 100px;
+  }
+  .rice-current-label { font-size: 10px; color: var(--text-muted); }
+  .rice-current-value { font-size: 18px; font-weight: 700; color: var(--primary); white-space: nowrap; }
+  .rice-presets { display: flex; gap: 6px; flex-wrap: wrap; }
+  .rice-preset-btn { padding: 8px 14px; font-size: 13px; white-space: nowrap; }
+  .rice-custom-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  .rice-custom-input {
+    width: 110px; padding: 8px; border: 2px solid #E0E0E0; border-radius: 8px;
+    font-size: 13px; font-family: inherit; text-align: center; box-sizing: border-box;
+  }
+  .rice-custom-row .rice-save-btn { padding: 8px 12px; white-space: nowrap; }
+  @media (max-width: 480px) {
+    .rice-config { gap: 10px; }
+    .rice-current { width: 100%; flex-direction: row; align-items: center; gap: 10px; }
+    .rice-presets { width: 100%; justify-content: space-between; }
+    .rice-preset-btn { flex: 1; min-width: 0; padding: 10px 4px; }
+    .rice-custom-row { width: 100%; }
+    .rice-custom-input { flex: 1; min-width: 0; }
+  }
 
   /* 日付ナビ */
   .date-nav {
-    display: flex; align-items: center; gap: 12px; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap;
     background: var(--card); border-radius: var(--radius); padding: 12px 16px; box-shadow: var(--shadow);
   }
   .date-nav input[type="date"] {
     padding: 8px 12px; border: 2px solid #E0E0E0; border-radius: 8px;
-    font-size: 14px; font-family: inherit; font-weight: 500;
+    font-size: 14px; font-family: inherit; font-weight: 500; min-width: 0; max-width: 100%;
   }
   .date-nav-btn {
     padding: 8px 14px; border: 2px solid #E0E0E0; border-radius: 8px;
     background: white; cursor: pointer; font-family: inherit; font-size: 13px; font-weight: 500;
+    white-space: nowrap;
   }
   .date-nav-btn:hover { border-color: var(--primary); background: #F0F4F8; }
   .date-nav-btn.today { background: var(--primary); color: white; border-color: var(--primary); }
-  .date-label { font-size: 13px; color: var(--text-light); font-weight: 500; }
+  .date-label { font-size: 13px; color: var(--text-light); font-weight: 500; white-space: nowrap; }
+  @media (max-width: 480px) {
+    .date-nav { gap: 6px; padding: 10px; }
+    .date-nav-btn { padding: 6px 8px; font-size: 12px; }
+    .date-nav input[type="date"] { padding: 6px 8px; font-size: 12px; flex: 1; min-width: 110px; }
+    .date-label { width: 100%; text-align: center; margin-top: 4px; }
+  }
 
   /* フィルタ */
-  .filters { display: flex; gap: 8px; margin-bottom: 16px; }
+  .filters { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
   .filter-btn {
     padding: 8px 16px; border: 2px solid #E0E0E0; border-radius: 8px;
     background: white; color: var(--text); font-size: 13px; cursor: pointer; font-family: inherit; font-weight: 500;
+    white-space: nowrap;
   }
   .filter-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+  @media (max-width: 480px) {
+    .filter-btn { padding: 6px 10px; font-size: 12px; }
+  }
 
-  /* テーブル */
+  /* テーブル（section-card内に配置されるので独自の枠は最小限） */
+  .event-log-card { padding: 0; overflow: hidden; }
+  .event-log-card .filters { padding: 16px 16px 0; margin-bottom: 12px; }
+  .event-table-wrap { width: 100%; overflow-x: auto; }
   .event-table {
     width: 100%; border-collapse: collapse; background: var(--card);
-    border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow);
   }
   .event-table th {
     background: var(--primary); color: white; padding: 12px 16px; text-align: left;
@@ -152,6 +225,7 @@
 
   .source-badge {
     display: inline-block; padding: 3px 10px; border-radius: 6px; font-size: 11px; font-weight: 700;
+    white-space: nowrap;
   }
   .source-rice_cooker { background: #FFF3E0; color: #E65100; }
   .source-ih { background: #FCE4EC; color: #C62828; }
@@ -217,19 +291,33 @@
   </div>
   {% endif %}
 
+  <!-- ライブカメラ -->
+  <div class="section-card">
+    <div class="section-title">ライブ映像（リビング C220）</div>
+    <div class="section-desc">必要なときだけONにしてください（帯域節約）</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+      <button id="cam-toggle" onclick="toggleCamera()">▶ 映像ON</button>
+      <button onclick="snapCamera()">📸 スナップショット</button>
+      <span id="cam-status" style="font-size:12px;color:#888;"></span>
+    </div>
+    <div id="cam-wrap" style="display:none;background:#000;border-radius:6px;overflow:hidden;">
+      <img id="cam-img" alt="カメラ映像" style="width:100%;display:block;">
+    </div>
+  </div>
+
   <!-- 機器管理（常駐） -->
   <div class="section-card">
     <div class="section-title">機器管理</div>
     <div class="section-desc">炊飯器のロック状態を手動で切り替えできます</div>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:8px;">
-      <div>
-        <span style="font-weight:500;">炊飯器:</span>
-        <span id="device-state-badge" style="display:inline-block;padding:4px 10px;border-radius:12px;font-size:0.9em;margin-left:6px;{% if is_locked %}background:#FDECEA;color:#C62828;{% else %}background:#E8F5E9;color:#2E7D32;{% endif %}">
+    <div class="device-control-row">
+      <div class="device-info">
+        <span class="device-label">炊飯器</span>
+        <span id="device-state-badge" class="device-badge {% if is_locked %}locked{% else %}normal{% endif %}">
           {% if is_locked %}🔒 ロック中{% else %}🔓 通常{% endif %}
         </span>
       </div>
-      <button id="unlock-btn" onclick="unlockDevice()" style="background:#43A047;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if not is_locked %}display:none;{% endif %}">ロック解除</button>
-      <button id="lock-btn" onclick="lockDevice()" style="background:#E65100;color:#fff;border:none;padding:8px 16px;border-radius:6px;cursor:pointer;{% if is_locked %}display:none;{% endif %}">手動ロック</button>
+      <button id="unlock-btn" onclick="unlockDevice()" class="device-action-btn unlock" {% if not is_locked %}style="display:none;"{% endif %}>ロック解除</button>
+      <button id="lock-btn" onclick="lockDevice()" class="device-action-btn lock" {% if is_locked %}style="display:none;"{% endif %}>手動ロック</button>
     </div>
   </div>
 
@@ -276,6 +364,24 @@
       <button class="quick-btn" onclick="quickRecord('就寝', this)">
         <span class="qb-icon">🌙</span><span class="qb-label">就寝</span><span class="qb-status"></span>
       </button>
+      <button class="quick-btn" onclick="recordEatingOut(this)">
+        <span class="qb-icon">🍴</span><span class="qb-label">外食</span><span class="qb-status"></span>
+      </button>
+    </div>
+    <div class="section-desc" style="margin-top:14px;">食事を記録（センサーが見逃した時の手動記録）</div>
+    <div class="quick-btns">
+      <button class="quick-btn" onclick="quickRecord('朝食', this)">
+        <span class="qb-icon">🌅</span><span class="qb-label">朝食</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('昼食', this)">
+        <span class="qb-icon">🍱</span><span class="qb-label">昼食</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('夕食', this)">
+        <span class="qb-icon">🍚</span><span class="qb-label">夕食</span><span class="qb-status"></span>
+      </button>
+      <button class="quick-btn" onclick="quickRecord('間食', this)">
+        <span class="qb-icon">🍰</span><span class="qb-label">間食</span><span class="qb-status"></span>
+      </button>
     </div>
   </div>
 
@@ -301,42 +407,90 @@
       <input type="text" id="custom-prompt" placeholder="自由にメッセージを入力" style="flex:1; padding:10px 14px; border:2px solid #E0E0E0; border-radius:8px; font-size:14px; font-family:inherit;">
       <button onclick="sendPrompt(document.getElementById('custom-prompt').value)" style="padding:10px 20px; background:var(--primary); color:white; border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer; font-family:inherit; white-space:nowrap;">送信</button>
     </div>
+    <div style="margin-top:10px; display:flex; gap:14px; align-items:center; font-size:12px; color:var(--text-light);">
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="radio" name="prompt-priority" value="normal" checked> 通常（音声・表示）
+      </label>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="radio" name="prompt-priority" value="critical"> 重要（音声強調・繰り返し）
+      </label>
+      <label style="display:flex; align-items:center; gap:4px; cursor:pointer;">
+        <input type="radio" name="prompt-priority" value="silent"> 静か（表示のみ・音声なし）
+      </label>
+    </div>
+  </div>
+
+  <!-- 食事写真ギャラリー -->
+  <div class="section-card">
+    <div class="section-title">🍚 食事の写真</div>
+    <div class="section-desc">祖母が撮影した食事の写真（直近7日分）</div>
+    <div id="meal-photo-gallery" style="display:grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap:10px; margin-top:12px;">
+      <div style="grid-column:1/-1; color:#999; text-align:center; padding:20px;">読み込み中...</div>
+    </div>
   </div>
 
   <!-- 炊飯量設定 -->
   <div class="section-card">
     <div class="section-title">炊飯量</div>
     <div class="section-desc">タブレットに「ご飯は○合 炊いてね」と表示されます。</div>
-    <div style="display:flex; align-items:center; gap:10px;">
-      <div class="rice-amount" style="font-size:20px; min-width:60px;">{{ rice_amount if rice_amount else "未設定" }}</div>
-      <div style="display:flex; gap:6px;">
+    <div class="rice-config">
+      <div class="rice-current">
+        <span class="rice-current-label">いまの設定</span>
+        <span class="rice-current-value">{{ rice_amount if rice_amount else "未設定" }}</span>
+      </div>
+      <div class="rice-presets">
         {% for n in ["1合", "2合", "3合"] %}
-        <button class="rice-save-btn save" onclick="setRice('{{ n }}')" style="padding:8px 16px; font-size:13px;">{{ n }}</button>
+        <button class="rice-save-btn save rice-preset-btn" onclick="setRice('{{ n }}')">{{ n }}</button>
         {% endfor %}
       </div>
-      <input type="text" id="rice-custom" placeholder="自由入力" style="width:80px; padding:8px; border:2px solid #E0E0E0; border-radius:8px; font-size:13px; font-family:inherit; text-align:center;">
-      <button class="rice-save-btn save" onclick="setRice(document.getElementById('rice-custom').value)" style="padding:8px 12px;">設定</button>
-      {% if rice_amount %}
-      <button class="rice-save-btn delete" onclick="clearRice()" style="padding:8px 12px;">クリア</button>
-      {% endif %}
+      <div class="rice-custom-row">
+        <input type="text" id="rice-custom" class="rice-custom-input" placeholder="自由入力">
+        <button class="rice-save-btn save" onclick="setRice(document.getElementById('rice-custom').value)">設定</button>
+        {% if rice_amount %}
+        <button class="rice-save-btn delete" onclick="clearRice()">クリア</button>
+        {% endif %}
+      </div>
     </div>
   </div>
 
-  <!-- 7日間アクティビティヒートマップ -->
-  <div class="section-card">
-    <div class="section-title">7日間アクティビティ</div>
-    <div class="section-desc">過去7日の時間帯別イベント密度。色が濃いほど活動あり。</div>
-    <div id="heatmap-summary" style="display:flex;gap:16px;margin:12px 0;flex-wrap:wrap;">
-      <div style="background:#FFF3E0;padding:8px 14px;border-radius:6px;">
-        🍴 食事 <span id="hm-meals" style="font-weight:700;">-</span>回
-      </div>
-      <div style="background:#E1F5FE;padding:8px 14px;border-radius:6px;">
-        🛁 お風呂 <span id="hm-baths" style="font-weight:700;">-</span>回
-      </div>
-      <div style="background:#F3E5F5;padding:8px 14px;border-radius:6px;">
-        🚽 トイレ <span id="hm-toilets" style="font-weight:700;">-</span>回
+  <!-- 未対応通知一覧（LINE で再通知する代わりに UI でスタック表示） -->
+  <div class="section-card" id="pending-notifications-section">
+    <div class="section-title">
+      📨 未対応の確認 <span id="pending-count-badge" style="background:#E65100;color:white;padding:2px 8px;border-radius:10px;font-size:12px;margin-left:6px;">0</span>
+    </div>
+    <div class="section-desc">LINE で対応されなかった通知が溜まると、ここに表示されます。各通知のボタンでその場で対応できます。</div>
+    <div id="pending-list" style="display:flex;flex-direction:column;gap:10px;margin-top:10px;">
+      <div style="font-size:13px;color:#666;">読み込み中...</div>
+    </div>
+  </div>
+
+  <!-- 学習状況（システムがどれくらい学習したか） -->
+  <details class="section-card" style="padding:0;overflow:hidden;">
+    <summary style="cursor:pointer;padding:16px;font-weight:600;font-size:1.05em;">
+      📚 システムの学習状況
+      <span style="font-size:0.8em;color:#999;margin-left:8px;">▼ 開く</span>
+    </summary>
+    <div style="padding:0 16px 16px;" id="learning-stats-content">
+      <div style="font-size:13px;color:#666;">読み込み中...</div>
+    </div>
+    <div style="padding:0 16px 16px;border-top:1px solid #EEE;margin-top:8px;">
+      <a href="/family/face-learning" style="display:inline-block;padding:10px 18px;background:#4A7C59;color:white;text-decoration:none;border-radius:6px;font-weight:600;">
+        📷 顔学習ページへ（未識別顔のラベル付け）
+      </a>
+      <div style="font-size:12px;color:#666;margin-top:6px;">
+        カメラが「誰だかわからない」と判定した顔をまとめてラベル付けできます。
       </div>
     </div>
+  </details>
+
+  <!-- 7日間アクティビティ（項目別タブ） -->
+  <div class="section-card">
+    <div class="section-title">7日間の活動記録</div>
+    <div class="section-desc">タブを切り替えて項目ごとの活動パターンを確認できます。色が濃いほど活発。</div>
+    <div id="heatmap-tabs" style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0;">
+      <!-- JSで動的にタブ生成 -->
+    </div>
+    <div id="heatmap-current-info" style="font-size:13px;color:#607D8B;margin-bottom:8px;"></div>
     <div id="heatmap-container" style="overflow-x:auto;">
       <table id="heatmap-table" style="border-collapse:collapse;font-size:0.75em;font-family:monospace;">
         <!-- JSで描画 -->
@@ -344,46 +498,34 @@
     </div>
   </div>
 
-  <!-- 家族タスク（役割分担） -->
-  <div class="section-card">
-    <div class="section-title">家族タスク（役割分担）</div>
-    <div class="section-desc">担当者と時刻を設定すると、指定時刻にLINEで担当者へリマインドされます。</div>
-
-    <table style="width:100%;border-collapse:collapse;margin-top:8px;font-size:0.9em;">
-      <thead>
-        <tr style="background:#F5F5F5;text-align:left;">
-          <th style="padding:8px;">タスク名</th>
-          <th style="padding:8px;">担当</th>
-          <th style="padding:8px;">時刻</th>
-          <th style="padding:8px;">状態</th>
-          <th style="padding:8px;"></th>
-        </tr>
-      </thead>
-      <tbody id="care-task-rows">
-        {% for t in care_tasks %}
+  <!-- 拡張センサー状態 -->
+  <details class="section-card" style="padding:0;overflow:hidden;">
+    <summary style="cursor:pointer;padding:16px;font-weight:700;font-size:1.05em;list-style:none;display:flex;justify-content:space-between;align-items:center;">
+      <span>🔌 拡張センサー状態</span>
+      <span style="font-size:0.8em;color:#999;">▼ クリックで開く</span>
+    </summary>
+    <div style="padding:0 16px 16px;">
+      <div class="section-desc">追加で導入予定のセンサーの稼働状況。未接続のものは記録されません。</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.9em;margin-top:10px;">
+        {% for s in extra_sensors %}
         <tr style="border-bottom:1px solid #EEE;">
-          <td style="padding:8px;">{{ t.task_name }}</td>
-          <td style="padding:8px;">{{ t.assignee_name or '未割当' }}</td>
-          <td style="padding:8px;">{% if t.reminder_hour is not none %}{{ '%02d' % t.reminder_hour }}:00{% else %}--:--{% endif %}</td>
-          <td style="padding:8px;">{% if t.done_by %}<span style="color:#2E7D32;">✅ 完了</span>{% else %}<span style="color:#999;">⬜ 未対応</span>{% endif %}</td>
-          <td style="padding:8px;"><button class="delete-btn" onclick="deleteCareTask({{ t.id }}, '{{ t.task_name }}')" title="削除">&#x2715;</button></td>
+          <td style="padding:8px;width:55%;">
+            <div style="font-weight:500;">{{ s.icon }} {{ s.name }}</div>
+            <div style="color:#999;font-size:0.85em;">{{ s.description }}</div>
+          </td>
+          <td style="padding:8px;text-align:right;">
+            {% if s.enabled %}
+              <span style="background:#E8F5E9;color:#2E7D32;padding:4px 10px;border-radius:6px;font-weight:700;">✅ 稼働中</span>
+            {% else %}
+              <span style="background:#FFF3E0;color:#E65100;padding:4px 10px;border-radius:6px;font-weight:700;">⚠️ 未設定</span>
+              <div style="color:#999;font-size:0.8em;margin-top:4px;">{{ s.disabled_reason }}</div>
+            {% endif %}
+          </td>
         </tr>
-        {% else %}
-        <tr><td colspan="5" style="padding:16px;color:#999;text-align:center;">タスクが登録されていません</td></tr>
         {% endfor %}
-      </tbody>
-    </table>
-
-    <div style="margin-top:12px;padding:12px;background:#FAFAFA;border-radius:6px;">
-      <div style="font-weight:500;margin-bottom:8px;">新規タスクを追加</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-        <input id="new-task-name" type="text" placeholder="タスク名（例: 朝のお薬確認）" style="flex:1;min-width:180px;padding:6px;border:1px solid #CCC;border-radius:4px;">
-        <input id="new-task-assignee" type="text" placeholder="担当（例: 母）" style="width:120px;padding:6px;border:1px solid #CCC;border-radius:4px;">
-        <input id="new-task-hour" type="number" min="0" max="23" placeholder="時" style="width:60px;padding:6px;border:1px solid #CCC;border-radius:4px;">
-        <button onclick="addCareTask()" style="background:#1976D2;color:#fff;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">追加</button>
-      </div>
+      </table>
     </div>
-  </div>
+  </details>
 
   <!-- 詳細設定（通知ON/OFF・しきい値） -->
   <details class="section-card" style="padding:0;overflow:hidden;">
@@ -451,7 +593,33 @@
     <span class="date-label">{% if is_today %}今日{% else %}{{ selected_date }}{% endif %}のイベント</span>
   </div>
 
-  <!-- フィルタ -->
+  <!-- 行動サマリ（複数センサーから「何が起こったか」を予測） -->
+  <div class="section-card">
+    <div class="section-title">今日の行動</div>
+    <div class="section-desc">センサーのデータから推測される行動。詳しい記録は下の「全イベント」で確認できます。</div>
+    <div class="activity-list" style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">
+      {% for a in activities %}
+      <div class="activity-row" style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:#FAFAFA;border-left:4px solid #B0BEC5;border-radius:8px;">
+        <div style="font-size:24px;line-height:1;flex-shrink:0;">{{ a.icon }}</div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;color:#37474F;font-size:14px;">{{ a.label }}{% if a.person_name %}（{{ a.person_name }}）{% endif %}</div>
+          {% if a.detail %}<div style="font-size:12px;color:#78909C;">{{ a.detail }}</div>{% endif %}
+        </div>
+        <div style="font-size:12px;color:#90A4AE;flex-shrink:0;">
+          {{ a.started_at }}{% if a.ended_at != a.started_at %} 〜 {{ a.ended_at }}{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+      {% if activities | length == 0 %}
+      <div style="text-align:center;color:#90A4AE;padding:20px;">まだ今日の行動記録がありません</div>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- 全イベント（生データ・トラブル時の詳細確認用） -->
+  <details class="section-card event-log-card" style="padding:0;overflow:hidden;">
+  <summary style="padding:16px;cursor:pointer;font-weight:600;">全センサーイベント（詳細）</summary>
+  <div style="padding:0 16px 16px;">
   <div class="filters">
     <button class="filter-btn active" onclick="filterEvents('all')">全員</button>
     {% for p in persons %}
@@ -459,7 +627,7 @@
     {% endfor %}
   </div>
 
-  <!-- イベント一覧 -->
+  <div class="event-table-wrap">
   <table class="event-table" id="event-table">
     <thead>
       <tr><th>時刻</th><th>人物</th><th>ソース</th><th>イベント</th><th>値</th><th></th></tr>
@@ -491,7 +659,26 @@
           </select>
           <span class="save-msg" id="msg-{{ e.id }}">&#10003;</span>
         </td>
-        {% set source_names = {"rice_cooker": "炊飯器", "ih": "IH", "camera": "カメラ", "contact_sensor": "開閉センサー", "bath_door": "浴室ドア", "bath_motion": "浴室モーション", "family_report": "家族記録", "family_override": "家族操作", "toilet": "トイレ", "tablet_report": "祖母ボタン"} %}
+        {% set source_names = {
+            "rice_cooker": "炊飯器（電源）",
+            "rice_cooker_lid": "炊飯器の蓋",
+            "ih": "IHコンロ",
+            "camera": "リビングカメラ",
+            "contact_sensor": "開閉センサー",
+            "bath_door": "浴室のドア",
+            "bath_motion": "脱衣所の動き",
+            "bathroom_meter": "浴室の温湿度",
+            "fridge": "冷蔵庫のドア",
+            "toilet": "トイレ",
+            "toilet_door": "トイレのドア",
+            "toothbrush": "歯ブラシ立て",
+            "shampoo_bottle": "シャンプーボトル",
+            "hair_dryer": "ドライヤー",
+            "family_report": "家族から記録",
+            "family_override": "家族の操作",
+            "tablet_report": "祖母タブレット",
+            "family_prompt": "家族からの伝言"
+        } %}
         <td><span class="source-badge source-{{ e.source }}">{{ source_names.get(e.source, e.source) }}</span></td>
         <td>{{ e.event_type }}</td>
         <td>{{ "%.1f" | format(e.value) if e.value else "-" }}</td>
@@ -500,9 +687,49 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
+  </div>
+  </details>
 </div>
 
 <script>
+function toggleCamera() {
+  const img = document.getElementById('cam-img');
+  const wrap = document.getElementById('cam-wrap');
+  const btn = document.getElementById('cam-toggle');
+  const status = document.getElementById('cam-status');
+  if (wrap.style.display === 'none') {
+    img.src = '/api/camera/mjpeg?t=' + Date.now();
+    wrap.style.display = 'block';
+    btn.textContent = '■ 映像OFF';
+    status.textContent = 'ライブ配信中（stream2 / 360p）';
+  } else {
+    img.src = '';
+    wrap.style.display = 'none';
+    btn.textContent = '▶ 映像ON';
+    status.textContent = '';
+  }
+}
+
+async function snapCamera() {
+  const status = document.getElementById('cam-status');
+  status.textContent = '取得中...';
+  try {
+    const res = await fetch('/api/camera/snapshot?t=' + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const wrap = document.getElementById('cam-wrap');
+    const img = document.getElementById('cam-img');
+    img.src = url;
+    wrap.style.display = 'block';
+    document.getElementById('cam-toggle').textContent = '▶ 映像ON';
+    status.textContent = 'スナップショット表示中（' + new Date().toLocaleTimeString('ja-JP') + '）';
+  } catch (e) {
+    status.textContent = '取得失敗: ' + e.message;
+  }
+}
+
 async function unlockDevice() {
   if (!confirm('炊飯器のロックを解除しますか？')) return;
   try {
@@ -525,6 +752,30 @@ async function lockDevice() {
     if (resp.ok) { alert('ロックしました'); location.reload(); }
     else { const d = await resp.json(); alert('ロック失敗: ' + (d.detail || '不明')); }
   } catch(e) { alert('通信エラー: ' + e.message); }
+}
+
+async function recordEatingOut(btn) {
+  // 外食: 食事区分を聞いてから記録
+  const kind = prompt('外食の区分は？（朝食/昼食/夕食/間食）\n空欄なら現在時刻から自動判定');
+  if (kind === null) return;  // キャンセル
+  const valid = ['', '朝食', '昼食', '夕食', '間食'];
+  if (!valid.includes(kind.trim())) {
+    alert('朝食/昼食/夕食/間食 のいずれか、または空欄で入力してください');
+    return;
+  }
+  const status = btn.querySelector('.qb-status');
+  try {
+    const resp = await fetch('/api/quick-record', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
+      body: JSON.stringify({ activity: '外食', person_id: 1, witness: '家族', meal_kind: kind.trim() })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      btn.classList.add('recording');
+      status.textContent = `${data.time} ${data.meal_kind}記録済`;
+      setTimeout(() => location.reload(), 1500);
+    } else { status.textContent = '失敗'; status.style.color = '#C62828'; }
+  } catch(e) { status.textContent = 'エラー'; status.style.color = '#C62828'; }
 }
 
 async function quickRecord(activity, btn) {
@@ -625,11 +876,14 @@ async function deleteEvent(eventId, eventType) {
 
 async function sendPrompt(message) {
   if (!message || !message.trim()) { alert('メッセージを入力してください'); return; }
-  if (!confirm(`「${message}」をタブレットに表示しますか？`)) return;
+  const priorityEl = document.querySelector('input[name="prompt-priority"]:checked');
+  const priority = priorityEl ? priorityEl.value : 'normal';
+  const priorityLabel = { critical: '重要', normal: '通常', silent: '静か' }[priority] || '通常';
+  if (!confirm(`「${message}」を${priorityLabel}でタブレットに表示しますか？`)) return;
   try {
     const resp = await fetch('/api/family-prompt', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
-      body: JSON.stringify({ message: message.trim(), minutes: 60 })
+      body: JSON.stringify({ message: message.trim(), minutes: 60, priority })
     });
     if (resp.ok) {
       alert('タブレットに送信しました');
@@ -672,55 +926,386 @@ async function saveMedicine(timing) {
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
+// ヒートマップ: 項目別タブで切り替え表示
+let _heatmapData = null;
+let _heatmapCurrent = "meals";
+
+const HEATMAP_COLORS = {
+  meals:  {r: 255, g: 152, b: 0},   // オレンジ
+  baths:  {r: 33,  g: 150, b: 243}, // 青
+  toilet: {r: 156, g: 39,  b: 176}, // 紫
+  fridge: {r: 0,   g: 188, b: 212}, // 水色
+  motion: {r: 76,  g: 175, b: 80},  // 緑
+};
+
+function renderHeatmapTabs() {
+  if (!_heatmapData) return;
+  const tabContainer = document.getElementById('heatmap-tabs');
+  tabContainer.innerHTML = '';
+  Object.entries(_heatmapData.categories).forEach(([key, cat]) => {
+    const btn = document.createElement('button');
+    btn.textContent = `${cat.icon} ${cat.name} (${cat.total})`;
+    const active = (key === _heatmapCurrent);
+    btn.style.cssText = `
+      padding:8px 14px; border-radius:18px; border:2px solid;
+      cursor:pointer; font-family:inherit; font-size:13px; font-weight:600;
+      transition:all 0.15s;
+      ${active
+        ? 'background:#1976D2; color:white; border-color:#1976D2;'
+        : 'background:white; color:#37474F; border-color:#CFD8DC;'}
+    `;
+    btn.onclick = () => {
+      _heatmapCurrent = key;
+      renderHeatmapTabs();
+      renderHeatmapTable();
+    };
+    tabContainer.appendChild(btn);
+  });
+}
+
+function renderHeatmapTable() {
+  if (!_heatmapData) return;
+  const cat = _heatmapData.categories[_heatmapCurrent];
+  if (!cat) return;
+  const color = HEATMAP_COLORS[_heatmapCurrent] || HEATMAP_COLORS.motion;
+
+  document.getElementById('heatmap-current-info').textContent =
+    `${cat.icon} ${cat.name}: 過去7日で ${cat.total} 回`;
+
+  const table = document.getElementById('heatmap-table');
+  table.innerHTML = '';
+  const thead = document.createElement('thead');
+  const hr = document.createElement('tr');
+  hr.appendChild(document.createElement('th'));
+  for (let h = 0; h < 24; h++) {
+    const th = document.createElement('th');
+    th.textContent = h;
+    th.style.cssText = 'padding:2px 4px;color:#999;font-weight:400;';
+    hr.appendChild(th);
+  }
+  thead.appendChild(hr);
+  table.appendChild(thead);
+
+  const max = Math.max(...cat.matrix.flat(), 1);
+  const tbody = document.createElement('tbody');
+  _heatmapData.dates.forEach((dateLabel, i) => {
+    const tr = document.createElement('tr');
+    const th = document.createElement('th');
+    th.textContent = dateLabel;
+    th.style.cssText = 'padding:4px 8px;text-align:right;font-weight:500;color:#666;white-space:nowrap;';
+    tr.appendChild(th);
+    cat.matrix[i].forEach(cnt => {
+      const td = document.createElement('td');
+      const intensity = cnt / max;
+      const alpha = intensity === 0 ? 0.05 : 0.15 + intensity * 0.85;
+      td.style.cssText = `width:18px;height:22px;background:rgba(${color.r},${color.g},${color.b},${alpha});text-align:center;color:${intensity > 0.5 ? '#fff' : '#333'};border:1px solid #fff;`;
+      td.textContent = cnt > 0 ? cnt : '';
+      td.title = `${cnt}件`;
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+}
+
+// 未対応通知一覧
+async function loadPendingNotifications() {
+  try {
+    const resp = await fetch('/api/pending-notifications', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const list = document.getElementById('pending-list');
+    const badge = document.getElementById('pending-count-badge');
+    badge.textContent = data.pending.length;
+    if (data.pending.length === 0) {
+      list.innerHTML = '<div style="font-size:13px;color:#388E3C;padding:10px;background:#E8F5E9;border-radius:6px;">✅ 未対応の通知はありません</div>';
+      return;
+    }
+    const typeLabels = {
+      "rice_action": "🍚 炊飯器の動作確認",
+      "session_confirm": "🍱 食事候補の確認",
+      "bath_classification": "🛁 お風呂候補の確認",
+      "lock_confirm": "🔒 ロック確認",
+      "device_locked": "🔒 ロック完了通知",
+      "meal_alert": "⚠️ 食事多回数警告",
+      "long_toilet_stay": "🚨 トイレ長時間",
+      "bath_emergency": "🚨 浴室緊急",
+      "anomaly_inactivity": "⚠️ 活動なし",
+      "anomaly_night_rice": "⚠️ 深夜炊飯",
+      "attribute_session": "👤 人物割当",
+      "bath_reminder": "🛁 入浴リマインド",
+    };
+    // メッセージ本文から事象発生時刻を抽出
+    // 各種パターン: 「HH:MM頃」「時刻: HH:MM」「HH:MM に」「HH:MM 」
+    function extractEventTime(msg) {
+      if (!msg) return null;
+      const patterns = [
+        /(\d{1,2}:\d{2})\s*頃/,         // 「17:49頃」
+        /時刻\s*[::]\s*(\d{1,2}:\d{2})/, // 「時刻: 09:08」
+        /(\d{1,2}:\d{2})\s*に[「『]/,    // 「05:54 に朝食」
+        /^[^\n]*?(\d{1,2}:\d{2})\s/,    // 先頭行の最初の時刻
+      ];
+      for (const re of patterns) {
+        const m = msg.match(re);
+        if (m) return m[1];
+      }
+      return null;
+    }
+
+    list.innerHTML = data.pending.map(p => {
+      const label = typeLabels[p.notification_type] || p.notification_type;
+      const created = p.created_at ? p.created_at.replace('T', ' ').slice(0, 16) : '';
+      const eventTime = extractEventTime(p.message);
+      const msg = (p.message || '').replace(/</g, '&lt;').replace(/\n/g, '<br>');
+      const btnHtml = p.actions.map(a => {
+        if (a.uri) {
+          return `<a href="${a.uri}" target="_blank" style="display:inline-block;padding:6px 12px;background:white;border:1px solid #1976D2;color:#1976D2;border-radius:6px;text-decoration:none;font-size:13px;margin:2px;">${a.label}</a>`;
+        }
+        return `<button onclick="respondPending(${p.id}, '${a.data}', this)" style="padding:6px 12px;background:white;border:1px solid #1976D2;color:#1976D2;border-radius:6px;font-size:13px;margin:2px;cursor:pointer;">${a.label}</button>`;
+      }).join('');
+      // 事象時刻が抽出できれば目立つように表示
+      const timeBadge = eventTime
+        ? `<div style="display:inline-block;background:#E65100;color:white;font-weight:700;font-size:16px;padding:3px 10px;border-radius:14px;margin-right:8px;vertical-align:middle;">📅 ${eventTime}</div>`
+        : `<div style="display:inline-block;background:#9E9E9E;color:white;font-size:12px;padding:3px 8px;border-radius:10px;margin-right:8px;vertical-align:middle;">時刻不明</div>`;
+      return `
+        <div data-id="${p.id}" style="border-left:3px solid #FFA726;background:#FFF8E1;padding:10px 14px;border-radius:0 6px 6px 0;">
+          <div style="margin-bottom:6px;">
+            ${timeBadge}
+            <span style="font-weight:600;color:#E65100;font-size:14px;vertical-align:middle;">${label}</span>
+          </div>
+          <div style="font-size:13px;color:#37474F;line-height:1.5;">${msg}</div>
+          <div style="font-size:11px;color:#90A4AE;margin-top:4px;">通知作成: ${created} UTC</div>
+          <div style="margin-top:8px;">${btnHtml}</div>
+        </div>`;
+    }).join('');
+  } catch(e) { console.error('pending load error', e); }
+}
+
+async function respondPending(notifId, data, btn) {
+  btn.disabled = true; btn.textContent = '送信中...';
+  try {
+    const resp = await fetch(`/api/pending-notifications/${notifId}/respond`, {
+      method: 'POST', headers: {'Content-Type':'application/json'}, credentials:'same-origin',
+      body: JSON.stringify({ data })
+    });
+    if (resp.ok) {
+      const card = btn.closest('[data-id]');
+      if (card) { card.style.opacity = 0; setTimeout(() => card.remove(), 300); }
+      setTimeout(loadPendingNotifications, 500);
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      btn.disabled = false; btn.textContent = '失敗';
+      alert('対応失敗: ' + (err.detail || resp.status));
+    }
+  } catch(e) {
+    btn.disabled = false; btn.textContent = '通信エラー';
+  }
+}
+
+window.addEventListener('DOMContentLoaded', loadPendingNotifications);
+setInterval(loadPendingNotifications, 30 * 1000);  // 30秒おきに自動更新
+
+async function loadLearningStats() {
+  try {
+    const resp = await fetch('/api/learning-stats', { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const el = document.getElementById('learning-stats-content');
+    if (!el) return;
+
+    // 炊飯器分類
+    const riceRows = [];
+    const labels = {cook: '炊飯', keep_warm: '保温', lid_only: '蓋だけ', lid_meal: '蓋+食事', unknown: '不明'};
+    for (const [cls, cnt] of Object.entries(data.rice.manual)) {
+      riceRows.push(`<tr><td>${labels[cls] || cls}</td><td>${cnt}</td><td>${data.rice.auto[cls] || 0}</td></tr>`);
+    }
+
+    // ソース名の日本語化
+    const sourceLabels = {
+      "rice_cooker": "炊飯器電源",
+      "rice_cooker_lid": "炊飯器の蓋",
+      "fridge": "冷蔵庫",
+      "toilet_door": "トイレ",
+      "bath_door": "風呂ドア",
+      "bath_motion": "脱衣所モーション",
+      "family_report": "家族手動",
+      "tablet_report": "祖母タブレット",
+      "family_prompt": "家族の伝言"
+    };
+
+    // 通知応答（詳細）
+    const notifTypeLabels = {
+      "rice_action": "炊飯器の動作",
+      "session_confirm": "食事候補",
+      "bath_classification": "お風呂候補",
+      "lock_confirm": "ロック確認",
+      "device_locked": "ロック通知",
+      "meal_alert": "食事多回数警告",
+      "long_toilet_stay": "トイレ長時間",
+      "bath_emergency": "浴室緊急",
+      "anomaly_inactivity": "活動なし",
+      "anomaly_night_rice": "深夜炊飯",
+      "tablet_unverified": "祖母タブレット未確認",
+      "hair_dryer_missing": "ドライヤー未使用",
+      "bath_reminder": "入浴リマインド",
+      "attribute_session": "セッション割当",
+    };
+    const notifRows = data.notifications.map(n => {
+      const dismissedRate = n.completed > 0 ? Math.round(100 * n.dismissed / n.completed) : 0;
+      const label = notifTypeLabels[n.notification_type] || n.notification_type;
+      return `<tr>
+        <td>${label}</td>
+        <td style="text-align:center;">${n.total}</td>
+        <td style="text-align:center;">${n.completed}</td>
+        <td style="text-align:center;">${n.dismissed} (${dismissedRate}%)</td>
+        <td style="text-align:center;">${n.unknown_count}</td>
+        <td style="text-align:center;">${n.other_family_count}</td>
+        <td style="text-align:center;color:${n.pending > 0 ? '#E65100' : '#999'};">${n.pending}</td>
+      </tr>`;
+    }).join('');
+
+    // センサー反応回数
+    const sensor24hRows = data.sensor_24h.map(s =>
+      `<tr><td>${sourceLabels[s.source] || s.source}</td><td style="text-align:right;">${s.cnt}</td></tr>`
+    ).join('');
+    const sensor7dRows = data.sensor_7d.map(s =>
+      `<tr><td>${sourceLabels[s.source] || s.source}</td><td style="text-align:right;">${s.cnt}</td></tr>`
+    ).join('');
+
+    el.innerHTML = `
+      <div style="font-size:13px;color:#666;margin-bottom:12px;">
+        家族の判断がどれくらい蓄積されているか、システムが何回自動判定したかを表示します。
+      </div>
+
+      <div style="background:#FFF8E1;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#E65100;margin-bottom:6px;">🍚 炊飯器の動作分類</div>
+        <table style="width:100%;font-size:13px;">
+          <thead><tr style="background:#FFE0B2;"><th style="padding:4px;">分類</th><th>家族手動</th><th>自動判定</th></tr></thead>
+          <tbody>${riceRows.join('')}</tbody>
+        </table>
+        <div style="font-size:11px;color:#666;margin-top:6px;">
+          家族手動: ${data.rice.total_manual}件 / システム自動: ${data.rice.total_auto}件
+          ${data.rice.total_manual >= 3 ? ' ✅ 自動判定有効化中' : ' ⚠️ 学習データ蓄積中（3件以上で自動化）'}
+        </div>
+      </div>
+
+      <div style="background:#E1F5FE;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#01579B;margin-bottom:6px;">🛁 お風呂の利用判定</div>
+        <div style="font-size:13px;">
+          検知件数: <strong>${data.bath.total}</strong> 件 |
+          家族確認済: <strong>${data.bath.confirmed}</strong> 件 |
+          未確認: <strong>${data.bath.pending}</strong> 件
+        </div>
+      </div>
+
+      <div style="background:#F3E5F5;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#4A148C;margin-bottom:6px;">🍱 食事/活動セッション</div>
+        <div style="font-size:13px;">
+          確認済: <strong>${data.sessions.confirmed}</strong> 件 |
+          未確認: <strong>${data.sessions.pending}</strong> 件 |
+          誤検知扱い: <strong>${data.sessions.rejected}</strong> 件
+        </div>
+      </div>
+
+      <div style="background:#E8F5E9;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#1B5E20;margin-bottom:6px;">📡 センサー反応回数（直近24時間）</div>
+        ${sensor24hRows ? `<table style="width:100%;font-size:13px;"><tbody>${sensor24hRows}</tbody></table>` : '<div style="font-size:12px;color:#666;">直近24時間の反応なし</div>'}
+        <details style="margin-top:8px;">
+          <summary style="cursor:pointer;font-size:12px;color:#666;">直近7日間も見る</summary>
+          ${sensor7dRows ? `<table style="width:100%;font-size:12px;margin-top:6px;"><tbody>${sensor7dRows}</tbody></table>` : '<div style="font-size:12px;color:#666;">7日間の反応なし</div>'}
+        </details>
+      </div>
+
+      <div style="background:#FFF3E0;padding:12px;border-radius:8px;margin-bottom:12px;">
+        <div style="font-weight:700;color:#E65100;margin-bottom:6px;">📷 顔学習キュー</div>
+        <div style="font-size:13px;">
+          未識別の候補顔: <strong>${data.face_candidates_pending}</strong> 件
+          ${data.face_candidates_pending > 0 ? ' <a href="/family/face-learning" style="color:#1976D2;font-weight:700;">→ ラベル付けする</a>' : ''}
+        </div>
+      </div>
+
+      <div style="background:#F5F5F5;padding:12px;border-radius:8px;">
+        <div style="font-weight:700;margin-bottom:6px;">📨 通知への応答（詳細）</div>
+        <table style="width:100%;font-size:11px;">
+          <thead><tr style="background:#E0E0E0;">
+            <th style="text-align:left;padding:4px;">通知種類</th>
+            <th style="text-align:center;padding:4px;">合計</th>
+            <th style="text-align:center;padding:4px;">応答済</th>
+            <th style="text-align:center;padding:4px;">誤検知</th>
+            <th style="text-align:center;padding:4px;">不明</th>
+            <th style="text-align:center;padding:4px;">他家族</th>
+            <th style="text-align:center;padding:4px;">未対応</th>
+          </tr></thead>
+          <tbody>${notifRows}</tbody>
+        </table>
+        <div style="font-size:10px;color:#666;margin-top:6px;">
+          「不明」「他家族」が多い通知種類は、判定材料が不足している可能性。「未対応」が多いと運用が回っていない。
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    console.error('learning stats error', e);
+  }
+}
+window.addEventListener('DOMContentLoaded', () => {
+  // details が開かれた時に読み込む（初回展開のみ）
+  const details = document.querySelector('details');  // 一旦最初の details で代替
+  // 簡易版: 常に裏で読み込んでおく
+  loadLearningStats();
+});
+
 async function loadHeatmap() {
   try {
     const resp = await fetch('/api/heatmap?days=7', { credentials: 'same-origin' });
     if (!resp.ok) return;
-    const data = await resp.json();
-    document.getElementById('hm-meals').textContent = data.summary.meals;
-    document.getElementById('hm-baths').textContent = data.summary.baths;
-    document.getElementById('hm-toilets').textContent = data.summary.toilets;
-
-    const table = document.getElementById('heatmap-table');
-    table.innerHTML = '';
-    // ヘッダー: 時間
-    const thead = document.createElement('thead');
-    const hr = document.createElement('tr');
-    hr.appendChild(document.createElement('th'));
-    for (let h = 0; h < 24; h++) {
-      const th = document.createElement('th');
-      th.textContent = h;
-      th.style.cssText = 'padding:2px 4px;color:#999;font-weight:400;';
-      hr.appendChild(th);
-    }
-    thead.appendChild(hr);
-    table.appendChild(thead);
-
-    const tbody = document.createElement('tbody');
-    const max = Math.max(data.max, 1);
-    data.dates.forEach((dateLabel, i) => {
-      const tr = document.createElement('tr');
-      const th = document.createElement('th');
-      th.textContent = dateLabel;
-      th.style.cssText = 'padding:4px 8px;text-align:right;font-weight:500;color:#666;white-space:nowrap;';
-      tr.appendChild(th);
-      data.matrix[i].forEach(cnt => {
-        const td = document.createElement('td');
-        const intensity = cnt / max;
-        const alpha = intensity === 0 ? 0.05 : 0.15 + intensity * 0.85;
-        td.style.cssText = `width:18px;height:22px;background:rgba(76,175,80,${alpha});text-align:center;color:${intensity > 0.5 ? '#fff' : '#333'};border:1px solid #fff;`;
-        td.textContent = cnt > 0 ? cnt : '';
-        td.title = `${cnt}件`;
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-    table.appendChild(tbody);
+    _heatmapData = await resp.json();
+    renderHeatmapTabs();
+    renderHeatmapTable();
   } catch(e) {
     console.error('heatmap load error', e);
   }
 }
 window.addEventListener('DOMContentLoaded', loadHeatmap);
+
+// 食事写真ギャラリー
+async function loadMealPhotos() {
+  const grid = document.getElementById('meal-photo-gallery');
+  if (!grid) return;
+  try {
+    const resp = await fetch('/api/meal-photos?days=7', { credentials: 'same-origin' });
+    if (!resp.ok) {
+      grid.innerHTML = '<div style="grid-column:1/-1; color:#999; text-align:center; padding:20px;">読み込み失敗</div>';
+      return;
+    }
+    const photos = await resp.json();
+    if (!photos.length) {
+      grid.innerHTML = '<div style="grid-column:1/-1; color:#999; text-align:center; padding:20px;">まだ写真がありません</div>';
+      return;
+    }
+    grid.innerHTML = photos.map(p => {
+      const t = (p.taken_at || '').replace('T', ' ').slice(5, 16);
+      const label = p.label || '食事';
+      return `<div style="position:relative; border-radius:10px; overflow:hidden; background:#FAFAFA; box-shadow:0 2px 4px rgba(0,0,0,0.08); cursor:pointer;" onclick="window.open('/photos/${p.file_name}', '_blank')">
+        <img src="/photos/${p.file_name}" style="width:100%; aspect-ratio:1; object-fit:cover; display:block;">
+        <div style="padding:6px 8px; font-size:11px;">
+          <div style="font-weight:700; color:var(--text);">${label}</div>
+          <div style="color:var(--text-muted);">${t}</div>
+        </div>
+        <button onclick="event.stopPropagation(); deleteMealPhoto(${p.id});" style="position:absolute; top:4px; right:4px; background:rgba(255,255,255,0.85); border:none; border-radius:50%; width:24px; height:24px; cursor:pointer; font-size:12px;" title="削除">✕</button>
+      </div>`;
+    }).join('');
+  } catch(e) {
+    grid.innerHTML = '<div style="grid-column:1/-1; color:#999;">通信エラー</div>';
+  }
+}
+
+async function deleteMealPhoto(id) {
+  if (!confirm('この写真を削除しますか？')) return;
+  const resp = await fetch(`/api/meal-photos/${id}`, { method:'DELETE', credentials:'same-origin' });
+  if (resp.ok) loadMealPhotos();
+}
+
+window.addEventListener('DOMContentLoaded', loadMealPhotos);
 
 async function saveSetting(key, value) {
   try {
@@ -732,32 +1317,6 @@ async function saveSetting(key, value) {
       const d = await resp.json();
       alert('設定保存失敗: ' + (d.detail || '不明'));
     }
-  } catch(e) { alert('通信エラー: ' + e.message); }
-}
-
-async function addCareTask() {
-  const name = document.getElementById('new-task-name').value.trim();
-  const assignee = document.getElementById('new-task-assignee').value.trim();
-  const hourStr = document.getElementById('new-task-hour').value.trim();
-  if (!name) { alert('タスク名を入力してください'); return; }
-  const hour = hourStr === '' ? null : parseInt(hourStr);
-  if (hour !== null && (isNaN(hour) || hour < 0 || hour > 23)) { alert('時刻は0〜23'); return; }
-  try {
-    const resp = await fetch('/api/care-tasks', {
-      method: 'POST', headers: {'Content-Type': 'application/json'}, credentials: 'same-origin',
-      body: JSON.stringify({ task_name: name, assignee_name: assignee || null, reminder_hour: hour })
-    });
-    if (resp.ok) { location.reload(); }
-    else { const d = await resp.json(); alert('追加失敗: ' + (d.detail || '不明')); }
-  } catch(e) { alert('通信エラー: ' + e.message); }
-}
-
-async function deleteCareTask(id, name) {
-  if (!confirm(`「${name}」を削除しますか？`)) return;
-  try {
-    const resp = await fetch(`/api/care-tasks/${id}`, { method: 'DELETE', credentials: 'same-origin' });
-    if (resp.ok) { location.reload(); }
-    else { alert('削除失敗'); }
   } catch(e) { alert('通信エラー: ' + e.message); }
 }
 
@@ -791,6 +1350,9 @@ ws.onmessage = (e) => {
   const data = JSON.parse(e.data);
   if (data.source && data.event_type === 'power_reading') {
     document.getElementById('live-power').textContent = data.value ? data.value.toFixed(1) : '0';
+  } else if (data.source === 'camera') {
+    // カメライベントは件数が多すぎて他データが埋もれるため家族UIではリロードトリガーから除外
+    return;
   } else if (isToday) {
     // 今日の画面のみ自動リロード（過去日はリロードしない）
     setTimeout(() => location.reload(), 1000);

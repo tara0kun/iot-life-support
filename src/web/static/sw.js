@@ -1,7 +1,7 @@
 // Service Worker: タブレットの最後の表示をキャッシュし、オフライン時に表示する
 // stale-while-revalidate 戦略
 
-const CACHE_NAME = 'tablet-v1';
+const CACHE_NAME = 'tablet-v5';  // 今日の食事写真セクション追加
 const STATIC_ASSETS = [
   '/static/manifest.json',
   '/static/icon-192.png',
