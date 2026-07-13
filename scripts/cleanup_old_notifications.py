@@ -43,7 +43,7 @@ def main():
         cur = conn.execute(f"""
             SELECT COUNT(*) FROM pending_notifications
              WHERE completed_at IS NULL
-               AND created_at < datetime('now', '-{PENDING_ORPHAN_DAYS} days', 'localtime')
+               AND created_at < datetime('now', '-{PENDING_ORPHAN_DAYS} days')
         """)
         n_expiring = cur.fetchone()[0]
 
@@ -51,7 +51,7 @@ def main():
         cur = conn.execute(f"""
             SELECT COUNT(*) FROM pending_notifications
              WHERE completed_at IS NOT NULL
-               AND completed_at < datetime('now', '-{PENDING_COMPLETE_DAYS} days', 'localtime')
+               AND completed_at < datetime('now', '-{PENDING_COMPLETE_DAYS} days')
         """)
         n_delete_notif = cur.fetchone()[0]
 
@@ -83,20 +83,20 @@ def main():
             print("\n[dry-run] 変更なし。実行するには --dry-run を外す")
             return
 
-        # expired マーク
+        # expired マーク (completed_at は他の全 UPDATE と揃えて UTC で保存)
         conn.execute(f"""
             UPDATE pending_notifications
-               SET completed_at = datetime('now', 'localtime'),
+               SET completed_at = CURRENT_TIMESTAMP,
                    completed_by = 'auto_expired',
                    completed_action = 'expired'
              WHERE completed_at IS NULL
-               AND created_at < datetime('now', '-{PENDING_ORPHAN_DAYS} days', 'localtime')
+               AND created_at < datetime('now', '-{PENDING_ORPHAN_DAYS} days')
         """)
         # 削除
         conn.execute(f"""
             DELETE FROM pending_notifications
              WHERE completed_at IS NOT NULL
-               AND completed_at < datetime('now', '-{PENDING_COMPLETE_DAYS} days', 'localtime')
+               AND completed_at < datetime('now', '-{PENDING_COMPLETE_DAYS} days')
         """)
         conn.execute(f"""
             DELETE FROM session_events
