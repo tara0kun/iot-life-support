@@ -92,7 +92,7 @@ def _today_toilet_count(grandma_id: int = 1) -> int:
         row = conn.execute(
             """SELECT COUNT(*) as cnt FROM events
                WHERE started_at LIKE ?
-               AND (source = 'toilet' AND event_type = 'open'
+               AND (source = 'toilet_door' AND event_type = 'open'
                     OR source IN ('family_report', 'tablet_report') AND event_type = 'トイレ')
                AND (person_id = ? OR person_id IS NULL)""",
             (f"{today}%", grandma_id),
@@ -241,7 +241,7 @@ def handle_menu() -> dict:
 
 
 def _load_public_base_url() -> str:
-    """data/tunnel_url.txt から最新の Cloudflare Tunnel URL を取得。"""
+    """data/tunnel_url.txt から公開 URL を取得 (6/3〜 Tailscale Funnel の固定 URL)。"""
     from pathlib import Path
     url_file = Path(__file__).resolve().parent.parent / "data" / "tunnel_url.txt"
     if url_file.exists():

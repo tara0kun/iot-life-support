@@ -156,7 +156,12 @@ async def tablet_view(request: Request):
     today_flower_color = _date_to_color(now.date())
 
     # 今日の食事写真（祖母が自分の食事を見て思い出すため）
-    today_start = now.strftime("%Y-%m-%d 00:00:00")
+    # taken_at は DEFAULT CURRENT_TIMESTAMP (UTC) 保存なので、cutoff も UTC 換算
+    # 例: JST 07:00 撮影 → UTC 前日22:00 保存、JST の "今日" 判定で取りこぼさないため
+    from datetime import timezone
+    today_start_utc = (now.replace(hour=0, minute=0, second=0, microsecond=0)
+                       .astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
+    today_start = today_start_utc
     conn = get_conn()
     try:
         meal_photos_today = [dict(r) for r in conn.execute(
@@ -1006,7 +1011,10 @@ async def api_list_meal_photos(request: Request, days: int = 7):
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     days = max(1, min(days, 30))
-    since = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    # taken_at は UTC 保存なので cutoff も UTC に統一 (L005 再発防止)
+    from datetime import timezone
+    since = ((datetime.now() - timedelta(days=days))
+             .astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S"))
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -1261,7 +1269,7 @@ def _current_tunnel_url() -> str:
 def _build_url_reply() -> str:
     url = _current_tunnel_url()
     if not url:
-        return "⚠️ 現在公開URLが未発行です。ラズパイ側で `bash scripts/start_tunnel.sh` を実行してください。"
+        return "⚠️ 現在公開URLが未発行です。ラズパイ側で `sudo tailscale funnel --bg 8000` を実行してください。"
     token = _load_tablet_token()
     tablet_url = f"{url}/tablet?token={token}" if token else f"{url}/tablet"
     return (
@@ -1336,7 +1344,7 @@ async def line_webhook(request: Request):
         reply_token = ev.get("replyToken", "")
 
         # 全受信メッセージのsender_idをログ（家族追加時のID取得用）
-        print(f"RECV type={ev_type} sender={sender_id}", flush=True)
+        _webhook_log.info("RECV type=%s sender=%s", ev_type, sender_id)
 
         # メッセージ本文を先に取得（登録コマンド判定のため）
         text_for_check = ""
