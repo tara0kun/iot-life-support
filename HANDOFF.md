@@ -151,6 +151,37 @@ Basic 認証: **過去に設定済でパスワード不明**、BIGLOBE PPPoE 認
 
 ---
 
+## 🚨 外部死活監視 (healthchecks.io) — セットアップ手順
+
+Pi が完全ダウンしても気付ける仕組み。6/25-7/1 の 6日間ダウンを気付けなかった反省から追加。
+
+### セットアップ (1回だけ、5分)
+
+1. https://healthchecks.io/ で無料アカウント作成 (email 認証のみ、クレカ不要)
+2. **New Check** → Name: `iot-life-support`、Schedule: **Simple** / Period: **10 min** / Grace: **5 min**
+3. できた **Ping URL** (例: `https://hc-ping.com/abc12345-...`) をコピー
+4. Pi 側 `.env` に貼付:
+   ```bash
+   nano .env
+   # HEARTBEAT_URL=https://hc-ping.com/<UUID>  ← ここを埋める
+   ```
+5. `bash scripts/heartbeat.sh` を手動実行して healthchecks.io ダッシュボードで "up" になるか確認
+6. **Integrations** → Slack/Email/Webhook 好きな通知先を追加
+   - 例: **Email** に自分のメール登録 → Pi が15分無音でメール届く
+   - 例: **Webhook** に LINE Notify or 自作エンドポイント URL を登録
+
+### 挙動
+
+- Pi 側 cron `*/5 * * * *` が `heartbeat.sh` を実行、`HEARTBEAT_URL` に GET
+- サービス全部 active なら `HEARTBEAT_URL` (成功)、どれか停止なら `HEARTBEAT_URL/fail` (失敗)
+- healthchecks.io が **15分無音で "down" 判定** → 登録済 Integration 経由で即通知
+
+### 一時無効化
+
+`.env` の `HEARTBEAT_URL=` を空にすれば heartbeat.sh は何もしない。
+
+---
+
 ## 🌐 リモート接続情報（Tailscale）
 
 GW で祖母宅に Pi を移しても、自宅から SSH 可能。

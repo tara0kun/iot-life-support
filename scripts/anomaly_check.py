@@ -42,9 +42,20 @@ def _mark_notified(key: str):
 def _last_sensor_activity(conn) -> datetime | None:
     """全センサー中の最新イベント時刻を返す。"""
     row = conn.execute(
-        """SELECT MAX(started_at) as latest FROM events
-           WHERE source IN ('rice_cooker', 'camera', 'bath_door', 'bath_motion',
-                            'toilet', 'fridge', 'contact_sensor', 'power_monitor')"""
+        """SELECT MAX(latest) AS latest FROM (
+             SELECT MAX(started_at) AS latest FROM events
+              WHERE source IN (
+                'rice_cooker', 'camera', 'bath_door', 'bath_motion',
+                'toilet_door', 'fridge', 'rice_cooker_lid',
+                'family_report', 'tablet_report', 'family_override'
+              )
+             UNION ALL
+             SELECT MAX(started_at) FROM events
+              WHERE source='bathroom_meter' AND event_type IN ('shower_start','shower_end')
+             UNION ALL
+             SELECT MAX(completed_at) FROM pending_notifications
+              WHERE completed_at IS NOT NULL
+           )"""
     ).fetchone()
     if not row or not row["latest"]:
         return None
@@ -158,7 +169,7 @@ def check_fridge_open():
     try:
         row = conn.execute(
             """SELECT started_at, event_type FROM events
-               WHERE source = 'fridge' OR (source = 'contact_sensor' AND raw_meta LIKE '%冷蔵庫%')
+               WHERE source = 'fridge'
                ORDER BY started_at DESC LIMIT 1"""
         ).fetchone()
     finally:
