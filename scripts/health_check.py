@@ -161,8 +161,9 @@ def check_recent_events() -> tuple[bool, str]:
             row = conn.execute(
                 """SELECT MAX(started_at) as latest FROM events
                    WHERE source IN ('rice_cooker', 'camera', 'bath_door',
-                                    'bath_motion', 'toilet', 'fridge',
-                                    'contact_sensor', 'power_monitor')"""
+                                    'bath_motion', 'toilet_door', 'fridge',
+                                    'rice_cooker_lid', 'family_report',
+                                    'tablet_report', 'family_override')"""
             ).fetchone()
         finally:
             conn.close()
