@@ -92,7 +92,7 @@ def _today_toilet_count(grandma_id: int = 1) -> int:
         row = conn.execute(
             """SELECT COUNT(*) as cnt FROM events
                WHERE started_at LIKE ?
-               AND (source = 'toilet' AND event_type = 'open'
+               AND (source = 'toilet_door' AND event_type = 'open'
                     OR source IN ('family_report', 'tablet_report') AND event_type = 'トイレ')
                AND (person_id = ? OR person_id IS NULL)""",
             (f"{today}%", grandma_id),
