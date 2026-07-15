@@ -1,6 +1,6 @@
 # 認知症祖母IoTサポート プロジェクト 進捗記録
 
-最終更新: 2026-07-10
+最終更新: 2026-07-15
 
 ---
 
@@ -116,22 +116,38 @@
 | 7/10 | 依存 105 パッケージが pinning ゼロ、Pi 破損時の再現不能 | `requirements.txt` に `pip freeze` を反映 | (7/10 コミット) |
 | 7/10 | `dev` が `main` より 63コミット先行 (本番実質 dev で稼働) | `dev` → `main` merge (fast-forward) | (7/10 コミット) |
 
-### ✅ 運用観察結果（7/10 時点）
+### 🆕 7/13-7/15 セッション追加（誤検知修正・schema drift 根治・supervisor 導入）
 
-- 7/1 復旧以降 9日連続稼働、ヘルスチェック全項目 ✅
-- 通知応答率 **97%** (家族の運用が回っている)
-- events テーブル 45万件、`bathroom_meter` が 71% を占める (今後 TTL 削除検討)
-- 総 Python LOC 12,410、モジュール 55、cron 11 個、systemd unit 4 個
-- lessons: `iot-rpi L008` (DHCP変動) + `infra L005` (Tailscale Funnel) 追加済
+| 日付 | 課題 | 対策 | コミット |
+|---|---|---|---|
+| 7/13 | 家族から「センサ動いてるのに『4時間反応なし』アラート来る」報告 | `anomaly_check._last_sensor_activity` 他 4箇所で旧 source 名 (`toilet`/`contact_sensor`/`power_monitor`) 参照 + `family_report`/`tablet_report`/`family_override` 未包含を修正 | `40b3d69` |
+| 7/13 | TZ 混在バグ 3箇所発覚 (L005 再発) | `meal_photos.taken_at` (UTC) vs Python cutoff (JST) の不整合、cleanup script の `localtime` 修飾ミス、`completed_at` UPDATE の TZ 不整合 | `d7312f6` |
+| 7/13 | 7/10-7/13 の緊急バグ修正を main に反映 | dev → main merge (PR #4) | (PR #4) |
+| 7/15 | 「祖父が浴室ドアを開けっ放し → 後で家族が閉めた瞬間に入浴誤判定」 | `BathMonitor.door_closed()` に Phase1 (5分モーション確定待ち) を追加。Phase1 内モーション無しはキャンセル、DB イベント記録もなし | `ab13a8a` |
+| 7/15 | SwitchBot 湿度センサが 6時間停止 (BLE task が silent に死んだ、L010 再発) | `src/task_supervisor.py` 導入、5 sensor task を `supervise()` で wrap。例外/正常終了で 30秒後に自動再起動、上限到達で LINE 保険通知 | `01c105d` |
+| 7/15 | 7/15 の 2 コミットを main に反映 | dev → main merge (PR #5) | (PR #5) |
 
-### ⚠️ 未対応 (優先度順)
+### ✅ 運用観察結果（7/15 時点）
 
-1. **外部死活監視** (Pi ダウン 6日気付かなかった問題の再発余地) — UptimeRobot 無料枠推奨
-2. **BIGLOBE PPPoE 認証情報の再入力** (PR-500KI が初期化状態、次回帰省時 or NTT 116 電話)
-3. **電源物理接続の固定** (USB-C 端子 / 壁コン直挿し、次回帰省時)
-4. **`pending_notifications` の archive 化 cron** (30日以上前 413件を archive_pending_notifications へ移動)
-5. **`bathroom_meter` の DB 保持ポリシー** (24h TTL or in-memory 集約への移行検討)
+- 7/1 復旧以降 14日連続稼働 (途中 iot-monitor restart 数回)、ヘルスチェック全項目 ✅
+- 通知応答率 **97-100%** (家族の運用が回っている)
+- **task supervisor 導入後、次の BLE task 死亡時に自動復活する仕組みが完成** (7/13/7/15 の再発を防ぐ)
+- 総 Python LOC 12,400+ (task_supervisor.py 追加で +80)、モジュール 55、cron 13、systemd unit 4
+- lessons: `iot-rpi L008/L009/L010` + `infra L005/L006` + `python L006` (7/13-15 で 6件追加)
+
+### ⚠️ 未対応 (優先度順、7/15 更新)
+
+1. **BIGLOBE PPPoE 認証情報の再入力** (PR-500KI が初期化状態、次回帰省時 or NTT 116 電話)
+2. **電源物理接続の固定** (USB-C 端子 / 壁コン直挿し、次回帰省時)
+3. **浴室アラート案A の効果監視** (7/19-7/26、誤検知/検知漏れがあれば A' 導入検討)
+4. **`pending_notifications` の archive 化 cron** (現状 30日超未応答は auto_expired 済、90日超完了済で物理削除される仕組みは動作中)
+5. **`bathroom_meter` の DB 保持ポリシー** (現状 7日 TTL で cleanup_old_notifications.py が処理中)
 6. **sshd `PermitRootLogin` 見直し** (現状不明、要確認)
+
+### ✅ 解決済 (以前 未対応だったもの)
+
+- **外部死活監視** → `scripts/heartbeat.sh` + healthchecks.io (7/10)
+- **iot-monitor 内 asyncio task の静かな死** → task supervisor (7/15)
 7. **`src/web/app.py` 2,253行の分割** (auth/api/dashboard を routers/ 配下へ)
 
 ### ✅ 5/8 までに対処済（運用観察待ち）
