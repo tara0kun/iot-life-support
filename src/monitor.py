@@ -22,6 +22,7 @@ from src.sessions import aggregate_sessions, sessions_today
 from src.lock_manager import lock_device, should_warn_recent_meal
 from src.notifier import notify_meal_alert, notify_device_locked, send_line_message
 from src.bath_monitor import BathMonitor
+from src.task_supervisor import supervise
 
 logging.basicConfig(
     level=logging.INFO,
@@ -1009,8 +1010,8 @@ async def main() -> None:
         on_stop=on_plug_stop,
         on_reading=on_plug_reading,
     )
-    tasks.append(asyncio.create_task(plug.run()))
-    log.info("P110M電力監視を開始")
+    tasks.append(asyncio.create_task(supervise("matter_plug", plug.run)))
+    log.info("P110M電力監視を開始 (supervised)")
 
     # SwitchBot 温湿度計（浴室）監視（SWITCHBOT_METER_ENABLED=1 のときのみ稼働）
     sb_enabled = env.get("SWITCHBOT_METER_ENABLED", "0") == "1"
@@ -1112,8 +1113,8 @@ async def main() -> None:
             poll_seconds=float(env.get("SWITCHBOT_METER_POLL_SECONDS", "10")),
             on_reading=_on_meter_reading,
         )
-        tasks.append(asyncio.create_task(meter.run()))
-        log.info("SwitchBot 温湿度計 BLE 監視を開始（MAC=%s）", sb_mac)
+        tasks.append(asyncio.create_task(supervise("bathroom_meter", meter.run)))
+        log.info("SwitchBot 温湿度計 BLE 監視を開始（MAC=%s、supervised）", sb_mac)
     else:
         log.info(
             "SwitchBot 温湿度計監視は無効（SWITCHBOT_METER_ENABLED=%s, MAC=%s）",
@@ -1135,8 +1136,8 @@ async def main() -> None:
             on_start=on_plug_start,
             on_stop=on_plug_stop,
         )
-        tasks.append(asyncio.create_task(dryer.run()))
-        log.info("ドライヤー P110M監視を開始 (node=%d)", hair_dryer_node)
+        tasks.append(asyncio.create_task(supervise("hair_dryer_plug", dryer.run)))
+        log.info("ドライヤー P110M監視を開始 (node=%d、supervised)", hair_dryer_node)
     else:
         log.info("HAIR_DRYER_NODE_ID 未設定 → ドライヤー監視は無効")
 
@@ -1156,8 +1157,8 @@ async def main() -> None:
             on_change=on_contact_change,
             on_motion=on_motion_detected,
         )
-        tasks.append(asyncio.create_task(contact.run()))
-        log.info("T110/T100センサー監視を開始")
+        tasks.append(asyncio.create_task(supervise("contact_sensor", contact.run)))
+        log.info("T110/T100センサー監視を開始 (supervised)")
 
     # C220 カメラ + 顔認識
     camera_ip = env.get("CAMERA_IP", "")
@@ -1184,8 +1185,8 @@ async def main() -> None:
             on_person=on_person_detected,
             face_identifier=face_id_obj,
         )
-        tasks.append(asyncio.create_task(cam.run()))
-        log.info("C220カメラ監視を開始")
+        tasks.append(asyncio.create_task(supervise("camera", cam.run)))
+        log.info("C220カメラ監視を開始 (supervised)")
 
     # セッション集約
     tasks.append(asyncio.create_task(session_aggregator(60)))
