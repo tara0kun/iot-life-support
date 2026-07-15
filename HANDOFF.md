@@ -1,4 +1,4 @@
-# 引き継ぎメモ（最終更新: 2026-07-10）
+# 引き継ぎメモ（最終更新: 2026-07-15）
 
 > 認知症の祖母をIoTで支援するプロジェクトの開発引き継ぎドキュメント。
 > 次回 Claude セッションで「**HANDOFF.md と PROGRESS.md を読んで続きを進めて**」と伝えればコンテキスト復元できる。
@@ -127,7 +127,18 @@
 | 47 | **`requirements.txt` 導入** (`pip freeze` 105 パッケージ pinning)。SD破損時の再構築で完全再現可能に | (7/10) |
 | 48 | **`dev` → `main` merge** (63コミット分)。本番運用ブランチのズレを解消 | (7/10) |
 
-### ⚠️ 既知の問題・運用観察（7/10 現在）
+### 🆕 7/13-7/15 セッション追加（誤検知修正・schema drift 根治・supervisor 導入）
+
+| # | 変更 | コミット |
+|---|---|---|
+| 49 | **安否確認・冷蔵庫・トイレ集計の source 名を最新化**。家族から「センサ動いてるのに誤検知アラート来る」報告 → `anomaly_check._last_sensor_activity` 他 4箇所で旧 source 名 (`toilet`/`contact_sensor`/`power_monitor`) を参照 + `family_report`/`tablet_report`/`family_override` を含めていなかったのを一斉修正 | `40b3d69` (7/13) |
+| 50 | **TZ 混在バグ 3箇所の追加修正** (L005 系)。`meal_photos.taken_at` (UTC) vs Python `datetime.now()` (JST) cutoff の不整合、cleanup script の `localtime` 修飾ミス、`completed_at` UPDATE の TZ 不整合 | `d7312f6` (7/13) |
+| 51 | **7/10-7/13 の緊急バグ修正 3 コミット を main に merge** | PR #4 (7/13) |
+| 52 | **BathMonitor Phase1 モーション確定待ち** (5分)。「祖父が浴室ドアを開けっ放しにする → 後で家族が閉めた瞬間に入浴誤判定 → 30分後アラート」の対策。ドア閉後 5分以内モーション無しは判定キャンセル | `ab13a8a` (7/15) |
+| 53 | **task supervisor 導入** (`src/task_supervisor.py`)。iot-monitor 内の全 5 sensor task を `supervise()` で wrap、例外/正常終了で 30秒後に自動再起動 (L010 根治)。7/13 と 7/15 に発生した「BLE task が silent に死んで 6時間気付かず」の再発防止 | `01c105d` (7/15) |
+| 54 | **7/15 の 2 コミット を main に merge** | PR #5 (7/15) |
+
+### ⚠️ 既知の問題・運用観察（7/15 現在）
 
 - **メモリ使用**: iot-monitor の RSS は起動から階段状に増えて約 1.5GB で頭打ち（dlib のピーク時バッファ）。10日連続稼働で完全にフラット (`memory_profile.log` で確認済)、`MEMORY_PROFILE=0` に戻して常用OK
 - **6/25-7/1 Pi 完全ダウン (6日間気付かず)**: 原因は物理電源断が最有力 (`EXT4-fs orphan cleanup on readonly fs` の痕跡)。復旧後 journald 永続化と週次スナップショットを追加、次回クラッシュ史を残せるように。**根本の再発防止 = 外部死活監視 (UptimeRobot 等) はまだ未実装**
@@ -135,7 +146,9 @@
 - **6/13〜 IPv4 WAN 不安定 → 6/16 完全停止**: 祖母宅の PR-500KI (NTT HGW) が初期化状態、WN-DEAX1800GR (IODATA) はただの DHCP クライアント。BIGLOBE PPPoE 認証情報を PR-500KI に再入力する必要あり、詳細は下記 `## 🌐 祖母宅ネットワーク構成` 参照
 - 顔登録: 祖母・はるか のみ。祖父・ゆきこ・みきこ・まきこ・なお は person 登録あるが encoding 未紐付（必要なら帰省時に登録）
 - **pending_notifications 502件中 413件が 30日以上前** = 掃除されず累積。実害は小さいが今後 archive_pending_notifications 移動 cron を検討
-- **未対応 TODO**: 外部死活監視 / 電源物理接続の固定 (物理作業) / sshd root ログイン可否見直し
+- **未対応 TODO**: 電源物理接続の固定 (物理作業) / sshd root ログイン可否見直し
+- **✅ 解決済**: 外部死活監視 (`scripts/heartbeat.sh` + healthchecks.io、7/10) / task supervisor (7/15)
+- **浴室アラート案A の効果監視**: 7/19-7/26 に「誤検知/検知漏れ」を確認、必要なら A' (モーション複数回要件) 導入検討 (`data/private/improvement-roadmap.md` 3.6 節)
 
 ### 🌐 祖母宅ネットワーク構成 (6/19 判明)
 
