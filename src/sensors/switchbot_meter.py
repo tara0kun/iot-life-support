@@ -143,11 +143,19 @@ class SwitchBotMeterMonitor:
             if r:
                 latest_reading = r
 
+        # BleakScanner __aexit__ が bluez のバグ等でハング → supervisor でも救えない
+        # 対策: asyncio.wait_for で 1サイクル全体にタイムアウトを付け、超過なら raise
+        # して task_supervisor に再起動させる (30秒後に BleakScanner を作り直す)
+        SCAN_CYCLE_TIMEOUT = self.poll_seconds + 30  # 通常10秒サイクル、40秒超で異常判定
+
+        async def _one_scan_cycle() -> None:
+            """1回の scan サイクルを実行。ハング検知のため wait_for で包む前提。"""
+            async with BleakScanner(detection_callback=detection_callback) as scanner:
+                await asyncio.sleep(self.poll_seconds)
+
         while self._running:
             try:
-                async with BleakScanner(detection_callback=detection_callback) as scanner:
-                    # poll_seconds 秒間スキャンし続ける
-                    await asyncio.sleep(self.poll_seconds)
+                await asyncio.wait_for(_one_scan_cycle(), timeout=SCAN_CYCLE_TIMEOUT)
                 if latest_reading and self._on_reading:
                     if latest_reading.timestamp.timestamp() != last_reading_ts:
                         last_reading_ts = latest_reading.timestamp.timestamp()
@@ -155,6 +163,11 @@ class SwitchBotMeterMonitor:
                             await self._on_reading(latest_reading)
                         except Exception as e:
                             log.warning("on_reading コールバックエラー: %s", e)
+            except asyncio.TimeoutError:
+                # BleakScanner のハング検知 → task_supervisor に再起動を委譲
+                log.error("BLE scan サイクルが %d秒 超過 (ハング疑い) → task 再起動を要求",
+                          SCAN_CYCLE_TIMEOUT)
+                raise RuntimeError("BLE scan stuck (BleakScanner __aexit__ hang)")
             except Exception as e:
                 log.warning("BLE スキャン失敗: %s（次回リトライ）", e)
                 await asyncio.sleep(5)
