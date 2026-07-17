@@ -131,17 +131,28 @@ class SwitchBotMeterMonitor:
 
         last_reading_ts = 0.0
         latest_reading: MeterReading | None = None
+        # デバッグ: 「なぜ detection_callback が呼ばれない/届かない」の切り分け用
+        # 発表後 (7/19-) の BLE 調査完了時に削除予定
+        _debug_stats = {"cb_calls": 0, "mac_match": 0, "parse_ok": 0, "last_addr": ""}
 
         def detection_callback(device, advertisement_data):
             nonlocal latest_reading
+            _debug_stats["cb_calls"] += 1
+            _debug_stats["last_addr"] = device.address
             if device.address.upper() != self.target_mac:
                 return
+            _debug_stats["mac_match"] += 1
             r = _parse_meter_advertisement(
                 advertisement_data.service_data or {},
                 advertisement_data.manufacturer_data or {},
             )
             if r:
+                _debug_stats["parse_ok"] += 1
                 latest_reading = r
+            else:
+                log.warning("[BLE debug] MAC マッチしたが parse 失敗: sd=%s md=%s",
+                            advertisement_data.service_data,
+                            advertisement_data.manufacturer_data)
 
         # BleakScanner __aexit__ が bluez のバグ等でハング → supervisor でも救えない
         # 対策: asyncio.wait_for で 1サイクル全体にタイムアウトを付け、超過なら raise
@@ -153,9 +164,16 @@ class SwitchBotMeterMonitor:
             async with BleakScanner(detection_callback=detection_callback) as scanner:
                 await asyncio.sleep(self.poll_seconds)
 
+        cycle_count = 0
         while self._running:
             try:
                 await asyncio.wait_for(_one_scan_cycle(), timeout=SCAN_CYCLE_TIMEOUT)
+                cycle_count += 1
+                # 30秒毎 (=3サイクル) に BLE 統計をログ (デバッグ、後で削除)
+                if cycle_count % 3 == 0:
+                    log.info("[BLE debug] cycle=%d cb_calls=%d mac_match=%d parse_ok=%d last_addr=%s target=%s",
+                             cycle_count, _debug_stats["cb_calls"], _debug_stats["mac_match"],
+                             _debug_stats["parse_ok"], _debug_stats["last_addr"], self.target_mac)
                 if latest_reading and self._on_reading:
                     if latest_reading.timestamp.timestamp() != last_reading_ts:
                         last_reading_ts = latest_reading.timestamp.timestamp()
