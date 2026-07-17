@@ -55,46 +55,71 @@ def _parse_meter_advertisement(
     Manufacturer Data (Outdoor): MAC(6) + 予備(2) + temp_dec(1) + temp_int|sign(1) + humidity(1)
     """
     sd = service_data.get(SWITCHBOT_SERVICE_UUID)
-    if not sd or len(sd) < 3:
-        return None
-    try:
-        device_type = chr(sd[0] & 0x7f)
-        if device_type not in ("w", "T", "i"):
-            return None
-        battery = sd[2] & 0x7f
 
-        # Outdoor Meter ('w'): 温湿度は Manufacturer Data に
-        if device_type == "w" and manufacturer_data:
-            md = manufacturer_data.get(SWITCHBOT_COMPANY_ID)
-            if md and len(md) >= 11:
+    # Case A: Service Data あり (Indoor Meter T/i、または Outdoor 併用時)
+    if sd and len(sd) >= 3:
+        try:
+            device_type = chr(sd[0] & 0x7f)
+            if device_type in ("w", "T", "i"):
+                battery = sd[2] & 0x7f
+
+                # Outdoor Meter ('w'): 温湿度は Manufacturer Data に
+                if device_type == "w" and manufacturer_data:
+                    md = manufacturer_data.get(SWITCHBOT_COMPANY_ID)
+                    if md and len(md) >= 11:
+                        temp_decimal = md[8] & 0x0f
+                        temp_int = md[9] & 0x7f
+                        temp_sign = -1 if (md[9] & 0x80) == 0 else 1
+                        temperature = temp_sign * (temp_int + temp_decimal / 10.0)
+                        humidity = md[10] & 0x7f
+                        return MeterReading(
+                            timestamp=datetime.now(),
+                            temperature_c=temperature,
+                            humidity_pct=int(humidity),
+                            battery_pct=int(battery) if 0 < battery <= 100 else None,
+                        )
+
+                # Indoor Meter (T/i): 温湿度は Service Data の byte3-5
+                if len(sd) >= 6:
+                    temp_decimal = sd[3] & 0x0f
+                    temp_int = sd[4] & 0x7f
+                    temp_sign = -1 if (sd[4] & 0x80) == 0 else 1
+                    temperature = temp_sign * (temp_int + temp_decimal / 10.0)
+                    humidity = sd[5] & 0x7f
+                    return MeterReading(
+                        timestamp=datetime.now(),
+                        temperature_c=temperature,
+                        humidity_pct=int(humidity),
+                        battery_pct=int(battery) if 0 < battery <= 100 else None,
+                    )
+        except (IndexError, ValueError):
+            pass  # ↓ Case B に fallthrough
+
+    # Case B: Service Data 無し / device_type 未識別
+    # W3400010 (Outdoor Meter) は Manufacturer Data のみで送信するケースがある。
+    # 2026-07-17 実運用で mac_match=19, parse_ok=0 として発覚。
+    # md フォーマット: MAC(6) + type(1) + flags(1) + temp_dec(1) + temp_int|sign(1) + humidity(1) + ...
+    # battery は Service Data 無しでは取得不可、None で返す。
+    if manufacturer_data:
+        md = manufacturer_data.get(SWITCHBOT_COMPANY_ID)
+        if md and len(md) >= 11:
+            try:
                 temp_decimal = md[8] & 0x0f
                 temp_int = md[9] & 0x7f
                 temp_sign = -1 if (md[9] & 0x80) == 0 else 1
                 temperature = temp_sign * (temp_int + temp_decimal / 10.0)
                 humidity = md[10] & 0x7f
-                return MeterReading(
-                    timestamp=datetime.now(),
-                    temperature_c=temperature,
-                    humidity_pct=int(humidity),
-                    battery_pct=int(battery) if 0 < battery <= 100 else None,
-                )
-
-        # Indoor Meter (T/i): 温湿度は Service Data の byte3-5
-        if len(sd) >= 6:
-            temp_decimal = sd[3] & 0x0f
-            temp_int = sd[4] & 0x7f
-            temp_sign = -1 if (sd[4] & 0x80) == 0 else 1
-            temperature = temp_sign * (temp_int + temp_decimal / 10.0)
-            humidity = sd[5] & 0x7f
-            return MeterReading(
-                timestamp=datetime.now(),
-                temperature_c=temperature,
-                humidity_pct=int(humidity),
-                battery_pct=int(battery) if 0 < battery <= 100 else None,
-            )
-        return None
-    except (IndexError, ValueError):
-        return None
+                # sanity check (現実的な温湿度範囲か)
+                if 0 <= humidity <= 100 and -40 <= temperature <= 80:
+                    return MeterReading(
+                        timestamp=datetime.now(),
+                        temperature_c=temperature,
+                        humidity_pct=int(humidity),
+                        battery_pct=None,
+                    )
+            except (IndexError, ValueError):
+                return None
+    return None
 
 
 class SwitchBotMeterMonitor:
