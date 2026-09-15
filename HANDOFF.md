@@ -461,3 +461,80 @@ HANDOFF.md と PROGRESS.md を読んで現状を把握してから、続きを�
 ```
 HANDOFF.md を読んで、H100ハブの物理セットアップを進めたい
 ```
+
+---
+
+## 🚨 2026-09-15 ドア・モーション・電力が 11 日間死んでいた
+
+### 何が起きていたか
+
+**2026-09-04 23:18 を最後に、T110 開閉センサー 4 個と T100 モーション
+センサー 1 個、P110M の電力監視が全滅していた。** 11 日間気づかなかった。
+
+失われていた機能:
+
+| 機能 | 状態 |
+|---|---|
+| **浴室の緊急通知**(30分無動作) | 死。過去 7 件発報していたものが 09/04 以降ゼロ |
+| トイレ長時間滞在アラート | 死 |
+| 食事セッション検知 | 死(最終 09/05) |
+| 炊飯器の電力監視 | 死(最終 09/14) |
+
+**入浴の「検知」自体は生きていた。** SwitchBot BLE の湿度を主軸にした
+`bath_humidity_detector` が動いていたため(09/15 も判定あり)。
+死んでいたのは**モーションに依存する緊急通知のほう**。
+
+### 原因
+
+TP-Link 機器のファームウェアが **`TPAP` 暗号化**に変わり、
+`python-kasa 0.10.2`(PyPI 最新)が非対応になった。
+
+    UnsupportedDeviceError: Unsupported device 192.168.0.2
+      of type SMART.TAPOHUB with encrypt_scheme
+      EncryptionScheme(is_support_https=False, encrypt_type='TPAP', ...)
+
+**ネットワークは正常。** ハブもプラグも ping に応答し、機種も識別できる。
+ライブラリが喋れないだけだった。`iot-monitor` は 30 秒ごとに
+`contact_sensor` を再起動し続け、累計 7,344 回、24 時間で 44,576 行の
+ログを出していた(負荷が常時 1.0 前後だったのはこれが理由)。
+
+### 直し方
+
+上流の課題 [#1590](https://github.com/python-kasa/python-kasa/issues/1590)
+は未解決(2025-10 起票)。対応は
+[PR #1592](https://github.com/python-kasa/python-kasa/pull/1592)(未マージ、
+実装 1,434 行 + テスト 2,100 行)。他の利用者が P110-EU / L535 / L930 で
+成功を報告しており、**H100 でも動くことを実機で確認した。**
+
+`requirements.txt` を PR ブランチに向けてある。**上流にマージされたら
+通常の版指定に戻すこと。**
+
+    退避: ~/kasa-backup-0.10.2   (元の 0.10.2 のファイル一式)
+    戻し方: venv/bin/pip install --force-reinstall python-kasa==0.10.2
+
+pip の `git+https://...` は Pi 上でビルドが落ちやすい(SSH 切断に
+巻き込まれる)。落ちるときは別 venv で入れてから `site-packages/kasa` を
+コピーすると確実。
+
+### なぜ 11 日も気づかなかったか
+
+**ヘルスチェックが 10 種類の source を `MAX` でまとめて見ていた。**
+カメラが動いている限り最新値が更新されるので、残り 9 種が何日死んでいても
+「✅ sensor-activity」を返す。5 分おきに cron で回っていたのに、
+一度も知らせなかった。
+
+センサーごとに判定するよう直した(コミット参照)。性質別のしきい値:
+
+    常時反応     camera / bathroom_meter        2 時間
+    使ったときだけ fridge / bath_door / toilet_door 30 時間
+    1日1〜2回    rice_cooker / rice_cooker_lid  40 時間
+
+DB が読めないときも ✅ にしていたので、異常として扱うようにした。
+
+### 分かったこと(次の人へ)
+
+- **`events` テーブルは時刻列で timezone が違う。** `started_at` は JST、
+  `created_at` は UTC。混ぜて比較すると 9 時間ずれる
+- `sudo` はパスワードが要る。サービスの再起動は人が必要
+- **`kill` では systemd が起こさない**(`Restart=on-failure` は正常終了を
+  失敗と見なさない)。`sudo systemctl restart` を使うこと
