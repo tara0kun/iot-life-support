@@ -373,7 +373,11 @@ def aggregate_sessions(lookback_hours: int = 24) -> list[int]:
 
 
 def sessions_today(person_id: int, include_unconfirmed: bool = False) -> list[dict]:
-    """その日の食事セッション。デフォルトは confirmed=1 のみ（家族確認済）。"""
+    """その日の食事セッション。
+
+    デフォルトは confirmed=1（家族確認済）のみ。ただしお風呂だけは確認フロー
+    自体を通らないため、却下されていなければ確定扱いで含める。
+    """
     today_start = datetime.combine(datetime.now().date(), time.min)
     conn = get_conn()
     try:
@@ -387,11 +391,21 @@ def sessions_today(person_id: int, include_unconfirmed: bool = False) -> list[di
                 (person_id, today_start),
             ).fetchall()
         else:
+            # お風呂セッションは monitor._request_session_confirmation が
+            # 「bath_classification 系で別途確認するため」LINE確認を意図的に
+            # スキップする。そのため confirmed=1 になる経路が存在せず、
+            # 既定の「確定済のみ」から常に漏れていた。結果として
+            #   - 18時の check_bath() が毎日「未入浴」と誤リマインド
+            #   - 22時の daily_summary() でお風呂が永久に未実施
+            #   - _bath_info() が「まだ」固定
+            # という3つの誤りが出ていた。
+            # 家族が明示的に却下 (confirmed=-1) しない限り実績として数える。
             rows = conn.execute(
                 """SELECT id, started_at, ended_at, label, event_count
                      FROM meal_sessions
                     WHERE person_id = ? AND started_at >= ?
-                      AND confirmed = 1
+                      AND (confirmed = 1
+                           OR (label = 'お風呂' AND confirmed <> -1))
                     ORDER BY started_at""",
                 (person_id, today_start),
             ).fetchall()
