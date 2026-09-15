@@ -151,37 +151,79 @@ def check_db() -> tuple[bool, str]:
 
 
 def check_recent_events() -> tuple[bool, str]:
-    """直近イベント（センサー反応）が一定時間内にあるか。日中のみチェック。"""
+    """各センサーが個別に生きているか。日中のみチェック。
+
+    **1 つでも反応していれば OK、にしてはいけない。** 以前は 10 種類を
+    まとめて MAX で見ていたため、カメラが動いている限り残り 9 種が何日
+    死んでいても ✅ を返した。実際 2026-09-04〜09-15 の 11 日間、ドアと
+    モーションが全滅したまま「✅ sensor-activity」を出し続けていた
+    (原因は TP-Link 機器の TPAP 暗号化に python-kasa が未対応)。
+
+    センサーごとに性質が違うので、しきい値も分ける。
+
+        常時反応する      camera / bathroom_meter        -> 2 時間
+        使ったときだけ    fridge / bath_door / toilet_door -> 30 時間
+        1 日 1〜2 回      rice_cooker / rice_cooker_lid  -> 40 時間
+
+    家族の操作(family_report など)は「無くて当たり前」なので見ない。
+
+    **例外を ✅ にしない。** DB が読めない状態を「正常」と報告すると、
+    壊れていることに気づけない。
+    """
     now = datetime.now()
     if not (7 <= now.hour < 22):
         return True, ""  # 夜間はスキップ
+
+    # (source, 許容時間, 表示名)
+    watched = [
+        ("camera", 2, "カメラ"),
+        ("bathroom_meter", 2, "浴室温湿度"),
+        ("fridge", 30, "冷蔵庫"),
+        ("bath_door", 30, "浴室ドア"),
+        ("bath_motion", 30, "脱衣所モーション"),
+        ("toilet_door", 30, "トイレドア"),
+        ("rice_cooker_lid", 40, "炊飯器の蓋"),
+        ("rice_cooker", 40, "炊飯器の電力"),
+    ]
     try:
         conn = get_conn()
         try:
-            row = conn.execute(
-                """SELECT MAX(started_at) as latest FROM events
-                   WHERE source IN ('rice_cooker', 'camera', 'bath_door',
-                                    'bath_motion', 'toilet_door', 'fridge',
-                                    'rice_cooker_lid', 'family_report',
-                                    'tablet_report', 'family_override')"""
-            ).fetchone()
+            rows = conn.execute(
+                "SELECT source, MAX(started_at) AS latest FROM events "
+                "GROUP BY source"
+            ).fetchall()
         finally:
             conn.close()
-        if not row or not row["latest"]:
-            return True, ""  # データなしはスキップ（初日対応）
-        latest = row["latest"]
-        if isinstance(latest, str):
+    except Exception as exc:  # noqa: BLE001
+        # **黙って ✅ にしない。** 読めないこと自体が異常である
+        return False, f"DB を読めない ({type(exc).__name__})"
+
+    latest_by_source = {}
+    for row in rows:
+        value = row["latest"]
+        if isinstance(value, str):
             try:
-                latest = datetime.fromisoformat(latest.replace("T", " "))
+                value = datetime.fromisoformat(value.replace("T", " "))
             except ValueError:
-                return True, ""
-        gap = now - latest
-        # 6時間（インシデントレベル）以上で異常判定。anomaly_check.py より緩い
-        if gap > timedelta(hours=6):
-            return False, f"最終センサー活動 {gap.total_seconds()/3600:.1f}時間前"
-        return True, ""
-    except Exception:
-        return True, ""  # チェック失敗は無音
+                continue
+        if value is not None:
+            latest_by_source[row["source"]] = value
+
+    if not latest_by_source:
+        return True, ""  # データなしはスキップ（初日対応）
+
+    stale = []
+    for source, limit_hours, label in watched:
+        latest = latest_by_source.get(source)
+        if latest is None:
+            continue  # 一度も記録が無いものは対象外（未設置など）
+        hours = (now - latest).total_seconds() / 3600
+        if hours > limit_hours:
+            stale.append(f"{label} {hours:.0f}時間")
+
+    if stale:
+        return False, "反応なし: " + " / ".join(stale)
+    return True, ""
 
 
 def main():
