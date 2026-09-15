@@ -79,7 +79,14 @@ python-discovery==1.2.2
 python-docx==1.2.0
 python-dotenv==1.2.2
 python-jose==3.5.0
-python-kasa==0.10.2
+# python-kasa: TPAP 暗号化に対応した未マージ PR を使う。
+# 2026-09-04 に TP-Link 機器(H100 ハブ / P110M)が TPAP に変わり、
+# PyPI 最新の 0.10.2 では接続不能になった(UnsupportedDeviceError)。
+# ドア・モーション・電力が 11 日間全滅した原因。
+# 上流の課題 python-kasa/python-kasa#1590 は未解決、対応は PR #1592。
+# 上流にマージされたら通常の版指定に戻すこと。
+# 戻し方: pip install python-kasa==0.10.2
+git+https://github.com/ZeliardM/python-kasa@feature/tpap
 python-matter-server==8.1.2
 python-multipart==0.0.26
 python-pptx==1.0.2
