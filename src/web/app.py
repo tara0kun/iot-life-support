@@ -794,8 +794,12 @@ async def api_tablet_record(request: Request):
                  json.dumps({"verified": True, "verify_reason": reason}, ensure_ascii=False)),
             )
             conn.execute(
-                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
-                   VALUES(?, ?, ?, 1, ?)""",
+                # 家族/タブレットの手動入力そのものが確認行為なので confirmed=1。
+                # 既定 (confirmed=0) のままだと sessions_today() から漏れ、
+                # 「記録しました」と表示したのに食事回数にもお花にも反映されない。
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count,
+                                             label, confirmed, confirmed_by, confirmed_at)
+                   VALUES(?, ?, ?, 1, ?, 1, 'family_ui', CURRENT_TIMESTAMP)""",
                 (person_id, now, now, activity),
             )
         return {"ok": True, "verified": True, "reason": reason,
@@ -1081,8 +1085,12 @@ async def api_quick_record(request: Request):
     if activity in {"起床", "お薬", "就寝", "お風呂", "トイレ"}:
         with transaction() as conn:
             conn.execute(
-                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
-                   VALUES(?, ?, ?, 1, ?)""",
+                # 家族/タブレットの手動入力そのものが確認行為なので confirmed=1。
+                # 既定 (confirmed=0) のままだと sessions_today() から漏れ、
+                # 「記録しました」と表示したのに食事回数にもお花にも反映されない。
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count,
+                                             label, confirmed, confirmed_by, confirmed_at)
+                   VALUES(?, ?, ?, 1, ?, 1, 'family_ui', CURRENT_TIMESTAMP)""",
                 (person_id, now, now, activity),
             )
 
@@ -1101,8 +1109,12 @@ async def api_quick_record(request: Request):
                 meal_kind = "間食"
         with transaction() as conn:
             conn.execute(
-                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
-                   VALUES(?, ?, ?, 1, ?)""",
+                # 家族/タブレットの手動入力そのものが確認行為なので confirmed=1。
+                # 既定 (confirmed=0) のままだと sessions_today() から漏れ、
+                # 「記録しました」と表示したのに食事回数にもお花にも反映されない。
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count,
+                                             label, confirmed, confirmed_by, confirmed_at)
+                   VALUES(?, ?, ?, 1, ?, 1, 'family_ui', CURRENT_TIMESTAMP)""",
                 (person_id, now, now, f"外食({meal_kind})"),
             )
 
@@ -1110,8 +1122,12 @@ async def api_quick_record(request: Request):
     if activity in {"朝食", "昼食", "夕食", "間食"}:
         with transaction() as conn:
             conn.execute(
-                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count, label)
-                   VALUES(?, ?, ?, 1, ?)""",
+                # 家族/タブレットの手動入力そのものが確認行為なので confirmed=1。
+                # 既定 (confirmed=0) のままだと sessions_today() から漏れ、
+                # 「記録しました」と表示したのに食事回数にもお花にも反映されない。
+                """INSERT INTO meal_sessions(person_id, started_at, ended_at, event_count,
+                                             label, confirmed, confirmed_by, confirmed_at)
+                   VALUES(?, ?, ?, 1, ?, 1, 'family_ui', CURRENT_TIMESTAMP)""",
                 (person_id, now, now, activity),
             )
 
