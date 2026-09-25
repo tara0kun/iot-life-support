@@ -40,21 +40,36 @@ def _mark_notified(key: str):
 
 
 def _last_sensor_activity(conn) -> datetime | None:
-    """全センサー中の最新イベント時刻を返す。"""
+    """祖母が家の中で動いた形跡の、最新時刻を返す。
+
+    **「祖母が生きている証拠」だけを数える。** 以前はここに次の3つが混ざっており、
+    その結果この安否アラートは構造的に発火不能だった:
+
+      1. `camera`: person_detected が24時間ほぼ平坦に鳴り続けるノイズ
+         （実測: 深夜3時でも110件/時、直近30日で全イベントの51%）。
+         MAX() を取る以上、これが入っていると経過時間は常に数分で、
+         何時間でも閾値に到達しない。
+      2. `family_report` / `family_override`: 別居家族の遠隔操作。
+         祖母の活動ではない。
+      3. `pending_notifications.completed_at`: 家族がLINEのボタンを押した時刻。
+         東京で家族がボタンを1つ押すだけで祖母の生存タイマーがリセットされていた。
+
+    残したもの: 家の中で物理的に動かないと発生しないセンサーと、
+    祖母自身がタブレットを押した記録 (tablet_report)。
+
+    camera を戻す場合は person_id=1（祖母と顔識別できたもの）に限ること。
+    """
     row = conn.execute(
         """SELECT MAX(latest) AS latest FROM (
              SELECT MAX(started_at) AS latest FROM events
               WHERE source IN (
-                'rice_cooker', 'camera', 'bath_door', 'bath_motion',
+                'rice_cooker', 'bath_door', 'bath_motion',
                 'toilet_door', 'fridge', 'rice_cooker_lid',
-                'family_report', 'tablet_report', 'family_override'
+                'tablet_report'
               )
              UNION ALL
              SELECT MAX(started_at) FROM events
               WHERE source='bathroom_meter' AND event_type IN ('shower_start','shower_end')
-             UNION ALL
-             SELECT MAX(completed_at) FROM pending_notifications
-              WHERE completed_at IS NOT NULL
            )"""
     ).fetchone()
     if not row or not row["latest"]:
@@ -73,7 +88,11 @@ def check_inactivity():
     if not get_bool("notify_anomaly_enabled"):
         print("異常検知OFF → スキップ")
         return
-    inactivity_hours = get_int("anomaly_inactivity_hours", 4)
+    # 既定を4→6時間に変更。camera を外したことで、この閾値は初めて実際に
+    # 到達しうるようになった。センサー復旧後(2026-09-16〜)の実測では日中の
+    # 無反応は最大4.1時間・99%tile 3.2時間で、4時間だと約10日に1回の誤報が出る。
+    # 6時間なら測定期間で誤報ゼロ。settings の anomaly_inactivity_hours で上書き可。
+    inactivity_hours = get_int("anomaly_inactivity_hours", 6)
     now = datetime.now()
     if not (DAYTIME_START <= now.hour < DAYTIME_END):
         print(f"時間外 ({now.hour}時) → スキップ")
