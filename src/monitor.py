@@ -18,7 +18,7 @@ from src.sensors.matter_plug import MatterPlugMonitor, MatterPlugConfig, PlugRea
 from src.sensors.contact_sensor import ContactSensorMonitor, ContactSensorConfig, ContactEvent
 from src.sensors.camera import CameraMonitor, CameraConfig, CameraFrame
 from src import event_bus
-from src.sessions import aggregate_sessions, sessions_today
+from src.sessions import aggregate_sessions, sessions_today, MEAL_LABELS
 from src.lock_manager import lock_device, should_warn_recent_meal
 from src.notifier import notify_meal_alert, notify_device_locked, send_line_message
 from src.bath_monitor import BathMonitor
@@ -917,14 +917,19 @@ async def session_aggregator(interval: int = 60) -> None:
 
             # 祖母の今日のセッション数を確認
             grandma_sessions = sessions_today(GRANDMA_ID)
-            current_count = len(grandma_sessions)
+            # 食べ過ぎアラートと炊飯器ロック確認の起点になる数字なので、
+            # お風呂など食事以外のセッションは数えない（入浴で炊飯器が
+            # ロックされかける問題があった）。
+            grandma_meals = [s for s in grandma_sessions
+                             if s.get("label") in MEAL_LABELS]
+            current_count = len(grandma_meals)
 
             # 前回チェック時からセッションが増えた場合のみ処理
             if prev_session_count is not None and current_count > prev_session_count:
                 new_count = current_count - prev_session_count
                 log.info("祖母の新規食事セッション: %d件 (本日計%d件)", new_count, current_count)
 
-                last = grandma_sessions[-1]
+                last = grandma_meals[-1]
                 last_time = last["started_at"]
                 if hasattr(last_time, "strftime"):
                     last_time_str = last_time.strftime("%H:%M")
