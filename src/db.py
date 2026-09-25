@@ -270,8 +270,31 @@ def init_db() -> None:
         _seed_default_persons(conn)
         _migrate_rice_classifications_check(conn)
         _migrate_meal_sessions_confirmed(conn)
+        _migrate_device_state_unlock_due(conn)
     finally:
         conn.close()
+
+
+def _migrate_device_state_unlock_due(conn: sqlite3.Connection) -> None:
+    """device_state に unlock_due_at 列を追加（自動ロックの期限解除用）。
+
+    自動解除は lock_manager.auto_lock_after_meal の in-process sleep しか無く、
+    しかもその関数は呼び出し元ゼロの死にコードだった。結果 2026-08-30 18:52 の
+    自動ロックが 09-01 21:06 の家族による手動解除まで50時間14分続いた。
+    期限をDBに持たせて cron で解除すれば、再起動や停電をまたいでも生き残る。
+    """
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(device_state)")]
+        if "unlock_due_at" not in cols:
+            conn.execute("ALTER TABLE device_state ADD COLUMN unlock_due_at TIMESTAMP")
+            conn.commit()
+            __import__('logging').getLogger("db").info(
+                "device_state に unlock_due_at カラムを追加"
+            )
+    except Exception as e:
+        __import__('logging').getLogger("db").warning(
+            "device_state マイグレーション失敗: %s", e
+        )
 
 
 def _migrate_meal_sessions_confirmed(conn: sqlite3.Connection) -> None:

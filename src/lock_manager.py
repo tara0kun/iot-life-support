@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 import aiohttp
 
 from .db import get_conn, transaction
-from .sessions import last_session
+from .sessions import last_meal_session
 
 log = logging.getLogger("lock_manager")
 
@@ -97,9 +97,12 @@ async def lock_device(device_name: str, node_id: int, reason: str = "") -> bool:
             conn.execute(
                 """UPDATE device_state
                    SET is_locked = 1, last_cycle_at = ?, updated_at = ?,
-                       cycle_count_today = cycle_count_today + 1
+                       cycle_count_today = cycle_count_today + 1,
+                       unlock_due_at = ?
                    WHERE device_name = ?""",
-                (datetime.now(), datetime.now(), device_name),
+                (datetime.now(), datetime.now(),
+                 datetime.now() + timedelta(minutes=LOCK_DURATION_MINUTES),
+                 device_name),
             )
         log.info("[%s] ロック実行 (理由: %s)", device_name, reason)
     return success
@@ -110,7 +113,9 @@ async def unlock_device(device_name: str, node_id: int, reason: str = "") -> boo
     if success:
         with transaction() as conn:
             conn.execute(
-                "UPDATE device_state SET is_locked = 0, updated_at = ? WHERE device_name = ?",
+                """UPDATE device_state
+                   SET is_locked = 0, updated_at = ?, unlock_due_at = NULL
+                   WHERE device_name = ?""",
                 (datetime.now(), device_name),
             )
         log.info("[%s] アンロック (理由: %s)", device_name, reason)
@@ -118,8 +123,12 @@ async def unlock_device(device_name: str, node_id: int, reason: str = "") -> boo
 
 
 def should_warn_recent_meal(person_id: int) -> dict | None:
-    """直近の食事があれば警告情報を返す。なければNone。"""
-    last = last_session(person_id)
+    """直近の食事があれば警告情報を返す。なければNone。
+
+    炊飯器ロック確認の起点。お風呂や家族の手動スタンプ（起床/お薬/就寝）を
+    「直近の食事」と数えないよう、食事ラベルのセッションだけを見る。
+    """
+    last = last_meal_session(person_id)
     if not last:
         return None
     last_time = last["started_at"]
@@ -133,6 +142,58 @@ def should_warn_recent_meal(person_id: int) -> dict | None:
             "minutes_ago": int(minutes_ago),
         }
     return None
+
+
+# 機器名 → Matter node_id。従来は呼び出し側4箇所に 1 が直書きされていた。
+DEVICE_NODE_IDS = {"rice_cooker": 1}
+
+
+async def release_expired_locks() -> list[str]:
+    """期限 (unlock_due_at) を過ぎたロックを解除する。戻り値=解除した機器名。
+
+    **cron から叩くこと。** 自動解除を in-process の asyncio.sleep に持たせると、
+    iot-monitor の再起動や停電で解除予約が消えて永久ロックになる。
+    DB に期限を持たせて外から回収すれば、プロセスの生死に依存しない。
+    """
+    released: list[str] = []
+
+    # is_locked=1 なのに期限が無い＝この機能より前にロックされたか、
+    # 何らかの経路で期限が落ちた状態。放置すると永久ロックになる（2026-08-30 の
+    # 50時間ロックがまさにこれ）。last_cycle_at を起点に期限を補完して回収する。
+    with transaction() as conn:
+        conn.execute(
+            """UPDATE device_state
+                  SET unlock_due_at = datetime(
+                          COALESCE(last_cycle_at, updated_at, CURRENT_TIMESTAMP),
+                          ?
+                      )
+                WHERE is_locked = 1 AND unlock_due_at IS NULL""",
+            (f"+{LOCK_DURATION_MINUTES} minutes",),
+        )
+
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT device_name, unlock_due_at FROM device_state
+                WHERE is_locked = 1 AND unlock_due_at IS NOT NULL
+                  AND unlock_due_at <= ?""",
+            (datetime.now(),),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for r in rows:
+        name = r["device_name"]
+        node_id = DEVICE_NODE_IDS.get(name)
+        if node_id is None:
+            log.warning("[%s] node_id 不明のため自動解除できない", name)
+            continue
+        ok = await unlock_device(name, node_id, reason="ロック期限切れによる自動解除")
+        if ok:
+            released.append(name)
+        else:
+            log.warning("[%s] 期限切れ解除に失敗（次回の cron で再試行）", name)
+    return released
 
 
 async def auto_lock_after_meal(device_name: str, node_id: int) -> None:
