@@ -485,6 +485,14 @@ CATEGORY_LABELS = {
     "bath_reminder": "お風呂リマインダー",
     "tablet_unverified": "タブレットボタン未確認",
     "attribute_session": "未確定セッション人物確認",
+    # ここから下は未登録で、家族全員のLINEに生の英語IDがそのまま流れていた
+    # （実測40件。例:「☑️ 誰かさんが対応しました / 「long_toilet_stay」を誤検知として閉じました」）
+    "long_toilet_stay": "トイレ長時間滞在",
+    "bath_abnormal_temp": "浴室の異常温度",
+    "session_confirm": "食事の確認",
+    "bath_classification": "お風呂の確認",
+    "lock_confirm": "炊飯器ロックの確認",
+    "rice_action": "炊飯器の動作確認",
 }
 
 
