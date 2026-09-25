@@ -26,32 +26,53 @@ FLAG_DIR = ROOT / "data" / "health"
 FLAG_DIR.mkdir(parents=True, exist_ok=True)
 
 # 復旧通知の重複防止クールダウン
-COOLDOWN_MINUTES = 30
+COOLDOWN_MINUTES = 30  # (後方互換のため残置。実際の間隔は BACKOFF_MINUTES)
+
+# NG が続くときの再通知間隔。回を追うごとに伸ばし、使い切ったら打ち切る。
+BACKOFF_MINUTES = [30, 60, 240, 1440]
+MAX_NG_NOTIFICATIONS = len(BACKOFF_MINUTES) + 1  # 初回 + 再通知4回 = 最大5通
 
 
 def _flag_path(component: str) -> Path:
     return FLAG_DIR / f"{component}.flag"
 
 
-def _read_state(component: str) -> tuple[str, datetime] | None:
+def _read_state(component: str) -> tuple[str, datetime, int, str] | None:
     """前回の状態 (NG/OK, timestamp) を返す。フラグなしならNone。"""
     p = _flag_path(component)
     if not p.exists():
         return None
     try:
         text = p.read_text().strip()
-        state, ts = text.split("|", 1)
-        return state, datetime.fromisoformat(ts)
+        parts = text.split("|")
+        state, ts = parts[0], parts[1]
+        # 旧形式 (state|ts) のフラグは「1回通知済み」とみなす
+        count = int(parts[2]) if len(parts) > 2 else 1
+        key = parts[3] if len(parts) > 3 else ""
+        return state, datetime.fromisoformat(ts), count, key
     except Exception:
         return None
 
 
-def _write_state(component: str, state: str):
-    _flag_path(component).write_text(f"{state}|{datetime.now().isoformat()}")
+def _write_state(component: str, state: str, count: int = 0, key: str = ""):
+    _flag_path(component).write_text(
+        f"{state}|{datetime.now().isoformat()}|{count}|{key}"
+    )
 
 
-def _notify_change(component: str, ok: bool, detail: str = ""):
-    """状態が変化したときのみ通知する。"""
+def _notify_change(component: str, ok: bool | None, detail: str = "", key: str = ""):
+    """状態が変化したときのみ通知する。
+
+    ok=None は「判定不能」（例: 夜間でセンサー確認をスキップ）。このときは
+    状態ファイルも書き換えず、通知もしない。正常と誤認させないための第3状態。
+
+    NG が続く間は BACKOFF_MINUTES に従って間隔を伸ばしながら再通知し、
+    MAX_NG_NOTIFICATIONS 回で打ち切る。以前は30分固定・上限なしで、
+    人手が要る故障（電池切れ等）では一日中鳴り続けていた。
+    """
+    if ok is None:
+        return
+
     prev = _read_state(component)
     now = datetime.now()
     new_state = "OK" if ok else "NG"
@@ -60,23 +81,49 @@ def _notify_change(component: str, ok: bool, detail: str = ""):
         # 初回: NGなら通知、OKなら静かに記録
         if not ok:
             send_line_message(f"⚠️ {component} が異常です\n{detail}")
-        _write_state(component, new_state)
+            _write_state(component, "NG", 1, key)
+        else:
+            _write_state(component, "OK", 0, key)
         return
 
-    prev_state, prev_ts = prev
+    prev_state, prev_ts, count, prev_key = prev
     if prev_state == new_state:
-        # 状態同じ → 通知不要、ただし定期再通知（NG継続中、最後の通知から COOLDOWN_MINUTES 以上）
-        if not ok and (now - prev_ts) >= timedelta(minutes=COOLDOWN_MINUTES):
-            send_line_message(f"⚠️ {component} まだ異常です\n{detail}")
-            _write_state(component, "NG")
+        if ok:
+            return  # 正常が続いている → 何もしない
+
+        # **中身が変わったら打ち切りを解除する。**
+        # sensor-activity は8センサーを1コンポーネントに束ねているので、
+        # 「蓋センサーが死んでいる」で通知予算を使い切ったあとにカメラや
+        # 浴室温湿度が死んでも、状態は NG のままで通知が出なかった。
+        # 7eba82c が「合算で見て11日間見逃した」のと同じ失敗が、しきい値層
+        # ではなく通知層で復活していた。故障センサーの顔ぶれ (key) が
+        # 変わったら新しい障害とみなして数え直す。
+        if key != prev_key:
+            log_line = f"⚠️ {component} の異常内容が変わりました\n{detail}"
+            send_line_message(log_line)
+            _write_state(component, "NG", 1, key)
+            return
+
+        if count >= MAX_NG_NOTIFICATIONS:
+            return  # 打ち切り済み。復旧か、内容が変わった時だけ再び喋る
+        idx = min(max(count - 1, 0), len(BACKOFF_MINUTES) - 1)
+        if (now - prev_ts) < timedelta(minutes=BACKOFF_MINUTES[idx]):
+            return
+        count += 1
+        tail = ""
+        if count >= MAX_NG_NOTIFICATIONS:
+            tail = "\n\n（繰り返しはこれで最後にします。直ったらお知らせします）"
+        send_line_message(f"⚠️ {component} まだ異常です\n{detail}{tail}")
+        _write_state(component, "NG", count, key)
         return
 
     # 状態変化 → 通知
     if ok:
         send_line_message(f"✅ {component} が復旧しました")
+        _write_state(component, "OK", 0, key)
     else:
         send_line_message(f"⚠️ {component} が異常になりました\n{detail}")
-    _write_state(component, new_state)
+        _write_state(component, "NG", 1, key)
 
 
 # ========== 各チェック ==========
@@ -150,7 +197,7 @@ def check_db() -> tuple[bool, str]:
         return False, f"DB接続失敗: {type(e).__name__}: {e}"
 
 
-def check_recent_events() -> tuple[bool, str]:
+def check_recent_events() -> tuple[bool | None, str, str]:
     """各センサーが個別に生きているか。日中のみチェック。
 
     **1 つでも反応していれば OK、にしてはいけない。** 以前は 10 種類を
@@ -172,7 +219,11 @@ def check_recent_events() -> tuple[bool, str]:
     """
     now = datetime.now()
     if not (7 <= now.hour < 22):
-        return True, ""  # 夜間はスキップ
+        # **夜間は「正常」ではなく「判定不能」**。以前はここで (True, "") を返して
+        # いたため、_notify_change が NG→OK の復旧とみなし、センサーが壊れたまま
+        # 毎晩22時に「✅ sensor-activity が復旧しました」という嘘を送っていた。
+        # None は「状態を更新も通知もしない」を意味する。
+        return None, "", ""
 
     # (source, 許容時間, 表示名)
     watched = [
@@ -210,20 +261,62 @@ def check_recent_events() -> tuple[bool, str]:
             latest_by_source[row["source"]] = value
 
     if not latest_by_source:
-        return True, ""  # データなしはスキップ（初日対応）
+        # **判定不能であって正常ではない。** events が1件も読めないのは
+        # DB 破損・復元直後・クリーンアップ事故のいずれかで、ここで True を
+        # 返すと「✅ 復旧しました」の嘘が出る（夜間分岐と同じ失敗）。
+        return None, "", ""
 
     stale = []
+    stale_sources = []
+    evaluated = 0
     for source, limit_hours, label in watched:
         latest = latest_by_source.get(source)
         if latest is None:
             continue  # 一度も記録が無いものは対象外（未設置など）
+        evaluated += 1
         hours = (now - latest).total_seconds() / 3600
         if hours > limit_hours:
             stale.append(f"{label} {hours:.0f}時間")
+            stale_sources.append(source)
+
+    if evaluated == 0:
+        # 監視対象の source が1つも評価できなかった＝判定材料ゼロ。
+        # （events に family_report 等だけが残っている状態など）
+        return None, "", ""
 
     if stale:
-        return False, "反応なし: " + " / ".join(stale)
-    return True, ""
+        # 第3要素は「どのセンサーが死んでいるか」の識別キー。経過時間は
+        # 含めない（毎時変わってしまうため）。_notify_change はこのキーが
+        # 変わったら打ち切り済みでも再通知を再開する。
+        return False, "反応なし: " + " / ".join(stale), ",".join(sorted(stale_sources))
+    return True, "", ""
+
+
+def check_heartbeat_config() -> tuple[bool, str]:
+    """外部死活監視 (healthchecks.io) が設定済みか。
+
+    **Pi 自身が止まったら、Pi の上で動く監視は全部一緒に止まる。**
+    それを検知できる唯一の仕組みが scripts/heartbeat.sh の外形監視だが、
+    .env の HEARTBEAT_URL が空だと heartbeat.sh:14-16 が即 exit 0 して
+    何も起きない。2026-06-25〜07-01 の6日間ダウンを受けて仕組みは追加された
+    のに、設定1行が空のまま3ヶ月気づかれなかった。ここで見張って再発を防ぐ。
+
+    設定手順は HANDOFF.md 「外部死活監視」節。
+    """
+    env_path = ROOT / ".env"
+    if not env_path.exists():
+        return False, ".env が無い"
+    for line in env_path.read_text().splitlines():
+        if line.startswith("HEARTBEAT_URL="):
+            url = line.split("=", 1)[1].strip()
+            if url:
+                return True, ""
+            break
+    return False, (
+        "外部死活監視が未設定 (.env の HEARTBEAT_URL が空)。"
+        "Pi が丸ごと止まると誰も気づけません。"
+        "設定手順: HANDOFF.md 「外部死活監視」節"
+    )
 
 
 def main():
@@ -235,12 +328,16 @@ def main():
         ("disk-space", check_disk()),
         ("database", check_db()),
         ("sensor-activity", check_recent_events()),
+        ("heartbeat-config", check_heartbeat_config()),
     ]
 
     summary = []
-    for name, (ok, detail) in components:
-        _notify_change(name, ok, detail)
-        mark = "✅" if ok else "❌"
+    for name, res in components:
+        # 2要素 (ok, detail) と 3要素 (ok, detail, key) の両方を許す
+        ok, detail = res[0], res[1]
+        key = res[2] if len(res) > 2 else ""
+        _notify_change(name, ok, detail, key)
+        mark = "⏸" if ok is None else ("✅" if ok else "❌")
         summary.append(f"{mark} {name}{f' ({detail})' if detail else ''}")
 
     for line in summary:
