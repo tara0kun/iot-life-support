@@ -34,7 +34,41 @@ from ..lock_manager import get_device_state, lock_device, unlock_device
 from .camera_stream import get_streamer
 
 app = FastAPI(title="IoT生活サポート")
-app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
+def _session_secret() -> str:
+    """セッション署名鍵。プロセスをまたいで同じ値を使う。
+
+    以前は起動のたびに secrets.token_hex(32) を生成していたため、
+    iot-web を再起動するたびに家族全員が強制ログアウトされていた。
+    家族用ダッシュボードは別居の家族が通知に対応する主要経路なので、
+    再起動のたびに再ログインを求めるのは実運用上のコストが大きい。
+
+    Tailscale Funnel でパブリック公開されているため、鍵はファイル所有者
+    のみ読める権限 (0600) で保存する。
+    """
+    env_key = _load_env_value("SESSION_SECRET")
+    if env_key:
+        return env_key
+    key_path = Path(__file__).resolve().parent.parent.parent / "data" / ".session_secret"
+    if key_path.exists():
+        existing = key_path.read_text().strip()
+        if existing:
+            return existing
+    generated = secrets.token_hex(32)
+    key_path.write_text(generated)
+    key_path.chmod(0o600)
+    return generated
+
+
+def _load_env_value(key: str) -> str:
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip()
+    return ""
+
+
+app.add_middleware(SessionMiddleware, secret_key=_session_secret())
 
 # 家族UI ログインへのブルートフォース攻撃対策 (Tailscale Funnel でパブリック公開のため)
 # get_remote_address は X-Forwarded-For を尊重 (Funnel の裏側で LINE/家族 IP を識別可能)
@@ -956,6 +990,7 @@ GUIDE_PAGES = {
     "family-reference": ("家族用 機能リファレンス", "family-reference.md"),
     "line-operation": ("LINE操作ガイド", "line-operation.md"),
     "troubleshooting": ("トラブルシューティング", "troubleshooting.md"),
+    "rice-lid-sensor": ("炊飯器のセンサーの直し方", "rice-lid-sensor.md"),
 }
 
 
