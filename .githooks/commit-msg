@@ -1,0 +1,4 @@
+#!/bin/bash
+# コミットメッセージに個人情報が入るのを止める。
+exec "$(git rev-parse --show-toplevel)/venv/bin/python" \
+     "$(git rev-parse --show-toplevel)/scripts/check_no_pii.py" --message "$1"

@@ -1,0 +1,5 @@
+#!/bin/bash
+# 個人情報がコミットされるのを止める。
+# 有効化: git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/venv/bin/python" \
+     "$(git rev-parse --show-toplevel)/scripts/check_no_pii.py" --staged
