@@ -213,10 +213,22 @@ async def _request_long_toilet_alert(duration_sec: float) -> None:
     from src.notifier import send_actionable_notification
     minutes = int(duration_sec / 60)
     ctx = _dt.now().strftime("%Y-%m-%d_%H%M_long_toilet")
+    # **この通知は「在室」ではなく「ドアが開いたままだった時間」を報せている。**
+    # 実装は toilet_door の close ハンドラからしか呼ばれず、
+    # 直前の open との差を測る。実データでは open→close の 58.6% が10秒未満の
+    # 通過で、在室しているのはドアが閉まっている間だった。つまり測っている
+    # 対象が逆であり、しかも close の瞬間＝本人が出てきた後にしか鳴らない。
+    #
+    # 倒れた人はドアを開けないので、この通知で転倒は検知できない。
+    # 文言で「転倒していないか確認してください」と書くのは、受け手に
+    # 実態と違う緊急性を伝えることになるので改めた。
+    # 転倒を実際に検知するにはトイレ内部の人感センサーが要る（Issue #20）。
     msg = (
-        f"⚠️ トイレに {minutes} 分以上滞在しています\n"
+        f"🚪 トイレのドアが {minutes} 分ほど開いたままでした\n"
         f"時刻: {_dt.now().strftime('%H:%M')}\n\n"
-        "祖母さんが転倒等で動けなくなっていないか、確認してあげてください。"
+        "※これはドアの開閉から分かることだけをお知らせしています。\n"
+        "中で倒れている場合はドアが閉まったままになるため、\n"
+        "今のセンサーでは検知できません。"
     )
     try:
         await asyncio.to_thread(
