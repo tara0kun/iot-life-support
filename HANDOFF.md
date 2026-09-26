@@ -427,7 +427,7 @@ python scripts/recheck_pending.py
 - `TAPO_USERNAME` / `TAPO_PASSWORD`
 - `CAMERA_USERNAME` / `CAMERA_PASSWORD` / `CAMERA_IP`
 - `HUB_IP`
-- `FAMILY_PASSWORD`（5/2に **`****（削除済み）`** に変更）/ `TABLET_TOKEN`
+- `FAMILY_PASSWORD`（5/2に **（.env のみ・ドキュメントに書かない）** に変更）/ `TABLET_TOKEN`
 - `GRANDMA_WIFI_SSID` / `GRANDMA_WIFI_PASS`
 - `RICE_COOKER_THRESHOLD_W=100` / `RICE_COOKER_IDLE_CONFIRM=600`
 - `HAIR_DRYER_NODE_ID=0`（未設定 = ドライヤー監視オフ）
