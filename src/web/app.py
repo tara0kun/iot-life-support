@@ -26,7 +26,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.sessions import SessionMiddleware
 
-from ..db import get_conn, init_db, transaction
+from ..db import get_conn, init_db, transaction, RENDER_TIMEOUT_SECONDS
 from ..event_bus import get_events_today, get_recent_events, get_events_by_date, subscribe, unsubscribe
 from ..sessions import sessions_today, last_session
 from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
@@ -186,6 +186,7 @@ async def tablet_view(request: Request):
             done_count=done_count,
             total_count=len(stamps),
             details={"done": done_labels},
+            timeout=RENDER_TIMEOUT_SECONDS,
         )
     except Exception as e:  # noqa: BLE001
         logging.getLogger("app").warning("daily_score の保存に失敗（画面は続行）: %s", e)
@@ -594,7 +595,9 @@ async def api_device_status(request: Request):
         result[d] = {
             "is_locked": state["is_locked"] if state else False,
             "cycle_count_today": state["cycle_count_today"] if state else 0,
-            "updated_at": state["updated_at"].isoformat() if state and state.get("updated_at") else None,
+            # updated_at は sqlite から str で返る（datetime ではない）。
+            # .isoformat() を呼んで AttributeError で家族UIの機器状態が落ちていた。
+            "updated_at": str(state["updated_at"]) if state and state.get("updated_at") else None,
         }
     return result
 

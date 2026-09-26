@@ -254,16 +254,22 @@ CREATE INDEX IF NOT EXISTS idx_bath_cls_features
 BUSY_TIMEOUT_SECONDS = 30
 
 
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS)
+# 画面描画のように「待たされる方が困る」経路のための短いロック待ち。
+# 30秒待つと祖母のタブレットが30秒真っ白になる。書けなければ諦めて
+# 画面を出す方が正しい（スコアは次の描画で書き直される）。
+RENDER_TIMEOUT_SECONDS = 1.0
+
+
+def get_conn(timeout: float | None = None) -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=timeout if timeout is not None else BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 @contextmanager
-def transaction():
-    conn = get_conn()
+def transaction(timeout: float | None = None):
+    conn = get_conn(timeout)
     try:
         yield conn
         conn.commit()

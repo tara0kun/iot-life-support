@@ -128,9 +128,17 @@ def _notify_change(component: str, ok: bool | None, detail: str = "", key: str =
 
 # ========== 各チェック ==========
 
+# /tablet の生存確認のタイムアウト。5秒だと「生きているが遅い」を
+# 「落ちている」と誤報する。DBロック競合で描画が数秒かかることがあり、
+# 2026-09-26 は1日19回 ReadTimeout で誤報していた。
+# ここで見たいのは応答の速さではなく生存なので、余裕を持たせる。
+WEB_CHECK_TIMEOUT_SECONDS = 15
+
+
 def check_web() -> tuple[bool, str]:
     try:
-        r = requests.get("http://localhost:8000/tablet", timeout=5, allow_redirects=False)
+        r = requests.get("http://localhost:8000/tablet",
+                         timeout=WEB_CHECK_TIMEOUT_SECONDS, allow_redirects=False)
         if r.status_code in (200, 303, 403):
             return True, ""
         return False, f"HTTP {r.status_code}"
