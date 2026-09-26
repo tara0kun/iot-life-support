@@ -242,8 +242,20 @@ CREATE INDEX IF NOT EXISTS idx_bath_cls_features
 """
 
 
+# SQLite のロック待ち上限。Python の既定は 5 秒で、これを超えると
+# "database is locked" で例外になる。このシステムは
+#   iot-monitor (イベント書込) / iot-web (タブレット描画で daily_scores 書込)
+#   / cron 4本 (health_check・recheck_pending・anomaly_check・retry_line_outbox)
+# が同じ DB を触り、journal_mode=delete では読み手が書き手をブロックする。
+# 実測で anomaly_check の check_inactivity が 7 秒 DB を掴む瞬間があり、
+# そこに /tablet の書込が当たると 5 秒で諦めて 500 を返していた
+# (2026-09-26 07:00〜09:10 に 10 分おきで発生。祖母のタブレットがエラー画面になる)。
+# 待てば必ず通る種類の競合なので、上限を伸ばして 500 を出さないようにする。
+BUSY_TIMEOUT_SECONDS = 30
+
+
 def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

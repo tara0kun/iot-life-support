@@ -172,13 +172,23 @@ async def tablet_view(request: Request):
     # 今日のスコアを保存
     done_count = len([s for s in stamps if s["done"]])
     done_labels = [s["label"] for s in stamps if s["done"]]
-    save_daily_score(
-        person_id=grandma_id,
-        target_date=now.date(),
-        done_count=done_count,
-        total_count=len(stamps),
-        details={"done": done_labels},
-    )
+    # **スコア保存の失敗で画面を落とさない。**
+    # これは祖母が毎日見る唯一の画面で、落ちるとエラーページが出る。
+    # 認知症の本人にエラー画面を見せるのは、スコアが1回記録されないことより
+    # はるかに害が大きい。実際 2026-09-26 の朝、DBロック競合
+    # (sqlite3.OperationalError: database is locked) で /tablet が
+    # 10分おきに 500 を返していた。スコアは次の描画で書き直されるので、
+    # 1回落としても実害はほぼない。
+    try:
+        save_daily_score(
+            person_id=grandma_id,
+            target_date=now.date(),
+            done_count=done_count,
+            total_count=len(stamps),
+            details={"done": done_labels},
+        )
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("app").warning("daily_score の保存に失敗（画面は続行）: %s", e)
 
     # 庭データ（過去14日）
     garden = get_garden_data(grandma_id, days=14)
