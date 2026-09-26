@@ -56,6 +56,18 @@ MAX_NOTIFY_COUNT = 3          # 初回を含む総通知数の上限。超えた
 # cron停止・再起動・本機能の導入直後などに溜まった古い pending を掘り起こして
 # 「今ごろ届く昔の通知」を家族に送らないための上限（2026-05-15 の廃止理由そのもの）。
 MAX_ESCALATE_AGE_MINUTES = 60
+
+# **事後報告型のカテゴリは再通知しない。**
+# long_toilet_stay は monitor.py の toilet_door close ハンドラからしか発火せず、
+# 「open からの滞在時間」を close の瞬間に計算して送る。つまり本人が
+# ドアを開けて出てきた後にしか鳴らない。実測: 全53件のうち51件が
+# toilet_door の close から ±1秒以内の発報。
+# 倒れた人はドアを開けないので、この通知は「転倒の検知」ではなく
+# 「長居していたが無事に出てきた」の事後報告である。
+# 事後報告を再通知しても家族にできることは何もなく、2026-09-26 10:46 の件では
+# 既に解決した事象について20通(5人×4回)を送ってしまった。
+# 検知そのものを「滞在中に発火する」設計に直すまで、再通知対象から外す。
+RETROSPECTIVE_CATEGORIES = {"long_toilet_stay"}
 # 打ち切り通知（「⏰ 誰も応答しませんでした」）だけは、もう少し長く猶予を持たせる。
 # 再通知2回が終わるのは発生から 35〜40分で、打ち切りは 55〜60分に落ちる。
 # 上限が 60 分だと cron の tick が1回ズレただけで打ち切りが恒久的に消え、
@@ -163,6 +175,9 @@ def escalate_unanswered() -> None:
         category = r["notification_type"]
         if not is_critical_category(category):
             continue  # 雑務系は再通知しない（2026-05-15 のポリシーを維持）
+
+        if category in RETROSPECTIVE_CATEGORIES:
+            continue  # 事後報告。再通知しても家族にできることがない
 
         # 深夜帯は NIGHT_ALLOWED_CATEGORIES 以外を鳴らさない。
         # 「翌朝まで持ち越して変な時刻に届く」のを防ぐため、持ち越さずスキップする。
