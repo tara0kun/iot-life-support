@@ -975,7 +975,7 @@ async def api_upload_meal_photo(
     # LINE で全家族に broadcast
     base = _current_tunnel_base_url()
     if base:
-        public_url = f"{base}/photos/{fname}"
+        public_url = signed_photo_url(base, fname)
         try:
             from ..notifier import broadcast_line_image
             label = sess["label"] or "食事"
@@ -1043,14 +1043,64 @@ async def _render_guide(request: Request, slug: str) -> HTMLResponse:
     })
 
 
+PHOTO_URL_TTL_SECONDS = 7 * 24 * 3600  # LINEのトーク履歴から後で開ける程度は持たせる
+
+
+def _photo_signature(file_name: str, exp: int) -> str:
+    """食事写真URLの署名。鍵はセッション鍵から用途を分けて導出する。"""
+    key = ("meal-photo:" + _session_secret()).encode()
+    return hmac.new(key, f"{file_name}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def signed_photo_url(base: str, file_name: str) -> str:
+    """LINE に送るための、期限付き署名URLを作る。"""
+    exp = int(datetime.now().timestamp()) + PHOTO_URL_TTL_SECONDS
+    sig = _photo_signature(file_name, exp)
+    return f"{base}/photos/{file_name}?exp={exp}&sig={sig}"
+
+
 @app.get("/photos/{file_name}")
 async def serve_meal_photo(request: Request, file_name: str):
-    """食事写真を配信する（LINEサーバーからの取得用、外部公開）。
+    """食事写真を配信する。
 
-    ファイル名のサニタイズで path traversal を防止。
+    **無認証で配信してはいけない。** 祖母の自宅の食卓・手元・本人が写る。
+    2026-09-26 時点では認証が一切なく、公開URLから誰でも取得できた。
+    ファイル名が {session_id}_{UNIX秒}.jpg で列挙可能なうえ、家族が「削除」しても
+    deleted_at を埋めるだけで実ファイルが残っていたため、削除済みの写真まで
+    取得できる状態だった。
+
+    許可する経路は3つだけ:
+      - 家族UIのログイン済みセッション
+      - タブレット（宅内 or TABLET_TOKEN）
+      - 期限付きの署名URL（LINE に送る用。LINEのサーバが取りに来るのでCookieが無い）
     """
     if "/" in file_name or ".." in file_name:
         raise HTTPException(status_code=400)
+
+    allowed = _is_family_authenticated(request) or _check_tablet_access(request)
+    if not allowed:
+        exp = request.query_params.get("exp", "")
+        sig = request.query_params.get("sig", "")
+        try:
+            exp_i = int(exp)
+        except ValueError:
+            raise HTTPException(status_code=404)
+        if exp_i < int(datetime.now().timestamp()):
+            raise HTTPException(status_code=404)  # 期限切れ。存在も伏せる
+        if not hmac.compare_digest(sig, _photo_signature(file_name, exp_i)):
+            raise HTTPException(status_code=404)
+
+    # 家族が削除した写真は誰にも返さない（実ファイルが残っていても）
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT deleted_at FROM meal_photos WHERE file_name = ?", (file_name,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row and row["deleted_at"]:
+        raise HTTPException(status_code=404)
+
     fpath = MEAL_PHOTOS_DIR / file_name
     if not fpath.exists():
         raise HTTPException(status_code=404)
@@ -1090,10 +1140,20 @@ async def api_delete_meal_photo(request: Request, photo_id: int):
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     with transaction() as conn:
+        row = conn.execute(
+            "SELECT file_name FROM meal_photos WHERE id = ?", (photo_id,)
+        ).fetchone()
         conn.execute(
             "UPDATE meal_photos SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
             (photo_id,),
         )
+    # **実ファイルも消す。** deleted_at を埋めるだけでは、URLを知っている第三者に
+    # 取得され続ける。家族は「消した」と思っているので、その通りにする。
+    if row and row["file_name"]:
+        try:
+            (MEAL_PHOTOS_DIR / row["file_name"]).unlink(missing_ok=True)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("app").warning("写真の実ファイル削除に失敗: %s", e)
     return {"ok": True}
 
 
