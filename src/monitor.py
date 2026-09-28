@@ -20,7 +20,8 @@ from src.sensors.camera import CameraMonitor, CameraConfig, CameraFrame
 from src import event_bus
 from src.sessions import aggregate_sessions, sessions_today, MEAL_LABELS
 from src.lock_manager import lock_device, should_warn_recent_meal
-from src.notifier import notify_meal_alert, notify_device_locked, send_line_message
+from src.notifier import (notify_meal_alert, notify_device_locked, send_line_message,
+                          mark_related_completed_silent, broadcast_line_message)
 from src.bath_monitor import BathMonitor
 from src.task_supervisor import supervise
 
@@ -994,6 +995,30 @@ async def main() -> None:
             source="bath_door", event_type="bath_end",
             person_id=GRANDMA_ID, value=duration_min,
         )
+        # **解決をシステム自身が観測したら、緊急通知を閉じる。**
+        # 浴室30分無反応のアラートを出したあと、本人が出てきたことを
+        # bath_end で検知しているのに、未応答の pending がそのまま残っていた。
+        # その結果 recheck_pending の再通知が、既に解決した事象について
+        # 鳴り続ける。実際に 2026-09-28 の夜、入浴終了の4分後に再通知が飛び、
+        # 家族が「誤検知」として閉じることになった。
+        # 家族には黙って閉じるのではなく「出てきた」ことを伝える。
+        # 緊急通知を受け取った側は心配しているので、解決も知らせる必要がある。
+        closed = await asyncio.to_thread(
+            mark_related_completed_silent,
+            "bath_emergency", datetime.now().strftime("%Y-%m-%d"),
+            "auto_resolved", "入浴の終了を検知したため自動で解決",
+        )
+        if closed:
+            log.info("[bath] 入浴終了を検知 → 未応答の浴室緊急通知 %d件を閉じた", closed)
+            try:
+                await asyncio.to_thread(
+                    broadcast_line_message,
+                    "✅ 浴室から出られました\n"
+                    f"入浴時間: {int(duration_min)}分\n\n"
+                    "先ほどの浴室の通知は解決しました。ご確認ありがとうございました。",
+                )
+            except Exception as e:
+                log.warning("浴室アラートの解決通知に失敗: %s", e)
 
     async def _on_bath_alert(elapsed_min: float):
         from .notifier import send_actionable_notification
