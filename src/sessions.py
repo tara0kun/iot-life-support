@@ -108,10 +108,30 @@ def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
 BATH_SOURCES = {"bath_door", "bath_motion"}
 
 
+# お風呂判定のときに「混ざっていても構わない」ソース。
+# camera / bathroom_meter はクラスタリング前に除外済み。toilet_door は
+# 入浴の前後に行くのが自然なので、お風呂セッションを否定しない。
+BATH_NEUTRAL_SOURCES = {"camera", "bathroom_meter", "toilet_door"}
+
+
 def _is_bath_session(events: list[EventRow]) -> bool:
-    """お風呂関連イベントのみで構成されているか。"""
+    """お風呂関連イベント **のみ** で構成されているか。
+
+    以前は「bath 系を含み、かつ rice_cooker / ih / contact_sensor を含まない」
+    という条件だったが、除外リストに **fridge と rice_cooker_lid が入っていなかった**。
+    そのため「浴室ドア + 炊飯器の蓋開 + 冷蔵庫」のような明らかに食事を含む
+    クラスタまでお風呂セッションと判定され、bath_end が無いので
+    _qualifies_as_session で丸ごと捨てられていた。**食事が消えていた。**
+
+    過去120日の未割当クラスタ2045件のうち125件がこの誤判定に該当し、
+    うち約68件は蓋開を含む＝食事として成立すべきものだった。
+
+    docstring が言うとおり「お風呂関連のみ」を実装する。
+    """
     sources = {e.source for e in events}
-    return bool(sources & BATH_SOURCES) and not (sources & {"rice_cooker", "ih", "contact_sensor"})
+    if not (sources & BATH_SOURCES):
+        return False
+    return not (sources - BATH_SOURCES - BATH_NEUTRAL_SOURCES)
 
 
 def _is_rice_lid_in_use(conn) -> bool:

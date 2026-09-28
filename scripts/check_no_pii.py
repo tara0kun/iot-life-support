@@ -58,6 +58,11 @@ def _secrets() -> list[tuple[str, str]]:
     return out
 
 
+def _is_ambiguous_name(name: str) -> bool:
+    """日本語の文中で偶然一致しやすい名前か（2文字以下のひらがな）。"""
+    return len(name) <= 2 and all("\u3041" <= ch <= "\u309f" for ch in name)
+
+
 LIFE_WORDS = "入浴|お風呂|朝食|昼食|夕食|間食|夜食|トイレ|排泄|起床|就寝|服薬|お薬"
 PATTERNS = [
     # 時刻と生活行動が同じ行に出る＝生活パターンの開示
@@ -80,8 +85,20 @@ def scan(text: str, label: str) -> list[str]:
         if val in text:
             hits.append(f"{label}: .env の {key} の値")
     for name in _family_names():
-        # 「はるかに」のような一般語との衝突を避け、単語境界に近い形だけ見る
-        if re.search(rf"(?<![ぁ-ん]){re.escape(name)}(?![ぁ-ん])", text):
+        if _is_ambiguous_name(name):
+            # 2文字のひらがな名は日本語の文中で必ず偶然一致する。
+            # 「〜な」+「お〜」の連結や、副詞の一部として現れるため、
+            # 単語境界での判定が成立しない（具体例はここに書けない。
+            # 書いた瞬間にこのチェック自身が引っかかるので）。
+            # 名前として書かれている形（一覧・表・登録コマンド）に限って見る。
+            # 前に区切りがあり、後ろが区切り/空白で終わる形だけを名前とみなす。
+            # 行頭の「なお、」のような接続詞は前に区切りが無いので当たらない。
+            # 後ろの「、」「。」は除く（名前は読点で終わらない）。
+            pat = (rf"(?:[・|/「『（(,、　]|\s){re.escape(name)}"
+                   rf"(?=\s*(?:$|[・|/」』）)　]|\s|さん|ちゃん))")
+        else:
+            pat = rf"(?<![ぁ-ん]){re.escape(name)}(?![ぁ-ん])"
+        if re.search(pat, text, re.MULTILINE):
             hits.append(f"{label}: 家族の実名「{name}」")
     for pat, why in PATTERNS:
         m = pat.search(text)
