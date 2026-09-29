@@ -1136,12 +1136,26 @@ async def main() -> None:
         )
         log.info("BathDetector 初期化（学習データ収集モード）")
 
+        _meter_batt_logged = {"last": None}
+
         async def _on_meter_reading(r: "MeterReading") -> None:
+            # 温度と電池も残す。以前は湿度しか記録しておらず、
+            # 受信が減ったときに「電池が弱っているのか、無線が詰まっているのか」を
+            # 後から切り分けられなかった。advertisement には電池残量が乗っている。
+            import json as _json
             await event_bus.record_event(
                 source="bathroom_meter",
                 event_type="reading",
                 value=float(r.humidity_pct),
+                raw_meta=_json.dumps(
+                    {"temp_c": r.temperature_c, "battery_pct": r.battery_pct},
+                    ensure_ascii=False,
+                ),
             )
+            # 電池残量が変わったときだけログに出す（10秒ごとに出すと埋まる）
+            if r.battery_pct is not None and r.battery_pct != _meter_batt_logged["last"]:
+                _meter_batt_logged["last"] = r.battery_pct
+                log.info("[bathroom_meter] 電池残量 %d%%", r.battery_pct)
             # bath_detector に湿度・温度を供給（候補検知時はLINE通知へ）
             try:
                 await _bath_detector.feed_humidity(
