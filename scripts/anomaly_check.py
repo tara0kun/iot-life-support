@@ -111,9 +111,20 @@ def check_inactivity():
         print("センサーイベントなし → データ不足でスキップ")
         return
 
-    gap = now - latest
+    # **夜間の睡眠を「無反応」に数えない。**
+    # 判定は日中(DAYTIME_START〜)しか行わないが、経過時間を最終活動から
+    # そのまま測ると、夜通し寝ていた時間が丸ごと計上される。その結果
+    # 朝 DAYTIME_START ちょうどに、前夜からの睡眠時間を根拠にして
+    # 毎朝アラートが出る（2026-09-29 に実際に発生。本人はその16分後に起床）。
+    # 起点を「今日の日中開始」以降に切り、日中に実際に反応が無い時間だけを見る。
+    daytime_start = now.replace(hour=DAYTIME_START, minute=0, second=0, microsecond=0)
+    effective_since = max(latest, daytime_start)
+    gap = now - effective_since
     if gap < timedelta(hours=inactivity_hours):
-        print(f"最終活動 {gap.total_seconds()/60:.0f}分前 → 通常")
+        if latest < daytime_start:
+            print(f"最終活動は日中開始前 → 日中の無反応 {gap.total_seconds()/60:.0f}分 → 通常")
+        else:
+            print(f"最終活動 {gap.total_seconds()/60:.0f}分前 → 通常")
         return
 
     msg = (
