@@ -1031,11 +1031,31 @@ async def main() -> None:
             send_actionable_notification, "bath_emergency", ctx, msg
         )
 
+    async def _on_bath_alert_resolved():
+        """浴室アラート後にモーションが戻った → 未応答の緊急通知を閉じる。"""
+        closed = await asyncio.to_thread(
+            mark_related_completed_silent,
+            "bath_emergency", datetime.now().strftime("%Y-%m-%d"),
+            "auto_resolved", "浴室で動きを再確認したため自動で解決",
+        )
+        if not closed:
+            return
+        log.info("[bath] モーション再開 → 未応答の浴室緊急通知 %d件を閉じた", closed)
+        try:
+            await asyncio.to_thread(
+                broadcast_line_message,
+                "✅ 浴室で動きを確認しました\n\n"
+                "先ほどの浴室の通知は解決しました。ご確認ありがとうございました。",
+            )
+        except Exception as e:
+            log.warning("浴室アラートの解決通知に失敗: %s", e)
+
     _bath_monitor = BathMonitor(
         alert_minutes=30,
         on_bath_start=_on_bath_start,
         on_bath_end=_on_bath_end,
         on_alert=_on_bath_alert,
+        on_alert_resolved=_on_bath_alert_resolved,
     )
     log.info("お風呂監視を初期化 (アラート: 30分)")
 
