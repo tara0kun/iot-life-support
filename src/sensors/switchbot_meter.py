@@ -168,33 +168,63 @@ class SwitchBotMeterMonitor:
             if r:
                 latest_reading = r
 
-        # BleakScanner __aexit__ が bluez のバグ等でハング → supervisor でも救えない
-        # 対策: asyncio.wait_for で 1サイクル全体にタイムアウトを付け、超過なら raise
-        # して task_supervisor に再起動させる (30秒後に BleakScanner を作り直す)
-        SCAN_CYCLE_TIMEOUT = self.poll_seconds + 30  # 通常10秒サイクル、40秒超で異常判定
+        # **スキャンは張りっぱなしにする。poll_seconds ごとに start/stop しない。**
+        #
+        # 以前は 1サイクルごとに `async with BleakScanner(...)` を作り直し、
+        # 全体を asyncio.wait_for で包んでいた。タイムアウトすると wait_for が
+        # `async with` の内側をキャンセルするため、__aexit__ の StopDiscovery が
+        # 完了しないまま抜ける。結果 BlueZ 側にディスカバリセッションが残り、
+        # 以降の StartDiscovery が [org.bluez.Error.InProgress] で全部弾かれる。
+        # ハング対策として入れたタイムアウトが、詰まりを作る側になっていた。
+        #
+        # BLE の advertisement は接続不要のブロードキャストなので、スキャナを
+        # 開いたままコールバックで拾い続けるのが素直。start/stop の回数が
+        # 1回だけになり、詰まりの発生源そのものが消える。
+        #
+        # 「静かな成功」(スキャンは動いているが advertisement が1件も来ない)
+        # は例外にならないので、無受信が続いたら自分で異常として raise する。
+        # task_supervisor がタスクごと作り直し、スキャナも作り直される。
+        STALE_LIMIT_SECONDS = max(self.poll_seconds * 30, 300)
 
-        async def _one_scan_cycle() -> None:
-            """1回の scan サイクルを実行。ハング検知のため wait_for で包む前提。"""
-            async with BleakScanner(detection_callback=detection_callback) as scanner:
-                await asyncio.sleep(self.poll_seconds)
+        last_seen = datetime.now()
+
+        def detection_callback_wrapped(device, advertisement_data):
+            nonlocal last_seen
+            # 目的のMAC以外でも「電波は届いている」証拠にはなるので時刻を更新する。
+            # アダプタが詰まると全デバイスの advertisement が止まるため、
+            # ここが動いている限りスキャン自体は生きていると判断できる。
+            last_seen = datetime.now()
+            detection_callback(device, advertisement_data)
 
         while self._running:
             try:
-                await asyncio.wait_for(_one_scan_cycle(), timeout=SCAN_CYCLE_TIMEOUT)
-                if latest_reading and self._on_reading:
-                    if latest_reading.timestamp.timestamp() != last_reading_ts:
-                        last_reading_ts = latest_reading.timestamp.timestamp()
-                        try:
-                            await self._on_reading(latest_reading)
-                        except Exception as e:
-                            log.warning("on_reading コールバックエラー: %s", e)
-            except asyncio.TimeoutError:
-                # BleakScanner のハング検知 → task_supervisor に再起動を委譲
-                log.error("BLE scan サイクルが %d秒 超過 (ハング疑い) → task 再起動を要求",
-                          SCAN_CYCLE_TIMEOUT)
-                raise RuntimeError("BLE scan stuck (BleakScanner __aexit__ hang)")
+                async with BleakScanner(detection_callback=detection_callback_wrapped):
+                    last_seen = datetime.now()
+                    while self._running:
+                        await asyncio.sleep(self.poll_seconds)
+
+                        if latest_reading and self._on_reading:
+                            if latest_reading.timestamp.timestamp() != last_reading_ts:
+                                last_reading_ts = latest_reading.timestamp.timestamp()
+                                try:
+                                    await self._on_reading(latest_reading)
+                                except Exception as e:
+                                    log.warning("on_reading コールバックエラー: %s", e)
+
+                        silent = (datetime.now() - last_seen).total_seconds()
+                        if silent >= STALE_LIMIT_SECONDS:
+                            raise RuntimeError(
+                                f"BLE advertisement が {silent:.0f}秒 届いていない"
+                                "（スキャンは動作中）"
+                            )
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                log.warning("BLE スキャン失敗: %s（次回リトライ）", e)
+                # ここを抜けるとき async with の __aexit__ は通常どおり実行され、
+                # StopDiscovery が完了する。セッションを残さない。
+                log.warning("BLE スキャン異常: %s（スキャナを作り直す）", e)
+                if not self._running:
+                    break
                 await asyncio.sleep(5)
 
     def stop(self) -> None:
