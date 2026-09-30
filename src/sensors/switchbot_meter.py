@@ -184,48 +184,73 @@ class SwitchBotMeterMonitor:
         # 「静かな成功」(スキャンは動いているが advertisement が1件も来ない)
         # は例外にならないので、無受信が続いたら自分で異常として raise する。
         # task_supervisor がタスクごと作り直し、スキャナも作り直される。
+        # **10秒ごとにスキャンを張り直す。ただし停止は必ず完了させる。**
+        #
+        # 経緯: 元は1サイクルごとに `async with BleakScanner(...)` を作り直し、
+        # 全体を asyncio.wait_for で包んでいた。タイムアウト時に wait_for が
+        # `async with` の内側をキャンセルするため __aexit__ の StopDiscovery が
+        # 完了せず、BlueZ にセッションが残って以降 InProgress で弾かれ続けた。
+        #
+        # そこで一度「スキャナを開きっぱなしにする」方式に変えたが、実測で
+        # 受信レートが 188件/時 → 13件/時 と約14分の1に落ちた。10秒ごとの
+        # 張り直しは詰まりの原因であると同時に、**受信を維持する役割も
+        # 果たしていた**（BlueZ の長時間ディスカバリは advertisement の配信が
+        # 細っていくらしい）。機構だけ見て、肝心の受信量を測らずに変えたのが誤り。
+        #
+        # 今回は張り直しを戻したうえで、詰まりの原因だけを取り除く:
+        #   - サイクル全体を wait_for で包まない（キャンセルの巻き込みを断つ）
+        #   - start() にだけタイムアウトを付ける
+        #   - stop() は shield で包み、外からキャンセルされても完了させる
+        # これで StopDiscovery が必ず走り、セッションが残らない。
+        START_TIMEOUT = 20.0
+        STOP_TIMEOUT = 20.0
+        # 「スキャンは動いているのに advertisement が1件も来ない」静かな失敗を
+        # 検知する。目的MAC以外の advertisement も生存の証拠として数える。
         STALE_LIMIT_SECONDS = max(self.poll_seconds * 30, 300)
 
         last_seen = datetime.now()
 
         def detection_callback_wrapped(device, advertisement_data):
             nonlocal last_seen
-            # 目的のMAC以外でも「電波は届いている」証拠にはなるので時刻を更新する。
-            # アダプタが詰まると全デバイスの advertisement が止まるため、
-            # ここが動いている限りスキャン自体は生きていると判断できる。
             last_seen = datetime.now()
             detection_callback(device, advertisement_data)
 
         while self._running:
+            scanner = BleakScanner(detection_callback=detection_callback_wrapped)
+            started = False
             try:
-                async with BleakScanner(detection_callback=detection_callback_wrapped):
-                    last_seen = datetime.now()
-                    while self._running:
-                        await asyncio.sleep(self.poll_seconds)
-
-                        if latest_reading and self._on_reading:
-                            if latest_reading.timestamp.timestamp() != last_reading_ts:
-                                last_reading_ts = latest_reading.timestamp.timestamp()
-                                try:
-                                    await self._on_reading(latest_reading)
-                                except Exception as e:
-                                    log.warning("on_reading コールバックエラー: %s", e)
-
-                        silent = (datetime.now() - last_seen).total_seconds()
-                        if silent >= STALE_LIMIT_SECONDS:
-                            raise RuntimeError(
-                                f"BLE advertisement が {silent:.0f}秒 届いていない"
-                                "（スキャンは動作中）"
-                            )
+                await asyncio.wait_for(scanner.start(), timeout=START_TIMEOUT)
+                started = True
+                await asyncio.sleep(self.poll_seconds)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
-                # ここを抜けるとき async with の __aexit__ は通常どおり実行され、
-                # StopDiscovery が完了する。セッションを残さない。
-                log.warning("BLE スキャン異常: %s（スキャナを作り直す）", e)
-                if not self._running:
-                    break
-                await asyncio.sleep(5)
+                log.warning("BLE スキャン開始に失敗: %s", e)
+            finally:
+                if started:
+                    try:
+                        # shield: 外側がキャンセルされても StopDiscovery は完了させる。
+                        # ここを中断すると BlueZ にセッションが残り、次回から詰まる。
+                        await asyncio.wait_for(
+                            asyncio.shield(scanner.stop()), timeout=STOP_TIMEOUT
+                        )
+                    except Exception as e:
+                        log.error("BLE スキャン停止に失敗: %s（セッションが残る恐れ）", e)
+
+            if latest_reading and self._on_reading:
+                if latest_reading.timestamp.timestamp() != last_reading_ts:
+                    last_reading_ts = latest_reading.timestamp.timestamp()
+                    try:
+                        await self._on_reading(latest_reading)
+                    except Exception as e:
+                        log.warning("on_reading コールバックエラー: %s", e)
+
+            silent = (datetime.now() - last_seen).total_seconds()
+            if silent >= STALE_LIMIT_SECONDS:
+                raise RuntimeError(
+                    f"BLE advertisement が {silent:.0f}秒 届いていない"
+                    "（スキャン自体は起動している）"
+                )
 
     def stop(self) -> None:
         self._running = False
