@@ -111,7 +111,12 @@ BATH_SOURCES = {"bath_door", "bath_motion"}
 # お風呂判定のときに「混ざっていても構わない」ソース。
 # camera / bathroom_meter はクラスタリング前に除外済み。toilet_door は
 # 入浴の前後に行くのが自然なので、お風呂セッションを否定しない。
-BATH_NEUTRAL_SOURCES = {"camera", "bathroom_meter", "toilet_door"}
+# hair_dryer は「入浴の直後にしか出ない」設計（monitor.py が直近30分の bath_end を要求する）。
+# 中立に入れておかないと、入浴クラスタに混ざった瞬間に _is_bath_session が False になり、
+# bath_end があっても入浴セッションが丸ごと捨てられる。さらに冷蔵庫が1件混ざると
+# 食事関連3種が成立して「夕食」になる。2026-09-25 に fridge / rice_cooker_lid で
+# 直したのと同じ入れ忘れ。現在ドライヤーのプラグは未設置だが、付けた日に踏む。
+BATH_NEUTRAL_SOURCES = {"camera", "bathroom_meter", "toilet_door", "hair_dryer"}
 
 
 def _is_bath_session(events: list[EventRow]) -> bool:
@@ -193,7 +198,9 @@ def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
     #   - bathroom_meter: 湿度センサー、定期受信のためノイズ
     #   - toilet_door: トイレは食事と無関係
     # これらが含まれていても、他の食事関連ソースと併発しなければ食事ではない
-    food_relevant_sources = sources - {"camera", "bath_motion", "bathroom_meter", "toilet_door"}
+    # ドライヤーは食事の根拠にならない。中立扱いに揃える。
+    food_relevant_sources = sources - {"camera", "bath_motion", "bathroom_meter",
+                                       "toilet_door", "hair_dryer"}
 
     # 時間帯チェック: 深夜(22-5時)は「炊飯器の蓋開」必須で誤検知を厳しく抑制
     first_ts = min((e.started_at for e in events if e.started_at), default=None)

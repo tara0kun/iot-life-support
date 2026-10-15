@@ -1310,7 +1310,15 @@ async def api_send_prompt(request: Request):
 
 @app.post("/api/dismiss-prompt/{prompt_id}")
 async def api_dismiss_prompt(request: Request, prompt_id: int):
-    """祖母がメッセージを確認済みにする。"""
+    """祖母がメッセージを確認済みにする。
+
+    **タブレット経路の認可が要る。** 2026-10-15 まで 50 エンドポイント中
+    ここだけ素通しで、外部から prompt_id を総当たりすれば家族が送った
+    メッセージを祖母の画面に出る前に消せた（DB の dismissed が実際に 1 になる）。
+    同じタブレット用の /api/tablet-record は最初から認可を通している。
+    """
+    if not _check_tablet_access(request):
+        raise HTTPException(status_code=403)
     with transaction() as conn:
         conn.execute("UPDATE family_prompts SET dismissed = 1 WHERE id = ?", (prompt_id,))
     return {"ok": True}
@@ -2424,6 +2432,14 @@ def _build_extra_sensor_status() -> list[dict]:
 
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
+    # **accept() の前に認可する。** このソケットは家族が祖母に送った
+    # メッセージ本文（family_prompt）をそのまま流す。2026-10-15 まで
+    # 無認証で 101 を返しており、公開 ingress から誰でも購読できた。
+    # WebSocket も SessionMiddleware を通るので、HTTP 側と同じ判定が使える。
+    # 祖母のタブレットは宅内/ローカルなので _check_tablet_access で通る。
+    if not _check_tablet_access(websocket) and not _is_family_authenticated(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     q = subscribe()
     try:
