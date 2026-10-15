@@ -1035,10 +1035,18 @@ async def main() -> None:
                 log.warning("浴室アラートの解決通知に失敗: %s", e)
 
     async def _on_bath_alert(elapsed_min: float):
+        # 文面を実際の測定対象に合わせる。
+        # 人感センサーは脱衣所にあり、浴槽の中は見ていない。長風呂では動きが
+        # 止まるのが普通なので、このアラートは実質「入浴が長い」を意味する。
+        # 実測でも窓内6件すべてが本人の長湯(57〜169分)で真の緊急は1件も無く、
+        # 全期間43件のうち29件を家族が誤検知として閉じている。
+        # 「浴室で動きがありません」と書くと浴槽内を見ているように読めてしまう。
         from .notifier import send_actionable_notification
         msg = (
-            f"🚨 緊急: 浴室で{int(elapsed_min)}分間動きがありません!\n"
-            f"すぐに確認してください。"
+            f"🛁 浴室に入ってから {int(elapsed_min)} 分、脱衣所の人感センサーが反応していません\n"
+            f"時刻: {datetime.now().strftime('%H:%M')}\n\n"
+            "長風呂でもこの通知は出ます。念のため様子を見てください。\n"
+            "※浴槽の中は今のセンサーでは見えていません。"
         )
         ctx = datetime.now().strftime("%Y-%m-%d_%H%M")
         await asyncio.to_thread(
