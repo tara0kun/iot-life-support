@@ -33,11 +33,14 @@ def _family_names() -> list[str]:
         import sqlite3
         conn = sqlite3.connect(f"file:{ROOT/'data'/'iot.db'}?mode=ro", uri=True)
         try:
-            rows = conn.execute("SELECT name FROM persons").fetchall()
+            # id=0 は未割当セッション用のセンチネル行で実在の人物ではない。
+            # 名前が一般語なのでドキュメント中に普通に出てきて誤検知になる。
+            rows = conn.execute("SELECT name FROM persons WHERE id != 0").fetchall()
         finally:
             conn.close()
         # 「祖母」「祖父」のような続柄は公開してよい。固有名だけを対象にする
-        generic = {"祖母", "祖父", "母", "父", "家族", "孫", "不明"}
+        generic = {"祖母", "祖父", "母", "父", "家族", "孫", "不明",
+                   "未確定", "未割当", "その他", "来客"}
         return [r[0] for r in rows if r[0] and r[0] not in generic and len(r[0]) >= 2]
     except Exception:
         return []
@@ -100,7 +103,12 @@ def scan(text: str, label: str) -> list[str]:
             pat = (rf"(?:[・|/「『（(,、　]|[^\S\n]){re.escape(name)}"
                    rf"(?=\s*(?:$|[・|/」』）)　]|[^\S\n]|さん|ちゃん))")
         else:
-            pat = rf"(?<![ぁ-ん]){re.escape(name)}(?![ぁ-ん])"
+            # **ひらがなの前後関係で絞ってはいけない。** 日本語では名前の直後に
+            # 助詞（は・が・を・に・の…）が来るのが普通で、それ自体がひらがな。
+            # (?![ぁ-ん]) を付けると「<名前>は」「<名前>が」が全て素通りする。
+            # 3文字以上の名前なら偶然一致はまず起きないので素で探す。
+            # 2文字以下のひらがな名だけは上の区切り付きパターンで扱う。
+            pat = re.escape(name)
         if re.search(pat, text, re.MULTILINE):
             hits.append(f"{label}: 家族の実名「{name}」")
     for pat, why in PATTERNS:
