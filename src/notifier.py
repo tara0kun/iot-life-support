@@ -74,6 +74,21 @@ def is_critical_category(category: str) -> bool:
     return category in CRITICAL_CATEGORIES
 
 
+def _admin_display_name() -> str:
+    """管理者（開発者本人）の表示名。.env の ADMIN_DISPLAY_NAME から読む。
+
+    未設定なら「管理者」。実名をコードに書くと public リポジトリに出てしまう。
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("ADMIN_DISPLAY_NAME="):
+                v = line.split("=", 1)[1].strip()
+                if v:
+                    return v
+    return "管理者"
+
+
 def _admin_user_id() -> str:
     """孫=LINE_USER_ID（adminアカウント）"""
     return _load_env().get("LINE_USER_ID", "").strip()
@@ -536,7 +551,10 @@ def resolve_confirmer_name(line_user_id: str) -> str:
     if line_user_id == "family_ui":
         return "家族の誰か（ダッシュボード）"
     if line_user_id == _admin_user_id():
-        return "泰地"
+        # **実名を直書きしない。** このリポジトリは public で、ここに書くと
+        # 開発者本人の名前がそのまま公開される（2026-10-15 まで直書きされていた）。
+        # 家族の LINE には実名が出たほうが分かりやすいので .env から読む。
+        return _admin_display_name()
     try:
         from .db import get_conn
         conn = get_conn()

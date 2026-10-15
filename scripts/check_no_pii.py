@@ -46,6 +46,34 @@ def _family_names() -> list[str]:
         return []
 
 
+def _author_names() -> list[str]:
+    """開発者本人の名前。
+
+    `persons` は見守り対象の家族だけを持つので、開発者本人の名前は照合対象から
+    漏れていた。実際に 2026-10-15 まで `docs/guide/rice-lid-sensor.md` に
+    本名が平文で残り、public リポジトリに push されていた。
+    git の author 名は必ずこのリポジトリにあるので、そこから取る。
+    姓名の全体と、名の部分（3文字以上のときだけ）を見る。
+    """
+    import subprocess
+
+    out: list[str] = []
+    try:
+        r = subprocess.run(
+            ["git", "config", "user.name"], capture_output=True, text=True, cwd=ROOT, timeout=5
+        )
+        full = r.stdout.strip()
+    except Exception:
+        return out
+    if not full or len(full) < 2:
+        return out
+    out.append(full)
+    given = full[2:]  # 日本語の姓は2文字が大半。名の部分も単独で書かれる
+    if len(given) >= 2:
+        out.append(given)
+    return out
+
+
 def _secrets() -> list[tuple[str, str]]:
     out = []
     env = ROOT / ".env"
@@ -59,6 +87,36 @@ def _secrets() -> list[tuple[str, str]]:
         if k in SECRET_KEYS and len(v) >= 4:
             out.append((k, v))
     return out
+
+
+# 全ひらがなの名前は、日本語の一般語と同形になることがある。
+# 例: 3文字の名前 + 助詞「に」が、そのまま副詞を構成してしまう。
+# パターンだけでは原理的に区別できないので、衝突した語をここに溜める。
+# **ここに入れてよいのは一般語だけ。名前そのものは絶対に書かないこと**
+# （書いた瞬間にこのリポジトリが public な個人情報置き場になる）。
+COMMON_WORD_COLLISIONS = {
+    "はるかに",   # 副詞。src/web/app.py の「はるかに害が大きい」で衝突した
+    "まさに",
+    "さらに",
+    "ともに",
+    "すでに",
+    "ゆえに",
+}
+
+
+def _collides_with_common_word(text: str, start: int, end: int) -> bool:
+    """一致位置が一般語の一部なら True。"""
+    for word in COMMON_WORD_COLLISIONS:
+        lo = max(0, start - len(word))
+        window = text[lo : end + len(word)]
+        if word in window:
+            # 一致範囲が word の内側に収まっているか
+            for i in range(len(window) - len(word) + 1):
+                if window[i : i + len(word)] == word:
+                    w_start, w_end = lo + i, lo + i + len(word)
+                    if w_start <= start and end <= w_end:
+                        return True
+    return False
 
 
 def _is_ambiguous_name(name: str) -> bool:
@@ -87,7 +145,7 @@ def scan(text: str, label: str) -> list[str]:
     for key, val in _secrets():
         if val in text:
             hits.append(f"{label}: .env の {key} の値")
-    for name in _family_names():
+    for name in _family_names() + _author_names():
         if _is_ambiguous_name(name):
             # 2文字のひらがな名は日本語の文中で必ず偶然一致する。
             # 「〜な」+「お〜」の連結や、副詞の一部として現れるため、
@@ -109,8 +167,11 @@ def scan(text: str, label: str) -> list[str]:
             # 3文字以上の名前なら偶然一致はまず起きないので素で探す。
             # 2文字以下のひらがな名だけは上の区切り付きパターンで扱う。
             pat = re.escape(name)
-        if re.search(pat, text, re.MULTILINE):
+        for m in re.finditer(pat, text, re.MULTILINE):
+            if _collides_with_common_word(text, m.start(), m.end()):
+                continue
             hits.append(f"{label}: 家族の実名「{name}」")
+            break
     for pat, why in PATTERNS:
         m = pat.search(text)
         if m:
@@ -126,7 +187,7 @@ def main() -> int:
     # 動的に読む設計なので、どちらも取れない環境（CI・別マシン・clone 直後）では
     # 何も検出できないまま exit 0 になり、チェックが通ったように見える。
     # 両方空なら「チェックできていない」と明示して落とす。
-    if not _secrets() and not _family_names():
+    if not _secrets() and not _family_names() and not _author_names():
         print("個人情報チェックの照合データが読めません（.env と persons の両方が空）。",
               file=sys.stderr)
         print("この環境ではチェックが成立しないため、安全側に倒して中止します。",
