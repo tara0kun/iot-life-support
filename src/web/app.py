@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import secrets
+import sys
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
@@ -1359,6 +1360,13 @@ def _setup_web_logging() -> None:
     uvicorn が root logger を設定しているので basicConfig は使わない。
     このアプリ自身のロガーにだけハンドラを付ける。
     """
+    # **テスト実行中は本番ログに書かない。** tests/ は本番 Pi 上で走るため、
+    # import しただけで FileHandler が張られると、pytest の架空リクエストが
+    # logs/web.log に混ざる。実際に 2026-10-15 に30行混入し、障害調査中の
+    # ログを読み間違える原因になった（架空ID・架空コマンドが本物に見えた）。
+    if "pytest" in sys.modules:
+        return
+
     log_path = BASE.parent.parent / "logs" / "web.log"
     try:
         log_path.parent.mkdir(exist_ok=True)
