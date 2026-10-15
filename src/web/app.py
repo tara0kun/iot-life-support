@@ -124,7 +124,13 @@ def _check_tablet_access(request: Request) -> bool:
         return True
     token = _load_tablet_token()
     if not token:
-        return True  # トークン未設定ならフリー
+        # **fail-closed。** ここで True を返すと、TABLET_TOKEN が読めなくなった瞬間に
+        # Tailscale Funnel 経由で誰でも見守り画面を開けてしまう。
+        # ローカルからのアクセスは上の _is_local で既に許可済みなので、祖母のタブレットは影響を受けない。
+        logging.getLogger("app").error(
+            "TABLET_TOKEN が読めません。外部からのタブレットアクセスを拒否します"
+        )
+        return False
     # URLパラメータ or セッションでチェック
     if request.query_params.get("token") == token:
         request.session["tablet_auth"] = True
