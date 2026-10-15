@@ -95,6 +95,26 @@ def restore(src: Path, *, force: bool = False) -> bool:
             print("中断しました")
             return False
 
+    # **復元前にサービスを止める。** 動いたまま上書きすると、開いている接続が
+    # 古いページを書き戻したり、残ったジャーナルで不整合になる。ここは本番で
+    # 一度も実行されたことが無い経路なので、手順を印刷するだけでなく実際に止める。
+    services = ["iot-monitor", "iot-web", "iot-matter"]
+    running = [sv for sv in services
+               if subprocess.run(["systemctl", "is-active", "--quiet", sv]).returncode == 0]
+    if running:
+        print(f"稼働中のサービスを停止します: {', '.join(running)}")
+        r = subprocess.run(["sudo", "systemctl", "stop", *running])
+        if r.returncode != 0:
+            print("❌ サービスを停止できませんでした。復元を中止します。")
+            print(f"   手動で止めてから再実行してください: sudo systemctl stop {' '.join(running)}")
+            return False
+        # ロールバックジャーナルが残っていたら消す（停止後なので安全）
+        for suffix in ("-journal", "-wal", "-shm"):
+            stale = DB_PATH.parent / (DB_PATH.name + suffix)
+            if stale.exists():
+                stale.unlink()
+                print(f"残骸を削除: {stale.name}")
+
     # 現DBを退避
     if DB_PATH.exists():
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -104,6 +124,9 @@ def restore(src: Path, *, force: bool = False) -> bool:
 
     # 復元
     shutil.copy2(src, DB_PATH)
+    # DB には祖母の生活ログが全部入る。既定の umask で 644 になると
+    # 同居の別アカウントやプロセスから読めてしまうので明示的に落とす。
+    DB_PATH.chmod(0o600)
     print(f"✅ 復元完了: {src.name} → {DB_PATH.name}")
     print("\n次の手順:")
     print("  sudo systemctl start iot-matter iot-web iot-monitor")
