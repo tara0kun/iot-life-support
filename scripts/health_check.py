@@ -243,6 +243,10 @@ def check_recent_events() -> tuple[bool | None, str, str]:
         ("toilet_door", 30, "トイレドア"),
         ("rice_cooker_lid", 40, "炊飯器の蓋"),
         ("rice_cooker", 40, "炊飯器の電力"),
+        # 祖母がタブレットを触ったかどうか。check_web の ✅ は health_check 自身の
+        # 5分プローブを測っているだけで、本人の利用は一切見ていなかった。
+        # その結果 2026-07-13 を最後に 94 日間ゼロでも誰も気づけなかった。
+        ("tablet_report", 48, "祖母タブレット"),
     ]
     try:
         conn = get_conn()
