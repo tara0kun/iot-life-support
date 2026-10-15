@@ -1346,6 +1346,38 @@ def _get_active_prompts() -> list[dict]:
 
 _webhook_log = logging.getLogger("line_webhook")
 
+
+def _setup_web_logging() -> None:
+    """web プロセスのログを logs/web.log に残す。
+
+    **これが無いと障害が起きても何も残らない。** iot-web には logging の設定が
+    一切なく、root logger は WARNING / handlers=[] のままだった。その結果
+    reply_line_message の成功ログ（INFO）はどこにも出ず、LINE コマンドが
+    「反応するときとしないときがある」と報告されても、何を受け取って何を返したのか
+    を後から調べる手段が無かった（2026-10-15）。
+
+    uvicorn が root logger を設定しているので basicConfig は使わない。
+    このアプリ自身のロガーにだけハンドラを付ける。
+    """
+    log_path = BASE.parent.parent / "logs" / "web.log"
+    try:
+        log_path.parent.mkdir(exist_ok=True)
+        handler = logging.FileHandler(log_path)
+    except OSError:
+        return  # ログが書けないことでアプリを落とさない
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    for name in ("line_webhook", "notifier", "line_commands", "app", "lock_manager"):
+        lg = logging.getLogger(name)
+        if any(isinstance(h, logging.FileHandler) for h in lg.handlers):
+            continue  # 二重登録しない（テストで複数回 import されうる）
+        lg.addHandler(handler)
+        lg.setLevel(logging.INFO)
+
+
+_setup_web_logging()
+
 LINE_URL_TRIGGERS = (
     "リンク", "url", "URL", "Url",
     "つながらない", "繋がらない", "つながらん",
@@ -1481,8 +1513,14 @@ async def line_webhook(request: Request):
         sender_id = _extract_sender_id(ev.get("source", {}))
         reply_token = ev.get("replyToken", "")
 
-        # 全受信メッセージのsender_idをログ（家族追加時のID取得用）
-        _webhook_log.info("RECV type=%s sender=%s", ev_type, sender_id)
+        # 全受信メッセージのsender_idをログ（家族追加時のID取得用）。
+        # 本文の先頭も残す。「反応しない」と言われたときに、
+        # 受け取れていないのか・コマンドと認識できていないのか・返信が失敗したのかを
+        # 切り分けられるようにする。本文は生活情報を含みうるので先頭20文字まで。
+        _webhook_log.info(
+            "RECV type=%s sender=%s…%s", ev_type, sender_id[:8],
+            (ev.get("message", {}).get("text", "") or "")[:20] if ev_type == "message" else "",
+        )
 
         # メッセージ本文を先に取得（登録コマンド判定のため）
         text_for_check = ""
