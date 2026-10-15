@@ -114,6 +114,18 @@ def main() -> int:
     args = sys.argv[1:]
     hits: list[str] = []
 
+    # **フェイルクローズ。** 照合対象は .env（秘密）と persons テーブル（実名）から
+    # 動的に読む設計なので、どちらも取れない環境（CI・別マシン・clone 直後）では
+    # 何も検出できないまま exit 0 になり、チェックが通ったように見える。
+    # 両方空なら「チェックできていない」と明示して落とす。
+    if not _secrets() and not _family_names():
+        print("個人情報チェックの照合データが読めません（.env と persons の両方が空）。",
+              file=sys.stderr)
+        print("この環境ではチェックが成立しないため、安全側に倒して中止します。",
+              file=sys.stderr)
+        print("意図的に回避する場合は --no-verify を使ってください。", file=sys.stderr)
+        return 1
+
     if args and args[0] == "--message":
         p = Path(args[1])
         hits += scan(p.read_text(errors="ignore"), "コミットメッセージ")
