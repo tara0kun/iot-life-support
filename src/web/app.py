@@ -1482,7 +1482,14 @@ async def line_webhook(request: Request):
             m = ev.get("message", {})
             if m.get("type") == "text":
                 text_for_check = m.get("text", "").strip()
-        is_register_command = text_for_check.startswith("登録")
+        # dispatcher の register_family と同じ条件に揃える。
+        # startswith("登録") だと「登録一覧」(家族の氏名を一覧で返す) と
+        # 「登録解除」まで未登録者に通してしまい、許可リストの意味が無くなる。
+        is_register_command = (
+            text_for_check == "登録"
+            or text_for_check.startswith("登録 ")
+            or text_for_check.startswith("登録　")
+        )
 
         # 許可リストチェック（登録コマンドだけは未登録者でも通す）
         if allowed and sender_id not in allowed and not is_register_command:
