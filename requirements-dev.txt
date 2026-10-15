@@ -2,3 +2,5 @@
 #   venv/bin/pip install -r requirements-dev.txt
 -r requirements.txt
 pytest>=9.0
+# 時刻依存テスト用。0時跨ぎでテストが落ちるのを防ぐ
+freezegun>=1.5

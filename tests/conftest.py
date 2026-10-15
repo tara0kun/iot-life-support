@@ -89,3 +89,23 @@ def seeded_db(temp_db):
     conn.commit()
     conn.close()
     return temp_db
+
+
+# テスト用の固定時刻。日中のど真ん中にして、前後に数時間の余裕を持たせる。
+# これが無いと「N分前」で作った行が 0 時台の実行で前日になり、
+# sessions_today()（今日の0時以降しか見ない）から消えてテストが落ちる。
+# 実際に 2026-10-16 00:31 に5件が日付跨ぎで落ちた。
+FROZEN_NOW = "2026-06-15 14:00:00"
+
+
+@pytest.fixture
+def frozen_now():
+    """`datetime.now()` を FROZEN_NOW に固定する。
+
+    sessions.py は datetime.now() を4箇所で直接呼ぶので、
+    時刻を固定しないと「今日」の判定が実行時刻に依存する。
+    """
+    from freezegun import freeze_time
+
+    with freeze_time(FROZEN_NOW) as ft:
+        yield ft
