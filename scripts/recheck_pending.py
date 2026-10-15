@@ -44,6 +44,7 @@ from src.notifier import (
     broadcast_with_quick_reply,
     is_critical_category,
     _should_suppress_for_night,
+    mark_related_completed_silent,
 )
 
 TIMEOUT_HOURS = 24  # 24時間以上対応なしの通知は自動タイムアウト扱いに
@@ -149,6 +150,102 @@ def _first_line(message: str) -> str:
     return "(本文なし)"
 
 
+# 安否アラート(anomaly_inactivity)が「祖母が生きている証拠」として見ているソース。
+# scripts/anomaly_check.py の _last_sensor_activity と同じ集合にすること。
+# ここがズレると「発火はするが解決しない」状態になる。
+LIFE_SIGN_SOURCES = (
+    "rice_cooker", "bath_door", "bath_motion",
+    "toilet_door", "fridge", "rice_cooker_lid", "tablet_report",
+)
+
+ABNORMAL_TEMP_C = 35.0  # src/bath_humidity_detector.py と同じ値
+
+
+def _close_if_premise_gone(category: str, created_jst) -> bool:
+    """アラートの前提が消えていたら pending を閉じる。閉じたら True。
+
+    **CRITICAL は未応答だと最大3回・全家族に再通知される。** 前提が消えたことを
+    観測しても閉じない経路があると、解決済みの事象について鳴り続ける。
+    2026-10-11 の anomaly_inactivity がそれで、祖母が動き出した18分後から
+    さらに3ラウンド・計15通が送られた。
+
+    害の本体は通数ではない。家族が「もう大丈夫なのに鳴る通知」を誤検知として
+    閉じる習慣をつけることで、本物の浴室緊急通知が読まれなくなること。
+
+    bath_emergency / device_locked / meal_alert は既に別経路で閉じている
+    （monitor.py の _on_bath_end / _on_bath_alert_resolved、
+      line_commands.py の handle_confirm_postback）。ここで扱うのは残り4つ。
+
+    注意: events.started_at は JST、pending_notifications.created_at は UTC。
+    呼び出し側で JST に直したものを受け取る。
+    """
+    since = created_jst.strftime("%Y-%m-%d %H:%M:%S")
+    reason = None
+    conn = get_conn()
+    try:
+        if category == "anomaly_inactivity":
+            ph = ",".join("?" * len(LIFE_SIGN_SOURCES))
+            row = conn.execute(
+                f"""SELECT 1 FROM events
+                     WHERE source IN ({ph}) AND started_at > ? LIMIT 1""",
+                (*LIFE_SIGN_SOURCES, since),
+            ).fetchone()
+            if row:
+                reason = "活動の再開を検知したため自動で解決"
+
+        elif category == "anomaly_fridge_open":
+            row = conn.execute(
+                """SELECT 1 FROM events
+                    WHERE source='fridge' AND event_type='close'
+                      AND started_at > ? LIMIT 1""",
+                (since,),
+            ).fetchone()
+            if row:
+                reason = "冷蔵庫が閉まったため自動で解決"
+
+        elif category == "anomaly_night_rice":
+            row = conn.execute(
+                """SELECT 1 FROM events
+                    WHERE source='rice_cooker' AND event_type='power_off'
+                      AND started_at > ? LIMIT 1""",
+                (since,),
+            ).fetchone()
+            if row:
+                reason = "炊飯器の電源が切れたため自動で解決"
+
+        elif category == "bath_abnormal_temp":
+            # 温度は raw_meta の temp_c（value は湿度）。SQLite の JSON 関数に
+            # 依存しないよう Python 側で判定する。
+            rows = conn.execute(
+                """SELECT raw_meta FROM events
+                    WHERE source='bathroom_meter' AND event_type='reading'
+                      AND started_at > ? ORDER BY started_at DESC LIMIT 5""",
+                (since,),
+            ).fetchall()
+            temps = []
+            for r in rows:
+                try:
+                    meta = json.loads(r["raw_meta"] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                t = meta.get("temp_c")
+                if isinstance(t, (int, float)):
+                    temps.append(float(t))
+            if temps and max(temps) < ABNORMAL_TEMP_C:
+                reason = "浴室の温度が下がったため自動で解決"
+    finally:
+        conn.close()
+
+    if reason is None:
+        return False
+    closed = mark_related_completed_silent(
+        category, created_jst.strftime("%Y-%m-%d"), "auto_resolved", reason
+    )
+    if closed:
+        print(f"自動解決: type={category} 件数={closed} 理由={reason}")
+    return bool(closed)
+
+
 def escalate_unanswered() -> None:
     """未応答の CRITICAL 通知を再通知し、上限に達したら打ち切りを broadcast する。
 
@@ -188,6 +285,11 @@ def escalate_unanswered() -> None:
         created = _parse_utc(r["created_at"])
         age_min = (now - created).total_seconds() / 60
         jst = created + timedelta(hours=9)  # created_at は UTC 保存
+
+        # 再通知の前に、アラートの前提がまだ生きているかを確認する。
+        # 消えていれば閉じて、この行については何も送らない。
+        if _close_if_premise_gone(category, jst):
+            continue
 
         # `or 1` にすると notify_count=0（1通も送れていない）が 1 に化ける
         count = r["notify_count"] if r["notify_count"] is not None else 1
