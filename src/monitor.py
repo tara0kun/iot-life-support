@@ -315,10 +315,7 @@ async def _request_session_confirmation(session_id: int) -> None:
         f"判定根拠: {basis_str}\n\n"
         "誰の食事ですか？"
     )
-    items = [
-        {"label": "祖母さん", "data": f"sess_confirm:{session_id}:1"},
-        {"label": "祖父さん", "data": f"sess_confirm:{session_id}:3"},
-        {"label": "母さん", "data": f"sess_confirm:{session_id}:2"},
+    items = _person_choice_items(f"sess_confirm:{session_id}") + [
         {"label": "他の家族", "data": f"sess_confirm:{session_id}:other"},
         {"label": "食事じゃない", "data": f"sess_confirm:{session_id}:reject"},
     ]
@@ -721,6 +718,40 @@ async def on_person_detected(frame: CameraFrame) -> None:
 # --- セッション集約 + ロック/通知 ---
 
 GRANDMA_ID = 1
+
+# Quick Reply は13項目まで。人物 + 「他の家族」 + 「食事じゃない」で収める。
+MAX_PERSON_CHOICES = 10
+
+
+def _person_choice_items(prefix: str) -> list[dict]:
+    """「誰の食事か」の選択肢を persons から作る。
+
+    **person_id を直書きしてはいけない。** 以前は 祖母=1 / 祖父=3 / 母=2 を
+    ボタンに埋め込んでいたが、本番の persons に id=2 が存在せず（実在するのは
+    0,1,3,4,5,6,7,8）、get_conn() は foreign_keys=ON なので「母さん」を押すと
+    毎回 FK 違反で失敗していた。同じ通知の他のボタンは通るため、家族からは
+    「ボタンによって反応したりしなかったりする」ように見えていた（2026-10-15 発覚）。
+
+    ラベルは persons.name をそのまま使う。コードに実名を書かずに済む。
+    """
+    from src.db import get_conn
+
+    try:
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT id, name FROM persons
+                    WHERE id != 0 AND name IS NOT NULL AND name != ''
+                    ORDER BY CASE role WHEN 'grandma' THEN 0 ELSE 1 END, id
+                    LIMIT ?""",
+                (MAX_PERSON_CHOICES,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("人物選択肢の取得に失敗: %s", e)
+        return []
+    return [{"label": f"{r['name']}さん"[:20], "data": f"{prefix}:{r['id']}"} for r in rows]
 RICE_COOKER_NODE_ID = 1
 MAX_MEALS_BEFORE_ALERT = 3
 

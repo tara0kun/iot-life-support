@@ -1618,9 +1618,41 @@ async def line_webhook(request: Request):
                 _webhook_log.error("メニュー送信失敗: %s", e)
         elif reply:
             try:
-                await asyncio.to_thread(reply_line_message, reply_token, reply)
+                ok = await asyncio.to_thread(
+                    reply_line_message, reply_token, reply
+                )
+                if not ok:
+                    # reply token は1回限り・約1分で失効する。LINE の再送と
+                    # 重なると2回目は必ず失敗するので push で送り直す。
+                    # ここを黙って諦めていたため「処理は走ったのに
+                    # 何も返ってこない」が起きていた。
+                    _webhook_log.warning(
+                        "返信が拒否された → push で再送 sender=%s", sender_id[:8]
+                    )
+                    from ..notifier import send_line_message
+                    await asyncio.to_thread(
+                        send_line_message, reply, user_id=sender_id
+                    )
             except Exception as e:
                 _webhook_log.error("LINE返信失敗: %s", e)
+        elif text.strip():
+            # **無言で終わらせない。** dispatch が None を返すのは
+            # 「コマンドとして解釈できなかった」場合で、家族から見ると
+            # 送ったのに無反応に見える。実測で 272 パターン中 93 が
+            # ここに落ちており、「反応するときとしないときがある」の
+            # 構造的な土台になっていた（2026-10-15）。
+            _webhook_log.info(
+                "未知のコマンド sender=%s…%s", sender_id[:8], text[:20]
+            )
+            try:
+                await asyncio.to_thread(
+                    reply_line_message, reply_token,
+                    "すみません、そのコマンドは分かりませんでした。\n"
+                    "「ヘルプ」と送ると使えるコマンドの一覧が出ます。\n"
+                    "「メニュー」ならボタンで選べます。",
+                )
+            except Exception as e:
+                _webhook_log.error("未知コマンドの返信失敗: %s", e)
 
     # 常に200を返す（LINEの再送を防ぐ）
     return {"ok": True}
