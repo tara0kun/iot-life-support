@@ -1596,7 +1596,12 @@ async def serve_manual_image(request: Request, file_name: str):
     """
     if "/" in file_name or ".." in file_name or not file_name.endswith(".jpg"):
         raise HTTPException(status_code=400)
-    if not _is_family_authenticated(request) and not _check_tablet_access(request):
+    # 認可は、この画像を使っている family_manual 自身と同じにする。
+    # 宅内 LAN を通す _check_tablet_access を混ぜると、画像だけがページより
+    # 緩くなる。ファイル名は公開 README に載っていたので既知で、宅内 WiFi に
+    # 入った第三者（来訪者・介護者）に列挙される。祖母のタブレットは家族
+    # マニュアルを開かないので、通す必要も無い。
+    if not _is_family_authenticated(request):
         raise HTTPException(status_code=403)
     fpath = MANUAL_IMAGES_DIR / file_name
     if not fpath.exists():
