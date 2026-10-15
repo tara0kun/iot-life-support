@@ -39,33 +39,66 @@ def _is_locked_out(sender_id: str) -> tuple[bool, int]:
     return True, int(info["until"] - time.time())
 
 
+# 見た目は同じでも判定を外す文字。コピペや IME で混入する。
+_INVISIBLE = str.maketrans({c: None for c in "\u200b\u200c\u200d\ufeff\u2060"})
+
+
+def normalize_command_text(text: str) -> str:
+    """コマンド判定に使う形に揃える。
+
+    **全角と半角を別物として扱ってはいけない。** 日本語 IME のまま打つ家族は
+    「ＨＥＬＰ」「１２３４」のように全角で入力する。NFKC 正規化で全角英数は
+    半角になり、全角スペースも半角になる。
+    2026-10-15 まで炊飯器の確認コードが 4桁の正規表現で
+    全角数字にマッチする一方、照合は生の文字列比較だったため、
+    「１２３４」は正しいコードを写しても必ず不一致になり、3回で15分
+    ロックアウトされていた。
+
+    ゼロ幅スペースも落とす。見えないのに `"状況" in text` を False にする。
+    """
+    import unicodedata
+
+    return unicodedata.normalize("NFKC", (text or "")).translate(_INVISIBLE).strip()
+
+
 def match_command(text: str) -> str:
-    t = (text or "").strip()
+    t = normalize_command_text(text)
     lower = t.lower()
 
-    if t.startswith("登録 ") or t.startswith("登録　") or t == "登録":
+    if t.startswith("登録 ") or t == "登録":
         return "register_family"
-    if t.startswith("登録解除") or t == "解除登録":
+    if t.startswith("登録解除") or t.startswith("解除登録") or "登録を解除" in t:
         return "unregister_family"
-    if t in ("登録一覧", "メンバー", "誰が登録"):
+    # 完全一致にしない。「登録一覧？」「メンバー一覧」で落ちていた。
+    if any(kw in t for kw in ("登録一覧", "登録リスト", "登録状況", "メンバー", "誰が登録")):
         return "list_registered"
-    if any(kw in t for kw in ("ロック解除", "解除", "アンロック")):
+    # **素の「解除」を入れない。** 「通知を解除」「アラート解除」まで炊飯器の
+    # 解除フローに吸い込まれ、脈絡なく4桁コードが返っていた。ヘルプも
+    # 「ロック解除」としか案内していない。
+    if any(kw in t for kw in (
+        "ロック解除", "アンロック", "ろっくかいじょ",
+        "ロックを外", "ロック外", "炊飯器を開", "炊飯器あけ",
+    )):
         return "unlock_request"
-    if re.fullmatch(r"\d{4}", t):
+    if re.fullmatch(r"[0-9]{4}", t):
         return "unlock_confirm"
-    if any(kw in t for kw in ("状況", "様子", "今日")):
+    if any(kw in t for kw in (
+        "状況", "様子", "今日", "ステータス", "状態", "じょうきょう", "どんな感じ",
+    )):
         return "status"
-    if "最後" in t or "さっき" in t:
+    if any(kw in t for kw in ("最後", "さっき", "直近", "前回", "食べた")):
         return "last_meal"
-    if any(kw in lower for kw in ("ヘルプ", "help", "コマンド", "使い方")):
+    if any(kw in lower for kw in (
+        "ヘルプ", "help", "コマンド", "使い方", "使いかた", "へるぷ", "何ができる",
+    )):
         return "help"
-    if any(kw in lower for kw in ("メニュー", "menu")):
+    if any(kw in lower for kw in ("メニュー", "menu", "めにゅー", "ボタン")):
         return "menu"
     if t.startswith("意見") or t.startswith("質問") or t.startswith("要望") or t.startswith("バグ"):
         return "feedback"
     if any(kw.lower() in lower for kw in (
-        "リンク", "url", "つながらない", "繋がらない",
-        "見れない", "みれない", "アクセス", "開けない", "接続",
+        "リンク", "url", "りんく", "つながらない", "繋がらない",
+        "見れない", "みれない", "アクセス", "開けない", "あけない", "接続",
     )):
         return "link"
     return "unknown"
@@ -1071,8 +1104,12 @@ async def dispatch(text: str, sender_id: str) -> str | None:
     "link" はここでは処理せず、webhook側でURLを組み立てる。
     """
     cmd = match_command(text)
+    # 正規化後の文字列を渡す。全角スペース区切りの「登録　母」や、
+    # 全角数字の確認コードが、ハンドラ側でも同じ形で扱えるようにする。
+    # feedback だけは家族が書いた原文をそのまま保存したいので渡さない。
+    norm = normalize_command_text(text)
     if cmd == "register_family":
-        return handle_register_family(text, sender_id)
+        return handle_register_family(norm, sender_id)
     if cmd == "unregister_family":
         return handle_unregister_family(sender_id)
     if cmd == "list_registered":
@@ -1080,7 +1117,7 @@ async def dispatch(text: str, sender_id: str) -> str | None:
     if cmd == "unlock_request":
         return handle_unlock_request(sender_id)
     if cmd == "unlock_confirm":
-        return await handle_unlock_confirm(text, sender_id)
+        return await handle_unlock_confirm(norm, sender_id)
     if cmd == "status":
         return handle_status()
     if cmd == "last_meal":

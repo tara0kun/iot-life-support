@@ -1386,8 +1386,10 @@ def _setup_web_logging() -> None:
 
 _setup_web_logging()
 
+# match_command の link キーワードと揃えること。
+# 片方だけに足すと「リンク系なのに無反応」が生まれる（テストが差分を検出する）。
 LINE_URL_TRIGGERS = (
-    "リンク", "url", "URL", "Url",
+    "リンク", "りんく", "url", "URL", "Url",
     "つながらない", "繋がらない", "つながらん",
     "見れない", "みれない", "見られない", "みられない",
     "アクセス", "開けない", "あけない",
@@ -1470,8 +1472,23 @@ def _is_url_request(text: str) -> bool:
 
 
 def _extract_sender_id(source: dict) -> str:
-    """LINE event.source からIDを取り出す（group/room/user のいずれか）。"""
-    return source.get("groupId") or source.get("roomId") or source.get("userId", "")
+    """LINE event.source から**発言者**のIDを取り出す。
+
+    **userId を最優先にする。** 以前は groupId / roomId を先に返していたため、
+    家族グループやトークルームでの発言は送信者IDが groupId（C 始まり）になり、
+    許可リスト（個人ID = U 始まり）に一致せず全部黙殺されていた。
+    同じ人が 1:1 では動くのにグループでは無反応になるので、
+    「反応するときとしないときがある」の一因になりうる（2026-10-15 発見）。
+
+    group/room でも userId は付いてくるのが通常。付いてこないケース
+    （LINE 側の設定で user ID の取得が許可されていない等）だけ
+    従来どおり groupId / roomId に落とす。
+    """
+    return (
+        source.get("userId")
+        or source.get("groupId")
+        or source.get("roomId", "")
+    )
 
 
 @app.get("/line/webhook")
