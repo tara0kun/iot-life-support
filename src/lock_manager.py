@@ -137,6 +137,7 @@ def should_warn_recent_meal(person_id: int) -> dict | None:
     minutes_ago = (datetime.now() - last_time).total_seconds() / 60
     if minutes_ago < RECENT_MEAL_MINUTES:
         return {
+            "session_id": last["id"],
             "last_meal_label": last.get("label", "食事"),
             "last_meal_time": last_time.strftime("%H:%M"),
             "minutes_ago": int(minutes_ago),

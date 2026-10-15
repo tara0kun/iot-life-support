@@ -724,6 +724,10 @@ GRANDMA_ID = 1
 RICE_COOKER_NODE_ID = 1
 MAX_MEALS_BEFORE_ALERT = 3
 
+# ロック確認を送った食事セッション id。プロセス内だけで足りる
+# （再起動時に取りこぼしても、聞き直しが1回増えるだけで害が無い）。
+_lock_asked_sessions: set[int] = set()
+
 PREV_SESSION_LOOKUP_MINUTES = 90  # 「前と同じ食事」ボタン提示の上限
 
 
@@ -954,17 +958,27 @@ async def session_aggregator(interval: int = 60) -> None:
                     log.warning("祖母の食事回数が%d回に到達 → LINE通知", current_count)
                     await asyncio.to_thread(notify_meal_alert, "祖母", current_count, last_time_str)
 
-                # Layer 2: 炊飯器ロックは家族確認後に実行（誤検知防止）
-                if current_count >= 2:
-                    warning = should_warn_recent_meal(GRANDMA_ID)
-                    if warning:
-                        log.info(
-                            "直近食事あり(%s分前) → ロック確認をLINEに送信",
-                            warning["minutes_ago"],
-                        )
-                        await _request_lock_confirmation(current_count, warning["minutes_ago"])
-
             prev_session_count = current_count
+
+            # Layer 2: 炊飯器ロックは家族確認後に実行（誤検知防止）
+            #
+            # **「カウントが増えたティック」の中に置いてはいけない。** カウントが増えるのは
+            # セッションが confirmed になった瞬間で、実測では食事開始から中央値 7.6 時間
+            # （143件中84件が90分超）。RECENT_MEAL_MINUTES=90 の窓はその時点でほぼ必ず
+            # 閉じており、should_warn_recent_meal() が None を返してロックが成立しない。
+            # 実際 30日間で「ロック確認をLINEに送信」は0件、lock_confirm の通知は
+            # 2026-08-09 を最後に途絶えていた。
+            # 毎ティック評価に変える代わりに、食事セッション単位で一度しか聞かない。
+            # ctx が分単位なので、ここを素で外に出すと毎分再送になる。
+            if current_count >= 2:
+                warning = should_warn_recent_meal(GRANDMA_ID)
+                if warning and warning["session_id"] not in _lock_asked_sessions:
+                    _lock_asked_sessions.add(warning["session_id"])
+                    log.info(
+                        "直近食事あり(%s分前, session=%s) → ロック確認をLINEに送信",
+                        warning["minutes_ago"], warning["session_id"],
+                    )
+                    await _request_lock_confirmation(current_count, warning["minutes_ago"])
 
         except Exception as e:
             log.warning("セッション集約/通知エラー: %s", e)
