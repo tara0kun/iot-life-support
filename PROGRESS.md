@@ -1064,7 +1064,9 @@ python scripts/seed_mock_data.py --clear --scenario 4  # 充実した1日
 19. **Gitブランチ**: main（本番）/ dev（開発）/ future（新機能）の3ブランチ運用。mainに直接コミット禁止
 20. **GitHub CLI**: `gh` インストール済み、HTTPS認証済み。リポジトリ: `tara0kun/iot-life-support`
 21. **GitHubデフォルトブランチ**: `main`（旧masterは削除済み）
-22. **doc/screenshots/ のみGit管理**（doc/の他ファイルは.gitignore対象）
+22. **doc/screenshots/ も Git 管理外**（2026-10-15 変更。7枚とも実データが写っており、
+    祖母の食事時刻・達成項目・LINE通知本文が読めたため追跡から除外。ローカルには残してあり、
+    家族マニュアル `/family/manual`（認証必須）から `/family/manual/image/<name>` 経由で配信する）
 23. **炊飯量ガイドはDB管理**（`rice_guide`テーブル）。家族UIから登録・削除。未登録ならタブレットに非表示
 24. **祖母「できた」ボタンはセンサー照合付き**。センサー確認済みのみスタンプ記録。未確認は`_unverified`で記録（confidence=0.0）
 25. **`/api/tablet-record` は認証済み**（ローカル or タブレットトークン認証）

@@ -1573,6 +1573,29 @@ async def family_manual(request: Request):
     return templates.TemplateResponse(request, "family_manual.html", {})
 
 
+
+MANUAL_IMAGES_DIR = BASE.parent.parent / "data" / "manual_images"
+
+
+@app.get("/family/manual/image/{file_name}")
+async def serve_manual_image(request: Request, file_name: str):
+    """家族マニュアルの画面キャプチャを配信する。
+
+    **無認証で配信してはいけない。** 7枚とも実機の画面で、祖母の食事時刻・
+    達成項目・LINE通知の本文がそのまま写っている。
+    2026-10-15 まで /static/screenshots/ に置かれており、公開 ingress から
+    無認証で 200 を返していた（外部から14回取得されている）。同じ画像が
+    README 経由で public リポジトリにも入っていたためファイル名も既知だった。
+    """
+    if "/" in file_name or ".." in file_name or not file_name.endswith(".jpg"):
+        raise HTTPException(status_code=400)
+    if not _is_family_authenticated(request) and not _check_tablet_access(request):
+        raise HTTPException(status_code=403)
+    fpath = MANUAL_IMAGES_DIR / file_name
+    if not fpath.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(fpath, media_type="image/jpeg")
+
 @app.get("/family/weekly-report", response_class=HTMLResponse)
 async def family_weekly_report(request: Request):
     """週次レポートをブラウザで表示。Chrome等の「PDFに保存」で出力できる。"""

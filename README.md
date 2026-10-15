@@ -358,7 +358,7 @@ PR必須までは1人開発のため不要。
 │   ├── seed_mock_data.py    ← モックデータ投入（5シナリオ）
 │   └── register_face.py     ← 顔登録CLI
 ├── systemd/                 ← systemdサービス定義
-├── doc/screenshots/         ← README用スクリーンショット
+├── doc/screenshots/         ← 画面キャプチャ（Git管理外・実データのため）
 ├── PROGRESS.md              ← 開発進捗記録（現状ダイジェスト含む）
 ├── GW_SETUP.md              ← GW設置手順書
 ├── HANDOFF.md               ← 引き継ぎメモ
@@ -369,39 +369,27 @@ PR必須までは1人開発のため不要。
 
 ## スクリーンショット
 
-### タブレット画面（本人向け）
+実機の画面キャプチャは **このリポジトリには含めていません。**
 
-大きな時計と時間帯挨拶、やさしい注意喚起。
+7枚とも本番稼働中の実データが写っており、祖母の食事時刻・その日の達成項目・
+LINE 通知の本文がそのまま読めてしまうためです（2026-10-15 に追跡対象から除外）。
 
-<img src="doc/screenshots/tablet_clock_alerts.jpg" width="300">
+画面の構成は以下のとおりです。
 
-SVGイラストによるお花の成長と、スタンプカードで1日の達成状況を視覚化。
+**タブレット画面（本人向け）**
+- 大きな時計と時間帯挨拶、やさしい注意喚起
+- SVG イラストによるお花の成長と、スタンプカードで1日の達成状況を視覚化
+- スタンプカード全体と「わたしのおにわ」（過去14日間の成長記録）
+- 「きょうのできごと」で1日の活動履歴を色分けアイコンで表示
 
-<img src="doc/screenshots/tablet_flower_stamps.jpg" width="300">
+**家族管理画面**
+- ダッシュボード・機器管理・ヒートマップ・かんたん記録
+- イベント一覧（人物フィルタ・ソース別色分け・人物変更ドロップダウン・編集・削除）
 
-スタンプカード全体と「わたしのおにわ」（過去14日間の成長記録）。
+**LINE 通知**
+- 食事検知アラート、炊飯器の自動ロック、浴室緊急通知、1日のまとめ
 
-<img src="doc/screenshots/tablet_garden.jpg" width="300">
-
-「きょうのできごと」で1日の活動履歴を色分けアイコンで表示。
-
-<img src="doc/screenshots/tablet_history.jpg" width="300">
-
-### 家族管理画面
-
-ダッシュボード・機器管理・ヒートマップ・かんたん記録。
-
-<img src="doc/screenshots/family_dashboard.jpg" width="300">
-
-イベント一覧。人物フィルタ・ソース別色分け・人物変更ドロップダウン・編集・削除。
-
-<img src="doc/screenshots/family_events.jpg" width="300">
-
-### LINE通知
-
-食事検知アラート、自動ロック、浴室緊急通知、1日のまとめ。
-
-<img src="doc/screenshots/line_notifications.jpg" width="300">
+実物は家族マニュアル（`/family/manual`、家族ログイン必須）から参照できます。
 
 ## ライセンス
 

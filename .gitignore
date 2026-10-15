@@ -29,16 +29,14 @@ Thumbs.db
 android/bin/
 android/.buildozer/
 
-# 個人写真は一切Gitに上げない。doc/screenshots/ 配下も既存README用のみ許可。
+# 個人写真・実機スクリーンショットは一切Gitに上げない。
+# 2026-10-15: README/家族マニュアル用の7枚も、祖母の生活パターン
+# （食事時刻・達成項目・LINE通知本文）が写っていたため追跡対象から外した。
+# ローカルには残してあるので家族マニュアル(/family/manual, 認証必須)は動く。
 doc/*
 !doc/screenshots/
 # screenshots配下を一旦全て除外
 doc/screenshots/*
 # README で使う既存の画面キャプチャだけホワイトリスト
-!doc/screenshots/family_dashboard.jpg
-!doc/screenshots/family_events.jpg
-!doc/screenshots/line_notifications.jpg
-!doc/screenshots/tablet_clock_alerts.jpg
-!doc/screenshots/tablet_flower_stamps.jpg
-!doc/screenshots/tablet_garden.jpg
-!doc/screenshots/tablet_history.jpg
+
+src/web/static/screenshots/
