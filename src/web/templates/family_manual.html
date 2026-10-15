@@ -234,7 +234,7 @@
   <tr><td>P110M ⇄ ラズパイ</td><td>Matter（python-matter-server経由）</td></tr>
   <tr><td>T110/T100 ⇄ ラズパイ</td><td>H100ハブ → Wi-Fi → python-kasa</td></tr>
   <tr><td>C220 ⇄ ラズパイ</td><td>RTSP（ストリーミング）</td></tr>
-  <tr><td>ラズパイ ⇄ 家族のスマホ</td><td>Cloudflare Tunnel経由のHTTPS</td></tr>
+  <tr><td>ラズパイ ⇄ 家族のスマホ</td><td>Tailscale Funnel 経由のHTTPS（固定URL）</td></tr>
   <tr><td>ラズパイ ⇄ LINE</td><td>LINE Messaging API（双方向）</td></tr>
 </table>
 
@@ -267,7 +267,7 @@
     <td rowspan="2">🛁 お風呂</td>
     <td>ドアセンサー＋モーションでの入浴検知</td>
   </tr>
-  <tr><td>30分以上モーション無し → 緊急通知</td></tr>
+  <tr><td>脱衣所の人感センサーが30分反応しない → 通知<br><small>※浴槽の中は見えていません。長風呂でもこの通知は出ます</small></td></tr>
 
   <tr>
     <td rowspan="3">📱 LINE連携</td>
@@ -296,7 +296,7 @@
 <ul>
   <li><strong>映像はローカル保存のみ</strong>：クラウドや外部サービスに送信しません</li>
   <li><strong>顔データもローカルのみ</strong>：祖母・家族の顔特徴量はラズパイ内で完結</li>
-  <li><strong>動画録画なし</strong>：人物検知時の静止画のみ（14日で自動削除）</li>
+  <li><strong>動画録画なし</strong>：人物検知時の静止画のみ（<strong>1日で自動削除</strong>）</li>
   <li><strong>家族のみアクセス</strong>：パスワード認証＋トークン認証</li>
   <li><strong>監査ログ</strong>：家族の編集・解除はすべて記録（後から追跡可能）</li>
 </ul>
@@ -364,9 +364,8 @@
   <tr><td>🛁 お風呂リマインド</td><td>夕方に未入浴なら通知</td></tr>
   <tr><td>📋 きょうのまとめ</td><td>毎晩22時</td></tr>
   <tr><td>📊 週次レポート</td><td>毎週日曜22時</td></tr>
-  <tr><td>🚨 安否確認アラート</td><td>4時間以上センサー無反応</td></tr>
+  <tr><td>🚨 安否確認アラート</td><td>日中に6時間以上センサー無反応</td></tr>
   <tr><td>🚨 深夜の家電稼働</td><td>2時〜5時の炊飯器ON</td></tr>
-  <tr><td>🌐 公開URL更新</td><td>外部URL（Cloudflare Tunnel）が変わった時</td></tr>
 </table>
 
 <div class="screenshot">
@@ -423,7 +422,8 @@
 <h3>📝 かんたん記録</h3>
 <p>おばあちゃんから「薬飲んだよ」など報告を受けたら、対応するボタンを押して記録します。</p>
 <ul>
-  <li>起床 / お薬 / お風呂 / トイレ / おやつ / 就寝 の6種類</li>
+  <li>起床 / お薬 / <strong>朝食 / 昼食 / 夕食 / 間食</strong> / お風呂 / トイレ / おやつ / 就寝 の10種類</li>
+  <li><strong>炊飯器のフタのセンサーが不調のため、食事が自動で記録されない日が続いています。</strong><br>  おばあちゃんが食べたと分かったときは、<strong>朝食 / 昼食 / 夕食</strong> のボタンで記録してください。  タブレットのスタンプと週次レポートに反映されます。</li>
   <li>誤タップ防止の確認ダイアログ付き</li>
   <li>記録すると即座にタブレットのスタンプにも反映</li>
 </ul>
@@ -554,7 +554,7 @@
 <h3>🚨 「センサー無反応」アラートが届いた</h3>
 <div class="box danger">
   おばあちゃんに電話／訪問して安否を確認してください。
-  4時間以上センサーが反応していません。
+  6時間以上センサーが反応していません。
 </div>
 
 <h3>🚨 「深夜の家電稼働」アラートが届いた</h3>
