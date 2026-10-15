@@ -432,26 +432,20 @@ def test_webhook_は未登録の送信者のボタン押下を黙って捨てる
     assert line_stub.matter == [], "未登録の第三者が炊飯器をロックできた"
 
 
-def test_グループトークからのボタン押下は送信者IDがグループIDになり捨てられる(client, line_stub, db):
-    """# BUG: 家族がグループトークでボタンを押すと必ず無反応になる。
+def test_グループトークからのボタン押下も発言者本人として扱われる(client, line_stub, db):
+    """2026-10-15 まで `_extract_sender_id` が `groupId or roomId or userId` の
+    順だったため、グループ内のイベントでは押した人の userId ではなく
+    グループIDが送信者になり、許可リスト（個人ID）に一致せず黙殺されていた。
 
-    `_extract_sender_id` は `groupId or roomId or userId` の順で、グループ内の
-    イベントでは**押した人の userId ではなくグループ ID** が送信者になる。
-    許可リストは U... の個人 ID なので一致せず、黙って捨てられる。
-    同じ人が1:1トークで押すと動く。「反応するときとしないときがある」の
-    説明になりうる経路（家族が通知をグループに転送して運用していれば常に無反応）。
-
-    本来は group/room では `source.userId` を見て許可判定すべき。
-    直したら「ボタンが効く」側のテストに書き換える。
+    同じ人が1:1では押せるので「反応するときとしないときがある」に見える。
+    家族が通知をグループに転送して運用していれば常に無反応だった。
     """
     db.pending("rice_action", "event_31")
     db.event(31)
     r = _press(client, "rice_action:31:cook",
                source={"type": "group", "groupId": GROUP_ID, "userId": SENDER})
     assert r.status_code == 200
-    assert line_stub.replies == [], "グループからのボタンが通るようになった"
-    assert db.one("SELECT COUNT(*) c FROM rice_classifications")["c"] == 0
-
+    assert line_stub.replies, "グループで押したボタンも処理されること"
 
 def test_confirm_dismiss_は_confirm_ハンドラに吸われない(client, line_stub, db):
     """分岐が `confirm:` を先に見ているので、接頭辞の取り違えがないかを固定する。

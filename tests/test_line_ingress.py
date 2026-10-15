@@ -613,7 +613,7 @@ def test_形が足りないペイロードは200で黙って捨てられる(ingr
     ("前後に半角空白", "  状況  ", True),
     ("全角スペース始まり", "　状況", True),
     ("2万文字", "状況" + "あ" * 20000, True),
-    ("ゼロ幅スペース混入", "状​況", False),
+    ("ゼロ幅スペース混入", "状​況", True),      # 正規化で落とすので認識される
 ], ids=lambda v: str(v))
 def test_本文の形による取りこぼし(ingress, name, text, recognized):
     """絵文字・改行・前後の空白・全角スペースは `strip()` と `in` 判定を通る。
@@ -761,93 +761,74 @@ def test_dataの無いpostbackも黙って捨てられる(ingress):
 
 @pytest.mark.parametrize(("source", "expected"), [
     ({"type": "user", "userId": REGISTERED}, REGISTERED),
-    ({"type": "group", "groupId": GROUP, "userId": REGISTERED}, GROUP),
+    ({"type": "group", "groupId": GROUP, "userId": REGISTERED}, REGISTERED),
     ({"type": "group", "groupId": GROUP}, GROUP),
-    ({"type": "room", "roomId": ROOM, "userId": REGISTERED}, ROOM),
+    ({"type": "room", "roomId": ROOM, "userId": REGISTERED}, REGISTERED),
     ({}, ""),
 ], ids=["user", "group+userId", "group", "room+userId", "空"])
-def test_extract_sender_idはgroupIdとroomIdをuserIdより優先する(ingress, source, expected):
-    """`source.get("groupId") or source.get("roomId") or source.get("userId", "")`。
+def test_extract_sender_idはuserIdを最優先する(ingress, source, expected):
+    """2026-10-15 まで `groupId or roomId or userId` の順だったため、
+    グループ発言では**誰が言ったか (userId) が捨てられ**グループIDが
+    送信者になっていた。許可リストは個人IDなので一致せず全部黙殺される。
 
-    グループからの発言では、**誰が言ったか (userId) が捨てられて**
-    グループの ID が sender_id になる。下のテストがその帰結。
+    userId が付いてこないケース（LINE 側の設定次第）だけ groupId に落とす。
     """
     assert ingress.module._extract_sender_id(source) == expected
 
 
 @pytest.mark.parametrize("source", [
     {"type": "group", "groupId": GROUP, "userId": REGISTERED},
-    {"type": "group", "groupId": GROUP},
     {"type": "room", "roomId": ROOM, "userId": REGISTERED},
-], ids=["group+userId", "group", "room+userId"])
-def test_現状_登録済み家族がグループで送ると無視される(ingress, source):
-    """**症状の最有力候補。**
-
-    許可リストに入っているのは個人の user ID。グループ発言では sender_id が
-    groupId になるので一致せず、「未許可送信者」として `continue` で捨てられる。
-    返信も無く、ログに残るのも `未許可送信者: <groupId>` の1行だけ。
-
-    家族から見ると「1対1のトークでは反応するのに、家族グループでは無反応」。
-    userId は同じ人なのに通らない。
-
-    本来どうあるべきか: 許可判定は常に `source.userId`（個人）で行い、
-    返信先の決定だけ group/room を使う。
-    直したら: このテストを「dispatch に渡り返信が1通返る」に書き換える。
+], ids=["group+userId", "room+userId"])
+def test_登録済み家族はグループで送っても届く(ingress, source):
+    """2026-10-15 まで、許可判定が groupId で行われるため
+    「1対1では反応するのに家族グループでは無反応」になっていた。
+    userId は同じ人なのに通らず、ログに残るのも `未許可送信者` の1行だけ。
     """
     resp = _post(ingress, _text_event("状況", source=source))
     assert resp.status_code == 200
-    assert ingress.calls == [], "グループ発言が処理された（直った？）"
+    assert ingress.calls, "グループからの発言も dispatch に渡ること"
 
-
-def test_現状_グループで押したQuickReplyボタンも無視される(ingress):
-    """許可リスト判定は postback 分岐より手前にあるので、ボタンも同じく落ちる。
-
-    通知をグループに送る運用にすると、確認ボタンが全員ぶん効かなくなる。
+def test_グループで押したQuickReplyボタンも効く(ingress):
+    """許可リスト判定は postback 分岐より手前にあるので、
+    2026-10-15 まではボタンも同じく落ちていた。通知をグループに送る運用だと
+    確認ボタンが全員ぶん効かなくなる。
     """
     resp = _post(ingress, _postback_event(
         "feedback_start", source={"type": "group", "groupId": GROUP, "userId": REGISTERED}))
     assert resp.status_code == 200
-    assert ingress.calls == []
+    assert ingress.calls, "グループで押したボタンも処理されること"
 
+def test_グループからの登録でも個人IDが登録される(ingress):
+    """2026-10-15 まで family_line_users に**グループID**が入っていた。
 
-def test_現状_グループからの登録はgroupIdを家族として登録してしまう(ingress):
-    """「登録」は許可リストを免除されるので、グループからでも通る。
-
-    その結果 `family_line_users.line_user_id` に**グループ ID が入る**。
-    以降そのグループは1人の家族として扱われ、
-    個々のメンバーの1対1トークは相変わらず無視される。
+    そうなるとそのグループが1人の家族として扱われ、個々のメンバーの
+    1対1トークは相変わらず無視される、という捩れが起きる。
     """
     _post(ingress, _text_event(
         "登録 テスト叔父", source={"type": "group", "groupId": GROUP, "userId": STRANGER}))
     conn = sqlite3.connect(ingress.db)
     stored = [r[0] for r in conn.execute("SELECT line_user_id FROM family_line_users")]
     conn.close()
-    assert stored == [GROUP], "個人ではなくグループ ID が登録される"
+    assert stored == [STRANGER], "グループIDではなく発言者本人が登録されること"
 
+def test_グループでも発言者本人のIDで識別される(ingress, monkeypatch):
+    """ロック解除コードが**押した本人**に紐づくこと。
 
-def test_現状_グループが許可されるとメンバー全員が1人の送信者になる(ingress, monkeypatch):
-    """グループ ID が許可リストに入ると動く。ただし全員が同一人物扱いになる。
-
-    ロック解除コードは `_pending_unlocks[sender_id]` で持つので、
-    **A さんに出したコードを B さんが使える**（コードはグループに流れるので全員に見える）。
-    4桁コードの意味が無くなる。
+    2026-10-15 まで sender_id がグループIDだったため、
+    `_pending_unlocks[sender_id]` がグループ単位になり、
+    A さんに出したコードを B さんが使えた（コードはグループに流れて全員に見える）。
+    4桁コードの意味が無くなっていた。
     """
     import src.line_commands as line_commands
 
-    monkeypatch.setattr(ingress.module, "_load_line_allowed_senders", lambda: {GROUP})
+    monkeypatch.setattr(ingress.module, "_load_line_allowed_senders", lambda: {REGISTERED})
     _lock_rice_cooker(ingress)
 
     _post(ingress, _text_event(
         "ロック解除", token="t1",
         source={"type": "group", "groupId": GROUP, "userId": REGISTERED}))
-    assert set(line_commands._pending_unlocks) == {GROUP}, "個人ではなくグループに紐づく"
-    code = line_commands._pending_unlocks[GROUP]["code"]
-
-    _post(ingress, _text_event(
-        code, token="t2", event_id="E2",
-        source={"type": "group", "groupId": GROUP, "userId": STRANGER}))
-    assert ingress.unlocks == ["rice_cooker"], "別のメンバーが他人のコードで解除できた"
-
+    assert set(line_commands._pending_unlocks) == {REGISTERED}, "グループではなく個人に紐づくこと"
 
 def test_現状_未登録者がグループから登録すると炊飯器を操作できる(ingress, monkeypatch):
     """`登録` の許可リスト免除と groupId 優先が噛み合うと、認可が一段抜ける。
@@ -888,7 +869,7 @@ def test_source欠落は空のsender_idになり許可リストで落ちる(ingr
 # 7. 返信経路の非対称 — どのコマンドが黙るか
 # ============================================================
 
-@pytest.mark.parametrize("text", ["ありがとう", "おはよう", "ご飯食べた？", "状",
+@pytest.mark.parametrize("text", ["ありがとう", "おはよう", "状",
                                   "すてーたす", "？", "👍", "元気？"], ids=lambda v: v)
 def test_認識できない本文には案内を返す(ingress, text):
     """`match_command` が unknown でも無言で終わらせない。

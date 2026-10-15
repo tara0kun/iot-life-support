@@ -192,42 +192,42 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("登録解除", "unregister_family"),
     ("登録解除して", "unregister_family"),     # 前方一致なので丁寧形も通る
     ("解除登録", "unregister_family"),         # 完全一致だけの別名
-    ("解除登録して", "unlock_request"),        # ← 1文字足すと炊飯器側へ falls through
-    ("登録を解除", "unlock_request"),          # ← 「解除」部分一致の衝突
+    ("解除登録して", "unregister_family"),
+    ("登録を解除", "unregister_family"),
     ("登録 解除", "register_family"),          # ← 「解除」という名前の家族登録になる
     # --- 登録一覧（完全一致のみ）-------------------------------------------
     ("登録一覧", "list_registered"),
     ("登録一覧 ", "list_registered"),          # strip されるので前後の空白は可
     ("登録一覧\n", "list_registered"),
     ("登録一覧　", "list_registered"),
-    ("登録一覧?", "unknown"),                  # ← 「？」1文字で無反応
-    ("登録一覧？", "unknown"),
-    ("登録一覧。", "unknown"),
-    ("登録一覧を見たい", "unknown"),
+    ("登録一覧?", "list_registered"),
+    ("登録一覧？", "list_registered"),
+    ("登録一覧。", "list_registered"),
+    ("登録一覧を見たい", "list_registered"),
     ("メンバー", "list_registered"),
-    ("メンバー一覧", "unknown"),               # ← ありがちな言い方が通らない
-    ("メンバー?", "unknown"),
+    ("メンバー一覧", "list_registered"),
+    ("メンバー?", "list_registered"),
     ("誰が登録", "list_registered"),
-    ("誰が登録してる?", "unknown"),
-    ("誰が登録してますか", "unknown"),
+    ("誰が登録してる?", "list_registered"),
+    ("誰が登録してますか", "list_registered"),
     ("登録してる人", "unknown"),
     # --- ロック解除（部分一致）---------------------------------------------
     ("ロック解除", "unlock_request"),
     ("ロック解除して", "unlock_request"),
     ("ロック解除お願いします", "unlock_request"),
     ("ロック解除？", "unlock_request"),
-    ("ロック 解除", "unlock_request"),
-    ("ろっく解除", "unlock_request"),
-    ("炊飯器のロックを解除して", "unlock_request"),
-    ("解除", "unlock_request"),
-    ("解除して", "unlock_request"),
-    ("通知解除", "unlock_request"),            # ← 通知を止めたい人に解除コードが返る
+    ("ロック 解除", "unknown"),
+    ("ろっく解除", "unknown"),
+    ("炊飯器のロックを解除して", "unknown"),
+    ("解除", "unknown"),
+    ("解除して", "unknown"),
+    ("通知解除", "unknown"),
     ("アンロック", "unlock_request"),
     ("あんろっく", "unknown"),                 # ひらがなは通らない
     ("ロックかいじょ", "unknown"),
-    ("ろっくかいじょ", "unknown"),
-    ("ロックを外して", "unknown"),
-    ("炊飯器あけて", "unknown"),
+    ("ろっくかいじょ", "unlock_request"),
+    ("ロックを外して", "unlock_request"),
+    ("炊飯器あけて", "unlock_request"),
     ("ごはん炊きたい", "unknown"),
     # --- 確認コード（\d{4} 完全一致）---------------------------------------
     ("1234", "unlock_confirm"),
@@ -254,11 +254,11 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("今日どう?", "status"),
     ("今日の様子", "status"),
     ("今日の食事", "status"),                  # ← 「食事」なのに status が勝つ
-    ("じょうきょう", "unknown"),
+    ("じょうきょう", "status"),
     ("ジョウキョウ", "unknown"),
-    ("ステータス", "unknown"),                 # ← よくある言い換えが無反応
-    ("状態", "unknown"),
-    ("状態は?", "unknown"),
+    ("ステータス", "status"),
+    ("状態", "status"),
+    ("状態は?", "status"),
     ("いまどう?", "unknown"),
     ("今どう？", "unknown"),
     ("元気?", "unknown"),
@@ -272,12 +272,12 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("最後の食事\n", "last_meal"),
     ("さっき", "last_meal"),
     ("さっきの食事", "last_meal"),
-    ("直近の食事", "unknown"),
-    ("前回の食事", "unknown"),
-    ("ごはん食べた?", "unknown"),
+    ("直近の食事", "last_meal"),
+    ("前回の食事", "last_meal"),
+    ("ごはん食べた?", "last_meal"),
     ("ご飯いつ", "unknown"),
     ("食事", "unknown"),
-    ("朝食食べた?", "unknown"),
+    ("朝食食べた?", "last_meal"),
     # --- ヘルプ -------------------------------------------------------------
     ("ヘルプ", "help"),
     ("ヘルプ!", "help"),
@@ -289,12 +289,12 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("コマンド", "help"),
     ("コマンド一覧", "help"),
     ("使い方", "help"),
-    ("へるぷ", "unknown"),                     # ひらがなは通らない
-    ("使いかた", "unknown"),
+    ("へるぷ", "help"),
+    ("使いかた", "help"),
     ("つかいかた", "unknown"),
-    ("ｈｅｌｐ", "unknown"),                    # ← 全角英数は通らない
-    ("ＨＥＬＰ", "unknown"),
-    ("何ができる?", "unknown"),
+    ("ｈｅｌｐ", "help"),
+    ("ＨＥＬＰ", "help"),
+    ("何ができる?", "help"),
     ("?", "unknown"),
     ("？", "unknown"),
     # --- メニュー -----------------------------------------------------------
@@ -304,9 +304,9 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("menu", "menu"),
     ("Menu", "menu"),
     ("MENU", "menu"),
-    ("めにゅー", "unknown"),
-    ("ｍｅｎｕ", "unknown"),
-    ("ボタン", "unknown"),
+    ("めにゅー", "menu"),
+    ("ｍｅｎｕ", "menu"),
+    ("ボタン", "menu"),
     # --- 意見・質問（前方一致）---------------------------------------------
     ("意見", "feedback"),
     ("意見 写真が送れない", "feedback"),
@@ -336,10 +336,10 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("つながらん", "unknown"),                 # webhook 側のみが拾う（表記ゆれ）
     ("見られない", "unknown"),
     ("みられない", "unknown"),
-    ("あけない", "unknown"),
+    ("あけない", "link"),
     ("link", "unknown"),                      # ← 英語の link はどちらも拾わない
-    ("りんく", "unknown"),
-    ("ＵＲＬ", "unknown"),                      # ← 全角 URL はどちらも拾わない
+    ("りんく", "link"),
+    ("ＵＲＬ", "link"),
     ("画面が開かない", "unknown"),
     ("ひらけない", "unknown"),
     # --- 境界 ---------------------------------------------------------------
@@ -393,36 +393,16 @@ def test_表が全コマンドを少なくとも1件ずつ覆っていること(
 # 家族が自然に打ちそうなのに、dispatch も webhook の URL 判定も拾わない文字列。
 # ここに並んでいるものは全部「送っても何も返ってこない」。
 SILENTLY_IGNORED = [
-    "ステータス",
-    "状態",
-    "状態は?",
     "いまどう?",
     "今どう？",
     "元気?",
     "大丈夫?",
-    "登録一覧?",
-    "登録一覧？",
-    "メンバー一覧",
-    "誰が登録してる?",
-    "直近の食事",
-    "前回の食事",
-    "ごはん食べた?",
     "食事",
-    "へるぷ",
-    "使いかた",
-    "めにゅー",
-    "ｈｅｌｐ",
-    "ｍｅｎｕ",
-    "ＵＲＬ",
     "link",
-    "りんく",
     "登録母",
     "登録お願いします",
-    "ロックを外して",
-    "炊飯器あけて",
     "ご意見",
     "相談 ちょっと聞きたい",
-    "何ができる?",
     "",
     " ",
     "　",
@@ -512,20 +492,18 @@ NOT_RICE_UNLOCK = [
 
 
 @pytest.mark.parametrize("text", NOT_RICE_UNLOCK, ids=lambda v: repr(v)[:24])
-def test_解除の部分一致が炊飯器のロック解除に吸い込まれる(text, db):
-    """`any(kw in t for kw in (..., "解除", ...))` の衝突を固定する。
+def test_解除を含む別の意図が炊飯器のロック解除に吸い込まれない(text, db):
+    """2026-10-15 まで `"解除"` 単独の部分一致があり、「通知を解除して」
+    「アラート解除」まで炊飯器の解除フローに入って4桁の確認コードを返していた。
 
-    本来は「登録解除」「通知停止」の話なのに、炊飯器の4桁確認コードが返る。
-    家族は何のコードを渡されたのか分からず、別の意図でこのコードを返信すると
-    実際に炊飯器のロックが解除される。
-    直したら: 「解除」単独の部分一致を外し、「ロック解除」「アンロック」と
-    「登録解除」を別々の完全一致／前方一致で判定するよう書き換える。
+    家族は何のコードを渡されたのか分からず、別の意図でそのコードを返信すると
+    実際に炊飯器のロックが外れる（食べ過ぎ抑止が消える）。
+    ヘルプも「ロック解除」としか案内していないので、素の「解除」を
+    受け付ける理由が無い。
     """
     _lock_rice(db)
-    assert lc.match_command(text) == "unlock_request"
-    reply = run(lc.dispatch(text, SENDER))
-    assert "確認コード" in reply
-    assert lc._pending_unlocks[SENDER]["device"] == "rice_cooker"
+    assert lc.match_command(text) != "unlock_request", "炊飯器の解除に吸い込まれないこと"
+    assert SENDER not in lc._pending_unlocks, "確認コードを発行しないこと"
 
 
 def test_登録解除は確認なしで即時に通知を止める(db):
@@ -574,16 +552,14 @@ def test_今日の食事は最後の食事ではなく状況を返す(db):
 # 4. 確認コード — 全角数字が必ず失敗してロックアウトを進める
 # ============================================================
 
-def test_全角数字の確認コードは必ず失敗してロックアウトに近づく(db):
-    """`re.fullmatch(r"\\d{4}", "１２３４")` が真になることの帰結を固定する。
+def test_全角数字の確認コードでもロックを解除できる(db):
+    """2026-10-15 まで、全角数字は unlock_confirm の入口は通るのに
+    照合が ASCII の生比較だったため絶対に一致しなかった。
 
-    `\\d` は Unicode の数字にマッチするので全角数字も unlock_confirm に入る。
-    一方 `text.strip() != pending["code"]` は ASCII の生文字列比較なので
-    絶対に一致しない。日本語 IME のまま打った家族は、正しいコードを
-    写しているのに「コードが違います」と言われ、3回でロックアウトされる。
-    直したら: 比較の前に `unicodedata.normalize("NFKC", text)` を通す
-    （照合側だけ直すと全角で発行されたコードと噛み合わないので、
-    発行コードは ASCII 固定のまま照合を正規化する）。
+    日本語 IME のまま打つ家族（高齢の家族ほど多い）は、正しいコードを
+    写しているのに「コードが違います」と言われ、3回で15分ロックアウトされ、
+    炊飯器を開けたいときに開けられなかった。
+    dispatch が NFKC 正規化した文字列を渡すことで解決している。
     """
     _lock_rice(db)
     issued = run(lc.dispatch("ロック解除", SENDER))
@@ -592,14 +568,10 @@ def test_全角数字の確認コードは必ず失敗してロックアウト�
     fullwidth = code.translate(str.maketrans("0123456789", "０１２３４５６７８９"))
     assert lc.match_command(fullwidth) == "unlock_confirm"
 
-    reply = run(lc.dispatch(fullwidth, SENDER))
-    assert "コードが違います" in reply
-    assert lc._lockouts[SENDER]["count"] == 1
-
-    # 半角で打ち直せば通る（= コード自体は合っていた）
-    ok = run(lc.dispatch(code, SENDER))
+    # 全角のまま打っても通ること（日本語 IME のままの家族が踏んでいた）
+    ok = run(lc.dispatch(fullwidth, SENDER))
     assert ok == "✅ 炊飯器のロックを解除しました。"
-    assert SENDER not in lc._lockouts
+    assert SENDER not in lc._lockouts, "正しいコードでロックアウトに近づかないこと"
 
 
 def test_3回失敗するとロックアウトされるが止まるのはロック解除だけ(db):
@@ -703,7 +675,6 @@ UNDOCUMENTED_BUT_WORKS = [
     ("今日", "status"),
     ("さっき", "last_meal"),
     ("最後", "last_meal"),
-    ("解除", "unlock_request"),
     ("アンロック", "unlock_request"),
     ("メンバー", "list_registered"),
     ("誰が登録", "list_registered"),
