@@ -11,6 +11,12 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # **本番 Pi と同じ JST で走らせる。** このシステムは
+      # events.started_at が JST、pending_notifications が UTC という混在を
+      # 持っており、その前提自体をテストで固定している。runner の既定は UTC
+      # なので、揃えないと「両者が一致してしまって検証が無意味」になる。
+      TZ: Asia/Tokyo
 
     steps:
       - uses: actions/checkout@v4
