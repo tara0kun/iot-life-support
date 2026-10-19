@@ -455,7 +455,8 @@ def sessions_today(person_id: int, include_unconfirmed: bool = False) -> list[di
             #   - 祖母のタブレットに「さっき食べましたよ／間食を◯分前に食べました」と誤表示
             #   - 日次サマリの「食事回数」が入浴回数ぶん水増し
             #   - monitor の食べ過ぎアラート/炊飯器ロック確認が入浴で発火しうる
-            # という害が出ていた（2026-09-21 は入浴5回が食事4回に化けていた）。
+            # という害が出ていた（2026-09-21 は入浴のセッションが食事ラベルに化け、
+    # 実際には取っていない食事が祖母のタブレットに表示された）。
             if d["label"] in seen_labels and d["label"] in MEAL_LABELS:
                 d["label"] = "間食"
             seen_labels.add(d["label"])
