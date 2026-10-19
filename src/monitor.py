@@ -621,6 +621,12 @@ async def on_motion_detected(event: ContactEvent) -> None:
 
 _last_person_detection = 0.0
 
+# 顔識別できなかった検知を events に残す間隔。健康診断
+# (health_check.py) が camera の死活を2時間で見ているので、
+# それより十分短くしつつ、ノイズの保存量を抑える値。
+UNIDENTIFIED_CAMERA_INTERVAL_SEC = 600
+_last_unidentified_detection = 0.0
+
 # 直近にカメラで識別された人物（センサー帰属ヒントとして使う）
 # (timestamp_unix, person_id, name) のリスト
 _camera_identification_log: list[tuple[float, int, str]] = []
@@ -681,21 +687,20 @@ async def on_person_detected(frame: CameraFrame) -> None:
 
     顔識別ができた場合 → person_id 付きで camera/person_detected を記録、
     active_person ログにも追加。
-    顔識別できなかった場合 → person_id=None で記録（従来挙動）。
+    顔識別できなかった場合 → 死活確認のために間引いて記録する。
     """
     import time
-    global _last_person_detection
+    global _last_person_detection, _last_unidentified_detection
     now = time.time()
-    if now - _last_person_detection < 30:
-        return
-    _last_person_detection = now
 
-    # 顔識別あり → 識別された人物ごとにイベント記録
     identified = frame.identified_persons or []
     matched_persons = [r for r in identified
                        if r.get("person_id") and r.get("confidence", 0) >= 0.6]
 
     if matched_persons:
+        if now - _last_person_detection < 30:
+            return
+        _last_person_detection = now
         for r in matched_persons:
             pid = r["person_id"]
             await event_bus.record_event(
@@ -706,13 +711,28 @@ async def on_person_detected(frame: CameraFrame) -> None:
                 confidence=float(r.get("confidence", 0)),
             )
             _record_camera_identification(pid, r.get("name", "?"))
-    else:
-        # 顔識別なし or 信頼度低 → person_id=None で記録（従来挙動）
-        await event_bus.record_event(
-            source="camera",
-            event_type="person_detected",
-            value=float(frame.face_count),
-        )
+        return
+
+    # **顔識別できなかった検知は間引く。**
+    # Haar / HOG は赤外の夜間映像で誤検知が多く、人がいない深夜3時でも
+    # 毎時97件発火していた。実測では camera の76%が person_id なしで、
+    # これだけで全イベントの42%を占めていた。
+    #
+    # 消費者はいない: セッション集約(sessions.py)・安否判定
+    # (anomaly_check._last_sensor_activity)・家族UIの表示は、いずれも
+    # camera を明示的に除外している。
+    #
+    # それでも捨て切らないのは health_check がカメラの死活を
+    # 「2時間以内に camera イベントがあるか」で見ているため。
+    # 10分おきに1件だけ残せば死活は判定でき、量は95%減る。
+    if now - _last_unidentified_detection < UNIDENTIFIED_CAMERA_INTERVAL_SEC:
+        return
+    _last_unidentified_detection = now
+    await event_bus.record_event(
+        source="camera",
+        event_type="person_detected",
+        value=float(frame.face_count),
+    )
 
 
 # --- セッション集約 + ロック/通知 ---
