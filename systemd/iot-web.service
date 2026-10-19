@@ -12,7 +12,6 @@ WorkingDirectory=/home/tara0/IoT
 # TimeoutStopSec を超えて毎回 SIGKILL される（30日で92件、Issue #29）。
 # TimeoutStopSec より小さい値にすること（tests/test_web_shutdown.py が検査する）。
 ExecStart=/home/tara0/IoT/venv/bin/uvicorn src.web.app:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 3
-ExecStartPost=/bin/bash -c 'sleep 3 && /home/tara0/IoT/scripts/notify_url.sh &'
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
