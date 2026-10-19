@@ -11,5 +11,14 @@ ExecStart=/home/tara0/IoT/venv/bin/python -m src.monitor
 Restart=on-failure
 RestartSec=10
 
+# メモリ上限。これが無いと OOM 時にカーネルが無関係なプロセスを選び、
+# Pi ごと落ちることがある。face_recognition/dlib と OpenCV を抱えるので常用で1GB前後。
+# 実測の最大は 1563MB（2026-06-03）。上限は超えた分だけこのサービスを
+# 落とし、Pi 全体を道連れにしないための値（Issue #21）。
+# Restart=on-failure で復帰し、入浴の見守りは DB から復元される。
+MemoryAccounting=yes
+MemoryHigh=1700M
+MemoryMax=2G
+
 [Install]
 WantedBy=multi-user.target

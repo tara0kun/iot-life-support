@@ -17,5 +17,11 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=10
 
+# メモリ上限。これが無いと OOM 時にカーネルが無関係なプロセスを選び、
+# Pi ごと落ちることがある。常用 31MB。カメラ配信で OpenCV が乗るぶんの余裕を見た値（Issue #21）。
+MemoryAccounting=yes
+MemoryHigh=512M
+MemoryMax=768M
+
 [Install]
 WantedBy=multi-user.target

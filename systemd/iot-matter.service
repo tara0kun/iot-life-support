@@ -11,5 +11,11 @@ ExecStart=/home/tara0/IoT/venv/bin/matter-server --storage-path /home/tara0/IoT/
 Restart=on-failure
 RestartSec=10
 
+# メモリ上限。これが無いと OOM 時にカーネルが無関係なプロセスを選び、
+# Pi ごと落ちることがある。常用 38MB（Issue #21）。
+MemoryAccounting=yes
+MemoryHigh=256M
+MemoryMax=512M
+
 [Install]
 WantedBy=multi-user.target
