@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import secrets
+import sqlite3
 import sys
 from datetime import datetime, time, timedelta
 from pathlib import Path
@@ -503,14 +504,97 @@ async def family_login_page(request: Request):
     return templates.TemplateResponse(request, "login.html", {"error": ""})
 
 
+# ログイン失敗への対処。**家族を絶対に締め出さない形にする。**
+# 完全なロックアウトにすると、第三者がわざと失敗させるだけで家族が入れなくなる。
+# 入浴の緊急通知が来たときに対応できないのは、総当たりより重い事故になる。
+# そこで「失敗が重なるほど応答を遅くする」方式にした。
+#   3回までは即時（家族の打ち間違いを邪魔しない）
+#   以降 1s → 2s → 4s … 最大 30s
+# 30s/回に落ちれば 1日2,880回で、現在の鍵空間には届かない。
+LOGIN_FREE_ATTEMPTS = 3
+LOGIN_MAX_DELAY_SECONDS = 30
+LOGIN_FAILURE_WINDOW_MINUTES = 15
+LOGIN_NOTIFY_THRESHOLD = 10
+
+
+def _recent_login_failures(window_minutes: int = LOGIN_FAILURE_WINDOW_MINUTES) -> int:
+    """直近の連続失敗数。成功があればそこでリセットする。"""
+    cutoff = (datetime.now() - timedelta(minutes=window_minutes)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = get_conn(timeout=RENDER_TIMEOUT_SECONDS)
+    try:
+        last_ok = conn.execute(
+            "SELECT MAX(attempted_at) FROM login_attempts WHERE success = 1"
+        ).fetchone()[0]
+        since = max(cutoff, last_ok) if last_ok else cutoff
+        return conn.execute(
+            "SELECT COUNT(*) FROM login_attempts WHERE success = 0 AND attempted_at > ?",
+            (since,),
+        ).fetchone()[0]
+    except sqlite3.Error:
+        return 0  # 数えられないことでログインを止めない
+    finally:
+        conn.close()
+
+
+def _login_delay_seconds(failures: int) -> float:
+    if failures < LOGIN_FREE_ATTEMPTS:
+        return 0.0
+    return float(min(2 ** (failures - LOGIN_FREE_ATTEMPTS), LOGIN_MAX_DELAY_SECONDS))
+
+
+def _record_login_attempt(success: bool, source_ip: str) -> None:
+    try:
+        with transaction(timeout=RENDER_TIMEOUT_SECONDS) as conn:
+            conn.execute(
+                # 時刻は JST を明示的に入れる（CURRENT_TIMESTAMP は UTC で、
+                # 下の datetime.now() 由来の cutoff と9時間ずれる）
+                "INSERT INTO login_attempts(attempted_at, success, source_ip) "
+                "VALUES(?, ?, ?)",
+                (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), int(success), source_ip[:64]),
+            )
+    except Exception as e:
+        logging.getLogger("app").warning("ログイン試行の記録に失敗: %s", e)
+
+
 @app.post("/family/login")
-@limiter.limit("5/15minute")  # 4桁PIN 総当たり対策: 5回失敗で 15分ロック
+# IP 単位の制限は補助に下げた。キャリアNAT配下だと他人の失敗で家族が
+# 締め出されるため、厳しくしすぎない。総当たりの抑止は下の漸進的な遅延が担う。
+@limiter.limit("30/15minute")
 async def family_login(request: Request, password: str = Form(...)):
+    source_ip = request.client.host if request.client else "?"
+    failures = _recent_login_failures()
+    delay = _login_delay_seconds(failures)
+    if delay:
+        await asyncio.sleep(delay)
+
     expected = _load_family_password()
     given = hashlib.sha256(password.encode()).hexdigest()
-    if given == expected:
+    # 空の expected（.env が読めない等）を通さない。compare_digest は
+    # 長さが違えば False を返すので、空文字との一致は起こらない。
+    ok = bool(expected) and hmac.compare_digest(given, expected)
+
+    _record_login_attempt(ok, source_ip)
+    log = logging.getLogger("app")
+    if ok:
+        log.info("家族ログイン成功 ip=%s（直前の連続失敗 %d回）", source_ip, failures)
         request.session["family_auth"] = True
         return RedirectResponse("/family", status_code=303)
+
+    log.warning("家族ログイン失敗 ip=%s（連続 %d回目）", source_ip, failures + 1)
+    # **気づけるようにする。** 失敗が続いていることを誰も知らなければ、
+    # 総当たりが走っていても分からない。しきい値ちょうどの1回だけ送る。
+    if failures + 1 == LOGIN_NOTIFY_THRESHOLD:
+        try:
+            from ..notifier import send_line_message
+
+            send_line_message(
+                f"⚠️ 家族ダッシュボードのログイン失敗が "
+                f"{LOGIN_NOTIFY_THRESHOLD}回続いています\n\n"
+                f"心当たりが無ければ、パスワードの変更を検討してください。"
+            )
+        except Exception as e:
+            log.warning("ログイン失敗の通知に失敗: %s", e)
+
     return templates.TemplateResponse(request, "login.html", {"error": "パスワードが違います"})
 
 

@@ -222,6 +222,24 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_notif_context
 CREATE INDEX IF NOT EXISTS idx_pending_notif_pending
     ON pending_notifications(completed_at, last_notified_at);
 
+CREATE TABLE IF NOT EXISTS login_attempts (
+    -- 家族ダッシュボードのログイン試行。**IP ではなくアカウント単位で数えるため。**
+    -- レート制限は slowapi の IP キーしか無く、IPv6 の /64 ローテーションで
+    -- 回避できた。逆にキャリアNAT配下では他人の失敗に巻き込まれて家族が
+    -- 締め出され、緊急通知に対応できなくなる副作用もあった（Issue #26 / #24）。
+    --
+    -- attempted_at は **JST** を呼び出し側から明示的に入れる。
+    -- DEFAULT CURRENT_TIMESTAMP を置かないのは、入れ忘れたときに UTC が
+    -- 黙って入り、JST の datetime.now() と比較して9時間ずれるのを防ぐため。
+    -- 既定値が無ければ NOT NULL 違反で落ちるので、ずれに気づける。
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    attempted_at TIMESTAMP NOT NULL,
+    success INTEGER NOT NULL,
+    source_ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_login_attempts_time
+    ON login_attempts(attempted_at);
+
 CREATE TABLE IF NOT EXISTS bath_monitor_state (
     -- 入浴見守りの進行状態。**プロセスが落ちても見守りを継続するために永続化する。**
     -- 以前は BathMonitor のインスタンス変数だけに持っていたので、iot-monitor の
