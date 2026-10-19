@@ -11,11 +11,18 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.sensors.matter_plug import MatterPlugMonitor, MatterPlugConfig, PlugReading
-from src.sensors.contact_sensor import ContactSensorMonitor, ContactSensorConfig, ContactEvent
+# **contact_sensor は遅延 import する。** python-kasa を引くが、これは実機にしか
+# 要らない依存で CI には入れていない。ここで読むと、ハードウェアに触らない
+# テスト（カメラのコールバックなど）まで kasa が無いと import できなくなる。
+# 実体は起動時の組み立て箇所で読む。ContactEvent は注釈専用
+# （from __future__ import annotations があるので実行時には評価されない）。
+if TYPE_CHECKING:
+    from src.sensors.contact_sensor import ContactEvent
 from src.sensors.camera import CameraMonitor, CameraConfig, CameraFrame
 from src import event_bus
 from src.sessions import aggregate_sessions, sessions_today, MEAL_LABELS
@@ -1301,6 +1308,8 @@ async def main() -> None:
     # T110 開閉センサー (H100ハブ経由)
     hub_ip = env.get("HUB_IP", "")
     if tapo_user and tapo_pass:
+        from src.sensors.contact_sensor import ContactSensorMonitor, ContactSensorConfig
+
         contact = ContactSensorMonitor(
             cfg=ContactSensorConfig(
                 hub_ip=hub_ip,
