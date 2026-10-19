@@ -100,6 +100,20 @@ async def startup():
     init_db()
 
 
+@app.on_event("shutdown")
+async def shutdown():
+    """停止時に RTSP を解放する。
+
+    注意: このハンドラは uvicorn が接続の待機を終えた**後**にしか走らない。
+    「終わらないレスポンスを畳む」役目はここでは果たせないので、それは
+    ExecStart の --timeout-graceful-shutdown が持つ（Issue #29）。
+    """
+    try:
+        get_streamer().stop()
+    except Exception as e:  # 停止処理で落ちても終了は続ける
+        logging.getLogger("app").warning("CameraStreamer の停止に失敗: %s", e)
+
+
 def _is_family_authenticated(request: Request) -> bool:
     return request.session.get("family_auth") is True
 
@@ -2559,6 +2573,10 @@ async def ws_events(websocket: WebSocket):
     await websocket.accept()
     q = subscribe()
     try:
+        # このループは購読が来るまで終わらない。停止時に畳む役目は uvicorn の
+        # --timeout-graceful-shutdown が持つ（ExecStart で指定）。アプリ側の
+        # lifespan shutdown は接続の待機が終わった後にしか走らないので、
+        # ここで停止フラグを見ても間に合わない（実測で確認済み。Issue #29）。
         while True:
             event = await q.get()
             await websocket.send_json(event)
