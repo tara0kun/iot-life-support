@@ -35,11 +35,13 @@ class BathMonitor:
         alert_minutes: int = ALERT_MINUTES,
         on_bath_start: Callable[[], Awaitable[None]] | None = None,
         on_bath_end: Callable[[float], Awaitable[None]] | None = None,
+        on_alert_resolved: Callable[[], Awaitable[None]] | None = None,
         on_alert: Callable[[float], Awaitable[None]] | None = None,
     ):
         self.alert_minutes = alert_minutes
         self._on_bath_start = on_bath_start
         self._on_bath_end = on_bath_end
+        self._on_alert_resolved = on_alert_resolved
         self._on_alert = on_alert
 
         self._in_bath = False
@@ -94,6 +96,20 @@ class BathMonitor:
         if not self._in_bath:
             return
         self._last_motion = datetime.now()
+
+        # **動きの再開はアラートの解決である。**
+        # このアラートの根拠は「N分間動きがない」なので、動きが戻れば
+        # 前提が消える。以前はここで何もしておらず、ドアが開いて bath_end が
+        # 出るまで pending が未応答のまま残り、その間 recheck_pending が
+        # 再通知を続けていた。実際に、モーション再開後も通知が続き、
+        # 誰も応答しないまま打ち切りに至った事例がある。
+        # _alert_sent は戻す。再び静かになれば改めて鳴るべきなので。
+        if self._alert_sent:
+            self._alert_sent = False
+            log.info("浴室アラート後にモーション再開 → 解決とみなす")
+            if self._on_alert_resolved:
+                await self._on_alert_resolved()
+
         if not self._confirmed:
             self._confirmed = True
             log.info("入浴確定: Phase1 内でモーション検知")

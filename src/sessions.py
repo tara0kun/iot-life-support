@@ -58,7 +58,15 @@ class EventRow:
 
 
 UNASSIGNED_PERSON_ID = 0  # 未確定セッションの person_id
-MEAL_LABELS_FOR_MERGE = {"朝食", "昼食", "夕食", "間食", "夜食", "おやつ"}
+# 食事を表すラベル。新しいコードはこれを import すること。
+# ⚠️ **まだ正準ではない。** 同等の集合が他に8箇所あり、中身が3通りに割れている
+# （src/line_commands.py:28, src/web/app.py:154/237/869/1157/1513,
+#   scripts/weekly_report.py:20, scripts/scheduled_notify.py:137）。
+# 「夜食」を含むのはここだけ、「おやつ」を含まないものも2箇所ある。
+# 統合は挙動が変わる箇所（日次サマリの食事回数、タブレットの「さっき食べましたよ」）を
+# 個別に検証してから行うこと。家族UIの「外食(◯食)」形式もどれにも一致しない。
+MEAL_LABELS = {"朝食", "昼食", "夕食", "間食", "夜食", "おやつ"}
+MEAL_LABELS_FOR_MERGE = MEAL_LABELS
 MERGE_WINDOW_MINUTES = 60
 
 
@@ -100,10 +108,35 @@ def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
 BATH_SOURCES = {"bath_door", "bath_motion"}
 
 
+# お風呂判定のときに「混ざっていても構わない」ソース。
+# camera / bathroom_meter はクラスタリング前に除外済み。toilet_door は
+# 入浴の前後に行くのが自然なので、お風呂セッションを否定しない。
+# hair_dryer は「入浴の直後にしか出ない」設計（monitor.py が直近30分の bath_end を要求する）。
+# 中立に入れておかないと、入浴クラスタに混ざった瞬間に _is_bath_session が False になり、
+# bath_end があっても入浴セッションが丸ごと捨てられる。さらに冷蔵庫が1件混ざると
+# 食事関連3種が成立して「夕食」になる。2026-09-25 に fridge / rice_cooker_lid で
+# 直したのと同じ入れ忘れ。現在ドライヤーのプラグは未設置だが、付けた日に踏む。
+BATH_NEUTRAL_SOURCES = {"camera", "bathroom_meter", "toilet_door", "hair_dryer"}
+
+
 def _is_bath_session(events: list[EventRow]) -> bool:
-    """お風呂関連イベントのみで構成されているか。"""
+    """お風呂関連イベント **のみ** で構成されているか。
+
+    以前は「bath 系を含み、かつ rice_cooker / ih / contact_sensor を含まない」
+    という条件だったが、除外リストに **fridge と rice_cooker_lid が入っていなかった**。
+    そのため「浴室ドア + 炊飯器の蓋開 + 冷蔵庫」のような明らかに食事を含む
+    クラスタまでお風呂セッションと判定され、bath_end が無いので
+    _qualifies_as_session で丸ごと捨てられていた。**食事が消えていた。**
+
+    過去120日の未割当クラスタ2045件のうち125件がこの誤判定に該当し、
+    うち約68件は蓋開を含む＝食事として成立すべきものだった。
+
+    docstring が言うとおり「お風呂関連のみ」を実装する。
+    """
     sources = {e.source for e in events}
-    return bool(sources & BATH_SOURCES) and not (sources & {"rice_cooker", "ih", "contact_sensor"})
+    if not (sources & BATH_SOURCES):
+        return False
+    return not (sources - BATH_SOURCES - BATH_NEUTRAL_SOURCES)
 
 
 def _is_rice_lid_in_use(conn) -> bool:
@@ -165,7 +198,9 @@ def _qualifies_as_session(events: list[EventRow], conn=None) -> bool:
     #   - bathroom_meter: 湿度センサー、定期受信のためノイズ
     #   - toilet_door: トイレは食事と無関係
     # これらが含まれていても、他の食事関連ソースと併発しなければ食事ではない
-    food_relevant_sources = sources - {"camera", "bath_motion", "bathroom_meter", "toilet_door"}
+    # ドライヤーは食事の根拠にならない。中立扱いに揃える。
+    food_relevant_sources = sources - {"camera", "bath_motion", "bathroom_meter",
+                                       "toilet_door", "hair_dryer"}
 
     # 時間帯チェック: 深夜(22-5時)は「炊飯器の蓋開」必須で誤検知を厳しく抑制
     first_ts = min((e.started_at for e in events if e.started_at), default=None)
@@ -414,8 +449,15 @@ def sessions_today(person_id: int, include_unconfirmed: bool = False) -> list[di
         for r in rows:
             d = dict(r)
             d["started_at"] = _to_dt(d["started_at"])
-            # 同じラベルのセッションは最初のものだけ（重複排除）
-            if d["label"] in seen_labels:
+            # 同じ食事ラベルが2本目以降なら「間食」に寄せる（朝食を2回食べた等）。
+            # **食事ラベル同士でのみ行う。** 以前は無条件だったため、1日に複数回
+            # 検知されたお風呂の2本目以降が「間食」に化けていた。その結果
+            #   - 祖母のタブレットに「さっき食べましたよ／間食を◯分前に食べました」と誤表示
+            #   - 日次サマリの「食事回数」が入浴回数ぶん水増し
+            #   - monitor の食べ過ぎアラート/炊飯器ロック確認が入浴で発火しうる
+            # という害が出ていた（2026-09-21 は入浴のセッションが食事ラベルに化け、
+    # 実際には取っていない食事が祖母のタブレットに表示された）。
+            if d["label"] in seen_labels and d["label"] in MEAL_LABELS:
                 d["label"] = "間食"
             seen_labels.add(d["label"])
             results.append(d)
@@ -424,8 +466,37 @@ def sessions_today(person_id: int, include_unconfirmed: bool = False) -> list[di
         conn.close()
 
 
+def last_meal_session(person_id: int) -> dict | None:
+    """最後の確定済「食事」セッションを返す（お風呂・起床・お薬・就寝は除く）。
+
+    last_session() はラベルを問わないため、炊飯器ロック確認の起点である
+    should_warn_recent_meal() が「お風呂の直後」「家族が起床スタンプを押した直後」を
+    『直近に食事した』と誤認していた。monitor 側の食事カウントを食事ラベル限定に
+    したのに、ロックを実際に発火させる側が無条件のままでは筋が通らない。
+    """
+    placeholders = ",".join("?" * len(MEAL_LABELS))
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            f"""SELECT id, started_at, ended_at, label
+                  FROM meal_sessions
+                 WHERE confirmed = 1
+                   AND person_id = ?
+                   AND label IN ({placeholders})
+                 ORDER BY started_at DESC LIMIT 1""",
+            (person_id, *MEAL_LABELS),
+        ).fetchone()
+        if row:
+            d = dict(row)
+            d["started_at"] = _to_dt(d["started_at"])
+            return d
+        return None
+    finally:
+        conn.close()
+
+
 def last_session(person_id: int) -> dict | None:
-    """最後の確定済セッションを返す。"""
+    """最後の確定済セッションを返す（ラベル問わず。お風呂等も含む）。"""
     conn = get_conn()
     try:
         row = conn.execute(

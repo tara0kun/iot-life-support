@@ -5,6 +5,18 @@
 - 未対応通知は **家族管理画面**で一覧表示・対応する方式に変更
 - このスクリプトは「24時間以上経過した未対応通知を自動タイムアウト扱い」
 
+追加ポリシー（2026-09-25）:
+- **CRITICAL_CATEGORIES のみ再通知を復活**。2026-05-15 に再通知を全廃したが、
+  代替として用意した家族UIの未対応リストが 2026-09-03 以降ほぼ使われなくなり、
+  9月の bath_emergency 8件中6件・long_toilet_stay 7件中5件が誰にも応答されないまま
+  24時間後に無言で auto_timeout された（DB実測）。転倒疑いを1通鳴らして終わりにはできない。
+- 廃止理由だった「深夜帯/翌日にズレた通知」は次の2点で再発を防ぐ:
+    1. 再通知は初回から最大30分以内で打ち切る（15分間隔 × 最大2回）。翌日にズレようがない
+    2. notifier._should_suppress_for_night() を通すので、深夜帯は NIGHT_ALLOWED のみ鳴る
+- 打ち切り時は無言で閉じず「⏰ 誰も応答しませんでした」を全家族に broadcast する。
+  誰も見ていなかったという事実だけは必ず残す。
+- 非CRITICAL（session_confirm 等）は従来どおり再通知せず、24時間で自動タイムアウト。
+
 追加ポリシー（2026-07-18）:
 - session_confirm / attribute_session をタイムアウトする際は、単に auto_expired ではなく
   **時間帯 + 主要 person_id で meal_sessions を自動確定**する:
@@ -16,17 +28,54 @@
   - meal_sessions.confirmed=1, confirmed_by='auto_timeout_infer' で更新
   過去 7日で 71% の pending が家族未応答で放置されていた問題への対応。
 """
+import asyncio
+import json
 import sys
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn, transaction
+from src.lock_manager import release_expired_locks
+from src.notifier import (
+    broadcast_line_message,
+    broadcast_with_quick_reply,
+    is_critical_category,
+    _should_suppress_for_night,
+    mark_related_completed_silent,
+)
 
 TIMEOUT_HOURS = 24  # 24時間以上対応なしの通知は自動タイムアウト扱いに
 GRANDMA_ID = 1  # 推定失敗時の default person_id
+
+# --- 緊急系の再通知（CRITICAL_CATEGORIES のみ） ---
+ESCALATE_AFTER_MINUTES = 15   # 最後の通知からこの分数を超えて未応答なら再通知
+MAX_NOTIFY_COUNT = 3          # 初回を含む総通知数の上限。超えたら打ち切る
+# 事象発生からこの分数を超えた通知は、もう再通知しない。
+# cron停止・再起動・本機能の導入直後などに溜まった古い pending を掘り起こして
+# 「今ごろ届く昔の通知」を家族に送らないための上限（2026-05-15 の廃止理由そのもの）。
+MAX_ESCALATE_AGE_MINUTES = 60
+
+# **事後報告型のカテゴリは再通知しない。**
+# long_toilet_stay は monitor.py の toilet_door close ハンドラからしか発火せず、
+# 「open からの滞在時間」を close の瞬間に計算して送る。つまり本人が
+# ドアを開けて出てきた後にしか鳴らない。実測: 全53件のうち51件が
+# toilet_door の close から ±1秒以内の発報。
+# 倒れた人はドアを開けないので、この通知は「転倒の検知」ではなく
+# 「長居していたが無事に出てきた」の事後報告である。
+# 事後報告を再通知しても家族にできることは何もなく、2026-09-26 10:46 の件では
+# 既に解決した事象について20通(5人×4回)を送ってしまった。
+# 検知そのものを「滞在中に発火する」設計に直すまで、再通知対象から外す。
+RETROSPECTIVE_CATEGORIES = {"long_toilet_stay"}
+# 打ち切り通知（「⏰ 誰も応答しませんでした」）だけは、もう少し長く猶予を持たせる。
+# 再通知2回が終わるのは発生から 35〜40分で、打ち切りは 55〜60分に落ちる。
+# 上限が 60 分だと cron の tick が1回ズレただけで打ち切りが恒久的に消え、
+# 「誰も見ていなかった事実だけは必ず残す」という約束が破れる（実測で
+# journalctl 上 5014 起動中4回の欠落あり）。打ち切りは再通知と違って
+# 1通だけの事後報告なので、多少遅れて届いても混乱しない（本文に発生時刻を入れる）。
+MAX_GIVEUP_AGE_MINUTES = 180
 
 
 def _infer_person_for_session(conn, session_id: int) -> int:
@@ -81,10 +130,255 @@ def _auto_confirm_session(conn, session_id: int) -> str:
     return f"{TIMEOUT_HOURS}時間応答なし → 時刻+主要人物で自動確定 ({label} / {name_str} / {source})"
 
 
+def _utc_now() -> datetime:
+    """pending_notifications の CURRENT_TIMESTAMP(UTC) と比較するための現在時刻。"""
+    return datetime.now(timezone.utc)
+
+
+def _parse_utc(ts: str) -> datetime:
+    """SQLite の CURRENT_TIMESTAMP 文字列 (UTC, naive) を aware datetime にする。"""
+    text = (ts or "").replace("T", " ").split(".")[0]
+    return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+
+
+def _first_line(message: str) -> str:
+    """LINE本文の1行目だけを取り出す（打ち切り通知の要約用）。"""
+    for line in (message or "").splitlines():
+        line = line.strip()
+        if line:
+            return line[:60]
+    return "(本文なし)"
+
+
+# 安否アラート(anomaly_inactivity)が「祖母が生きている証拠」として見ているソース。
+# scripts/anomaly_check.py の _last_sensor_activity と同じ集合にすること。
+# ここがズレると「発火はするが解決しない」状態になる。
+LIFE_SIGN_SOURCES = (
+    "rice_cooker", "bath_door", "bath_motion",
+    "toilet_door", "fridge", "rice_cooker_lid", "tablet_report",
+)
+
+ABNORMAL_TEMP_C = 35.0  # src/bath_humidity_detector.py と同じ値
+
+
+def _close_if_premise_gone(category: str, created_jst) -> bool:
+    """アラートの前提が消えていたら pending を閉じる。閉じたら True。
+
+    **CRITICAL は未応答だと最大3回・全家族に再通知される。** 前提が消えたことを
+    観測しても閉じない経路があると、解決済みの事象について鳴り続ける。
+    2026-10-11 の anomaly_inactivity がそれで、祖母が動き出した18分後から
+    さらに3ラウンド・計15通が送られた。
+
+    害の本体は通数ではない。家族が「もう大丈夫なのに鳴る通知」を誤検知として
+    閉じる習慣をつけることで、本物の浴室緊急通知が読まれなくなること。
+
+    bath_emergency / device_locked / meal_alert は既に別経路で閉じている
+    （monitor.py の _on_bath_end / _on_bath_alert_resolved、
+      line_commands.py の handle_confirm_postback）。ここで扱うのは残り4つ。
+
+    注意: events.started_at は JST、pending_notifications.created_at は UTC。
+    呼び出し側で JST に直したものを受け取る。
+    """
+    since = created_jst.strftime("%Y-%m-%d %H:%M:%S")
+    reason = None
+    conn = get_conn()
+    try:
+        if category == "anomaly_inactivity":
+            ph = ",".join("?" * len(LIFE_SIGN_SOURCES))
+            row = conn.execute(
+                f"""SELECT 1 FROM events
+                     WHERE source IN ({ph}) AND started_at > ? LIMIT 1""",
+                (*LIFE_SIGN_SOURCES, since),
+            ).fetchone()
+            if row:
+                reason = "活動の再開を検知したため自動で解決"
+
+        elif category == "anomaly_fridge_open":
+            row = conn.execute(
+                """SELECT 1 FROM events
+                    WHERE source='fridge' AND event_type='close'
+                      AND started_at > ? LIMIT 1""",
+                (since,),
+            ).fetchone()
+            if row:
+                reason = "冷蔵庫が閉まったため自動で解決"
+
+        elif category == "anomaly_night_rice":
+            row = conn.execute(
+                """SELECT 1 FROM events
+                    WHERE source='rice_cooker' AND event_type='power_off'
+                      AND started_at > ? LIMIT 1""",
+                (since,),
+            ).fetchone()
+            if row:
+                reason = "炊飯器の電源が切れたため自動で解決"
+
+        elif category == "bath_abnormal_temp":
+            # 温度は raw_meta の temp_c（value は湿度）。SQLite の JSON 関数に
+            # 依存しないよう Python 側で判定する。
+            rows = conn.execute(
+                """SELECT raw_meta FROM events
+                    WHERE source='bathroom_meter' AND event_type='reading'
+                      AND started_at > ? ORDER BY started_at DESC LIMIT 5""",
+                (since,),
+            ).fetchall()
+            temps = []
+            for r in rows:
+                try:
+                    meta = json.loads(r["raw_meta"] or "{}")
+                except (TypeError, ValueError):
+                    continue
+                t = meta.get("temp_c")
+                if isinstance(t, (int, float)):
+                    temps.append(float(t))
+            if temps and max(temps) < ABNORMAL_TEMP_C:
+                reason = "浴室の温度が下がったため自動で解決"
+    finally:
+        conn.close()
+
+    if reason is None:
+        return False
+    closed = mark_related_completed_silent(
+        category, created_jst.strftime("%Y-%m-%d"), "auto_resolved", reason
+    )
+    if closed:
+        print(f"自動解決: type={category} 件数={closed} 理由={reason}")
+    return bool(closed)
+
+
+def escalate_unanswered() -> None:
+    """未応答の CRITICAL 通知を再通知し、上限に達したら打ち切りを broadcast する。
+
+    非CRITICAL には一切触れない（従来どおり24時間で無言タイムアウト）。
+    """
+    now = _utc_now()
+    cutoff = (now - timedelta(minutes=ESCALATE_AFTER_MINUTES)).strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """SELECT id, notification_type, context_key, message,
+                      quick_reply_json, notify_count, created_at
+                 FROM pending_notifications
+                WHERE completed_at IS NULL
+                  AND COALESCE(last_notified_at, created_at) < ?
+                ORDER BY id""",
+            (cutoff,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    for r in rows:
+        category = r["notification_type"]
+        if not is_critical_category(category):
+            continue  # 雑務系は再通知しない（2026-05-15 のポリシーを維持）
+
+        if category in RETROSPECTIVE_CATEGORIES:
+            continue  # 事後報告。再通知しても家族にできることがない
+
+        # 深夜帯は NIGHT_ALLOWED_CATEGORIES 以外を鳴らさない。
+        # 「翌朝まで持ち越して変な時刻に届く」のを防ぐため、持ち越さずスキップする。
+        if _should_suppress_for_night(category):
+            print(f"再通知スキップ(深夜帯): id={r['id']} type={category}")
+            continue
+
+        created = _parse_utc(r["created_at"])
+        age_min = (now - created).total_seconds() / 60
+        jst = created + timedelta(hours=9)  # created_at は UTC 保存
+
+        # 再通知の前に、アラートの前提がまだ生きているかを確認する。
+        # 消えていれば閉じて、この行については何も送らない。
+        if _close_if_premise_gone(category, jst):
+            continue
+
+        # `or 1` にすると notify_count=0（1通も送れていない）が 1 に化ける
+        count = r["notify_count"] if r["notify_count"] is not None else 1
+
+        if count > MAX_NOTIFY_COUNT:
+            continue  # 打ち切り通知は送信済み。あとは24時間タイムアウトに任せる
+
+        if count == MAX_NOTIFY_COUNT:
+            if age_min > MAX_GIVEUP_AGE_MINUTES:
+                print(f"打ち切り通知スキップ(発生から{age_min/60:.1f}時間経過): id={r['id']}")
+                continue
+            give_up = (
+                f"⏰ 誰も応答しませんでした\n"
+                f"{jst.strftime('%H:%M')}ごろの件: {_first_line(r['message'])}\n\n"
+                f"{MAX_NOTIFY_COUNT}回お知らせしましたが反応がありませんでした。"
+                f"心配な場合は直接ご確認ください。\n"
+                f"（この確認は家族ページの「未対応の確認」に残っています）"
+            )
+            try:
+                sent = broadcast_line_message(give_up)
+            except Exception as e:
+                print(f"打ち切り通知の送信失敗 id={r['id']}: {e}")
+                continue
+            if sent <= 0:
+                # 1通も出せていないなら「通知済み」にしない。次の tick で再試行する。
+                print(f"打ち切り通知の送信先なし: id={r['id']}")
+                continue
+            # **completed_at は埋めない。** 埋めると /api/pending-notifications の
+            # `WHERE completed_at IS NULL` から外れ、家族ダッシュボードの
+            # 「📨 未対応の確認」から約45分で消えてしまう。204e7af が
+            # LINE再通知を廃止したときの代替がその一覧なので、LINE を諦めた
+            # からといって一覧からも消すのは本末転倒。従来どおり24時間タイムアウトで閉じる。
+            with transaction() as c:
+                c.execute(
+                    """UPDATE pending_notifications
+                          SET notify_count = ?
+                        WHERE id = ?""",
+                    (MAX_NOTIFY_COUNT + 1, r["id"]),
+                )
+            print(f"打ち切り通知: id={r['id']} type={category} (送信{sent}件・一覧には残す)")
+            continue
+
+        # 以降は再通知。こちらは「今ごろ届く古い通知」を避けるため厳しめの上限。
+        if age_min > MAX_ESCALATE_AGE_MINUTES:
+            print(f"再通知スキップ(発生から{age_min/60:.1f}時間経過): id={r['id']} type={category}")
+            continue
+
+        # 再通知。何回目かを明示して「同じ通知が繰り返し来ている」と分かるようにする。
+        try:
+            items = json.loads(r["quick_reply_json"] or "[]")
+        except Exception:
+            items = []
+        body = f"🔁 まだ確認されていません（{count + 1}/{MAX_NOTIFY_COUNT}回目）\n\n{r['message']}"
+        try:
+            sent = broadcast_with_quick_reply(body, items)
+        except Exception as e:
+            print(f"再通知の送信失敗 id={r['id']}: {e}")
+            continue
+        if sent <= 0:
+            print(f"再通知の送信先なし: id={r['id']}")
+            continue
+        with transaction() as c:
+            c.execute(
+                """UPDATE pending_notifications
+                      SET last_notified_at = CURRENT_TIMESTAMP,
+                          notify_count = notify_count + 1
+                    WHERE id = ?""",
+                (r["id"],),
+            )
+        print(f"再通知: id={r['id']} type={category} → {count + 1}回目 (送信{sent}件)")
+
+
 def main():
     init_db()
+
+    # 先に緊急系の再通知/打ち切りを処理する（24時間タイムアウトより手前の時間スケール）
+    escalate_unanswered()
+
+    # ロック期限切れの自動解除。in-process の sleep ではなく cron に置くことで、
+    # iot-monitor の再起動や停電をまたいでも解除が生き残る。
+    try:
+        released = asyncio.run(release_expired_locks())
+        for name in released:
+            print(f"ロック期限切れ → 自動解除: {name}")
+    except Exception as e:
+        print(f"ロック期限解除に失敗: {e}")
+
     # pending_notifications.last_notified_at / created_at は CURRENT_TIMESTAMP (UTC)
-    cutoff = (datetime.utcnow() - timedelta(hours=TIMEOUT_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    cutoff = (_utc_now() - timedelta(hours=TIMEOUT_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
 
     conn = get_conn()
     try:

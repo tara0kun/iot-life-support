@@ -14,6 +14,7 @@ import hmac
 import json
 import logging
 import secrets
+import sys
 from datetime import datetime, time, timedelta
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from starlette.middleware.sessions import SessionMiddleware
 
-from ..db import get_conn, init_db, transaction
+from ..db import get_conn, init_db, transaction, RENDER_TIMEOUT_SECONDS
 from ..event_bus import get_events_today, get_recent_events, get_events_by_date, subscribe, unsubscribe
 from ..sessions import sessions_today, last_session
 from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
@@ -34,7 +35,41 @@ from ..lock_manager import get_device_state, lock_device, unlock_device
 from .camera_stream import get_streamer
 
 app = FastAPI(title="IoT生活サポート")
-app.add_middleware(SessionMiddleware, secret_key=secrets.token_hex(32))
+def _session_secret() -> str:
+    """セッション署名鍵。プロセスをまたいで同じ値を使う。
+
+    以前は起動のたびに secrets.token_hex(32) を生成していたため、
+    iot-web を再起動するたびに家族全員が強制ログアウトされていた。
+    家族用ダッシュボードは別居の家族が通知に対応する主要経路なので、
+    再起動のたびに再ログインを求めるのは実運用上のコストが大きい。
+
+    Tailscale Funnel でパブリック公開されているため、鍵はファイル所有者
+    のみ読める権限 (0600) で保存する。
+    """
+    env_key = _load_env_value("SESSION_SECRET")
+    if env_key:
+        return env_key
+    key_path = Path(__file__).resolve().parent.parent.parent / "data" / ".session_secret"
+    if key_path.exists():
+        existing = key_path.read_text().strip()
+        if existing:
+            return existing
+    generated = secrets.token_hex(32)
+    key_path.write_text(generated)
+    key_path.chmod(0o600)
+    return generated
+
+
+def _load_env_value(key: str) -> str:
+    env_path = Path(__file__).resolve().parent.parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip()
+    return ""
+
+
+app.add_middleware(SessionMiddleware, secret_key=_session_secret())
 
 # 家族UI ログインへのブルートフォース攻撃対策 (Tailscale Funnel でパブリック公開のため)
 # get_remote_address は X-Forwarded-For を尊重 (Funnel の裏側で LINE/家族 IP を識別可能)
@@ -90,7 +125,13 @@ def _check_tablet_access(request: Request) -> bool:
         return True
     token = _load_tablet_token()
     if not token:
-        return True  # トークン未設定ならフリー
+        # **fail-closed。** ここで True を返すと、TABLET_TOKEN が読めなくなった瞬間に
+        # Tailscale Funnel 経由で誰でも見守り画面を開けてしまう。
+        # ローカルからのアクセスは上の _is_local で既に許可済みなので、祖母のタブレットは影響を受けない。
+        logging.getLogger("app").error(
+            "TABLET_TOKEN が読めません。外部からのタブレットアクセスを拒否します"
+        )
+        return False
     # URLパラメータ or セッションでチェック
     if request.query_params.get("token") == token:
         request.session["tablet_auth"] = True
@@ -138,13 +179,24 @@ async def tablet_view(request: Request):
     # 今日のスコアを保存
     done_count = len([s for s in stamps if s["done"]])
     done_labels = [s["label"] for s in stamps if s["done"]]
-    save_daily_score(
-        person_id=grandma_id,
-        target_date=now.date(),
-        done_count=done_count,
-        total_count=len(stamps),
-        details={"done": done_labels},
-    )
+    # **スコア保存の失敗で画面を落とさない。**
+    # これは祖母が毎日見る唯一の画面で、落ちるとエラーページが出る。
+    # 認知症の本人にエラー画面を見せるのは、スコアが1回記録されないことより
+    # はるかに害が大きい。実際 2026-09-26 の朝、DBロック競合
+    # (sqlite3.OperationalError: database is locked) で /tablet が
+    # 10分おきに 500 を返していた。スコアは次の描画で書き直されるので、
+    # 1回落としても実害はほぼない。
+    try:
+        save_daily_score(
+            person_id=grandma_id,
+            target_date=now.date(),
+            done_count=done_count,
+            total_count=len(stamps),
+            details={"done": done_labels},
+            timeout=RENDER_TIMEOUT_SECONDS,
+        )
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("app").warning("daily_score の保存に失敗（画面は続行）: %s", e)
 
     # 庭データ（過去14日）
     garden = get_garden_data(grandma_id, days=14)
@@ -550,7 +602,9 @@ async def api_device_status(request: Request):
         result[d] = {
             "is_locked": state["is_locked"] if state else False,
             "cycle_count_today": state["cycle_count_today"] if state else 0,
-            "updated_at": state["updated_at"].isoformat() if state and state.get("updated_at") else None,
+            # updated_at は sqlite から str で返る（datetime ではない）。
+            # .isoformat() を呼んで AttributeError で家族UIの機器状態が落ちていた。
+            "updated_at": str(state["updated_at"]) if state and state.get("updated_at") else None,
         }
     return result
 
@@ -928,7 +982,7 @@ async def api_upload_meal_photo(
     # LINE で全家族に broadcast
     base = _current_tunnel_base_url()
     if base:
-        public_url = f"{base}/photos/{fname}"
+        public_url = signed_photo_url(base, fname)
         try:
             from ..notifier import broadcast_line_image
             label = sess["label"] or "食事"
@@ -956,6 +1010,7 @@ GUIDE_PAGES = {
     "family-reference": ("家族用 機能リファレンス", "family-reference.md"),
     "line-operation": ("LINE操作ガイド", "line-operation.md"),
     "troubleshooting": ("トラブルシューティング", "troubleshooting.md"),
+    "rice-lid-sensor": ("炊飯器のセンサーの直し方", "rice-lid-sensor.md"),
 }
 
 
@@ -995,14 +1050,64 @@ async def _render_guide(request: Request, slug: str) -> HTMLResponse:
     })
 
 
+PHOTO_URL_TTL_SECONDS = 7 * 24 * 3600  # LINEのトーク履歴から後で開ける程度は持たせる
+
+
+def _photo_signature(file_name: str, exp: int) -> str:
+    """食事写真URLの署名。鍵はセッション鍵から用途を分けて導出する。"""
+    key = ("meal-photo:" + _session_secret()).encode()
+    return hmac.new(key, f"{file_name}:{exp}".encode(), hashlib.sha256).hexdigest()[:32]
+
+
+def signed_photo_url(base: str, file_name: str) -> str:
+    """LINE に送るための、期限付き署名URLを作る。"""
+    exp = int(datetime.now().timestamp()) + PHOTO_URL_TTL_SECONDS
+    sig = _photo_signature(file_name, exp)
+    return f"{base}/photos/{file_name}?exp={exp}&sig={sig}"
+
+
 @app.get("/photos/{file_name}")
 async def serve_meal_photo(request: Request, file_name: str):
-    """食事写真を配信する（LINEサーバーからの取得用、外部公開）。
+    """食事写真を配信する。
 
-    ファイル名のサニタイズで path traversal を防止。
+    **無認証で配信してはいけない。** 祖母の自宅の食卓・手元・本人が写る。
+    2026-09-26 時点では認証が一切なく、公開URLから誰でも取得できた。
+    ファイル名が {session_id}_{UNIX秒}.jpg で列挙可能なうえ、家族が「削除」しても
+    deleted_at を埋めるだけで実ファイルが残っていたため、削除済みの写真まで
+    取得できる状態だった。
+
+    許可する経路は3つだけ:
+      - 家族UIのログイン済みセッション
+      - タブレット（宅内 or TABLET_TOKEN）
+      - 期限付きの署名URL（LINE に送る用。LINEのサーバが取りに来るのでCookieが無い）
     """
     if "/" in file_name or ".." in file_name:
         raise HTTPException(status_code=400)
+
+    allowed = _is_family_authenticated(request) or _check_tablet_access(request)
+    if not allowed:
+        exp = request.query_params.get("exp", "")
+        sig = request.query_params.get("sig", "")
+        try:
+            exp_i = int(exp)
+        except ValueError:
+            raise HTTPException(status_code=404)
+        if exp_i < int(datetime.now().timestamp()):
+            raise HTTPException(status_code=404)  # 期限切れ。存在も伏せる
+        if not hmac.compare_digest(sig, _photo_signature(file_name, exp_i)):
+            raise HTTPException(status_code=404)
+
+    # 家族が削除した写真は誰にも返さない（実ファイルが残っていても）
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT deleted_at FROM meal_photos WHERE file_name = ?", (file_name,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row and row["deleted_at"]:
+        raise HTTPException(status_code=404)
+
     fpath = MEAL_PHOTOS_DIR / file_name
     if not fpath.exists():
         raise HTTPException(status_code=404)
@@ -1042,10 +1147,20 @@ async def api_delete_meal_photo(request: Request, photo_id: int):
     if not _is_family_authenticated(request):
         raise HTTPException(status_code=401)
     with transaction() as conn:
+        row = conn.execute(
+            "SELECT file_name FROM meal_photos WHERE id = ?", (photo_id,)
+        ).fetchone()
         conn.execute(
             "UPDATE meal_photos SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?",
             (photo_id,),
         )
+    # **実ファイルも消す。** deleted_at を埋めるだけでは、URLを知っている第三者に
+    # 取得され続ける。家族は「消した」と思っているので、その通りにする。
+    if row and row["file_name"]:
+        try:
+            (MEAL_PHOTOS_DIR / row["file_name"]).unlink(missing_ok=True)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("app").warning("写真の実ファイル削除に失敗: %s", e)
     return {"ok": True}
 
 
@@ -1196,7 +1311,15 @@ async def api_send_prompt(request: Request):
 
 @app.post("/api/dismiss-prompt/{prompt_id}")
 async def api_dismiss_prompt(request: Request, prompt_id: int):
-    """祖母がメッセージを確認済みにする。"""
+    """祖母がメッセージを確認済みにする。
+
+    **タブレット経路の認可が要る。** 2026-10-15 まで 50 エンドポイント中
+    ここだけ素通しで、外部から prompt_id を総当たりすれば家族が送った
+    メッセージを祖母の画面に出る前に消せた（DB の dismissed が実際に 1 になる）。
+    同じタブレット用の /api/tablet-record は最初から認可を通している。
+    """
+    if not _check_tablet_access(request):
+        raise HTTPException(status_code=403)
     with transaction() as conn:
         conn.execute("UPDATE family_prompts SET dismissed = 1 WHERE id = ?", (prompt_id,))
     return {"ok": True}
@@ -1224,8 +1347,49 @@ def _get_active_prompts() -> list[dict]:
 
 _webhook_log = logging.getLogger("line_webhook")
 
+
+def _setup_web_logging() -> None:
+    """web プロセスのログを logs/web.log に残す。
+
+    **これが無いと障害が起きても何も残らない。** iot-web には logging の設定が
+    一切なく、root logger は WARNING / handlers=[] のままだった。その結果
+    reply_line_message の成功ログ（INFO）はどこにも出ず、LINE コマンドが
+    「反応するときとしないときがある」と報告されても、何を受け取って何を返したのか
+    を後から調べる手段が無かった（2026-10-15）。
+
+    uvicorn が root logger を設定しているので basicConfig は使わない。
+    このアプリ自身のロガーにだけハンドラを付ける。
+    """
+    # **テスト実行中は本番ログに書かない。** tests/ は本番 Pi 上で走るため、
+    # import しただけで FileHandler が張られると、pytest の架空リクエストが
+    # logs/web.log に混ざる。実際に 2026-10-15 に30行混入し、障害調査中の
+    # ログを読み間違える原因になった（架空ID・架空コマンドが本物に見えた）。
+    if "pytest" in sys.modules:
+        return
+
+    log_path = BASE.parent.parent / "logs" / "web.log"
+    try:
+        log_path.parent.mkdir(exist_ok=True)
+        handler = logging.FileHandler(log_path)
+    except OSError:
+        return  # ログが書けないことでアプリを落とさない
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    )
+    for name in ("line_webhook", "notifier", "line_commands", "app", "lock_manager"):
+        lg = logging.getLogger(name)
+        if any(isinstance(h, logging.FileHandler) for h in lg.handlers):
+            continue  # 二重登録しない（テストで複数回 import されうる）
+        lg.addHandler(handler)
+        lg.setLevel(logging.INFO)
+
+
+_setup_web_logging()
+
+# match_command の link キーワードと揃えること。
+# 片方だけに足すと「リンク系なのに無反応」が生まれる（テストが差分を検出する）。
 LINE_URL_TRIGGERS = (
-    "リンク", "url", "URL", "Url",
+    "リンク", "りんく", "url", "URL", "Url",
     "つながらない", "繋がらない", "つながらん",
     "見れない", "みれない", "見られない", "みられない",
     "アクセス", "開けない", "あけない",
@@ -1308,8 +1472,23 @@ def _is_url_request(text: str) -> bool:
 
 
 def _extract_sender_id(source: dict) -> str:
-    """LINE event.source からIDを取り出す（group/room/user のいずれか）。"""
-    return source.get("groupId") or source.get("roomId") or source.get("userId", "")
+    """LINE event.source から**発言者**のIDを取り出す。
+
+    **userId を最優先にする。** 以前は groupId / roomId を先に返していたため、
+    家族グループやトークルームでの発言は送信者IDが groupId（C 始まり）になり、
+    許可リスト（個人ID = U 始まり）に一致せず全部黙殺されていた。
+    同じ人が 1:1 では動くのにグループでは無反応になるので、
+    「反応するときとしないときがある」の一因になりうる（2026-10-15 発見）。
+
+    group/room でも userId は付いてくるのが通常。付いてこないケース
+    （LINE 側の設定で user ID の取得が許可されていない等）だけ
+    従来どおり groupId / roomId に落とす。
+    """
+    return (
+        source.get("userId")
+        or source.get("groupId")
+        or source.get("roomId", "")
+    )
 
 
 @app.get("/line/webhook")
@@ -1359,8 +1538,14 @@ async def line_webhook(request: Request):
         sender_id = _extract_sender_id(ev.get("source", {}))
         reply_token = ev.get("replyToken", "")
 
-        # 全受信メッセージのsender_idをログ（家族追加時のID取得用）
-        _webhook_log.info("RECV type=%s sender=%s", ev_type, sender_id)
+        # 全受信メッセージのsender_idをログ（家族追加時のID取得用）。
+        # 本文の先頭も残す。「反応しない」と言われたときに、
+        # 受け取れていないのか・コマンドと認識できていないのか・返信が失敗したのかを
+        # 切り分けられるようにする。本文は生活情報を含みうるので先頭20文字まで。
+        _webhook_log.info(
+            "RECV type=%s sender=%s…%s", ev_type, sender_id[:8],
+            (ev.get("message", {}).get("text", "") or "")[:20] if ev_type == "message" else "",
+        )
 
         # メッセージ本文を先に取得（登録コマンド判定のため）
         text_for_check = ""
@@ -1368,7 +1553,14 @@ async def line_webhook(request: Request):
             m = ev.get("message", {})
             if m.get("type") == "text":
                 text_for_check = m.get("text", "").strip()
-        is_register_command = text_for_check.startswith("登録")
+        # dispatcher の register_family と同じ条件に揃える。
+        # startswith("登録") だと「登録一覧」(家族の氏名を一覧で返す) と
+        # 「登録解除」まで未登録者に通してしまい、許可リストの意味が無くなる。
+        is_register_command = (
+            text_for_check == "登録"
+            or text_for_check.startswith("登録 ")
+            or text_for_check.startswith("登録　")
+        )
 
         # 許可リストチェック（登録コマンドだけは未登録者でも通す）
         if allowed and sender_id not in allowed and not is_register_command:
@@ -1425,7 +1617,28 @@ async def line_webhook(request: Request):
         text = msg.get("text", "")
 
         # コマンドディスパッチ（リンク以外すべて）
-        reply = await dispatch(text, sender_id)
+        #
+        # **1件の例外で後続のイベントを巻き添えにしない。** LINE は1回の
+        # webhook に複数イベントを載せてくる。ここが素のままだと、DB ロック
+        # 競合や Matter のタイムアウトが1件起きただけで webhook 全体が 500 に
+        # なり、同じバッチで送られた他の家族のコマンドまで黙って消えていた。
+        # postback 側は最初から握って continue している（2026-10-15 に発覚）。
+        try:
+            reply = await dispatch(text, sender_id)
+        except Exception as e:
+            _webhook_log.error(
+                "コマンド処理エラー sender=%s…%s: %s", sender_id[:8], text[:20], e
+            )
+            try:
+                await asyncio.to_thread(
+                    reply_line_message, reply_token,
+                    "すみません、処理中にエラーが起きました。\n"
+                    "少し時間をおいてから、もう一度お試しください。",
+                )
+            except Exception as e2:
+                _webhook_log.error("エラー返信も失敗: %s", e2)
+            continue
+
         if reply is None and _is_url_request(text):
             reply = _build_url_reply()
 
@@ -1443,9 +1656,41 @@ async def line_webhook(request: Request):
                 _webhook_log.error("メニュー送信失敗: %s", e)
         elif reply:
             try:
-                await asyncio.to_thread(reply_line_message, reply_token, reply)
+                ok = await asyncio.to_thread(
+                    reply_line_message, reply_token, reply
+                )
+                if not ok:
+                    # reply token は1回限り・約1分で失効する。LINE の再送と
+                    # 重なると2回目は必ず失敗するので push で送り直す。
+                    # ここを黙って諦めていたため「処理は走ったのに
+                    # 何も返ってこない」が起きていた。
+                    _webhook_log.warning(
+                        "返信が拒否された → push で再送 sender=%s", sender_id[:8]
+                    )
+                    from ..notifier import send_line_message
+                    await asyncio.to_thread(
+                        send_line_message, reply, user_id=sender_id
+                    )
             except Exception as e:
                 _webhook_log.error("LINE返信失敗: %s", e)
+        elif text.strip():
+            # **無言で終わらせない。** dispatch が None を返すのは
+            # 「コマンドとして解釈できなかった」場合で、家族から見ると
+            # 送ったのに無反応に見える。実測で 272 パターン中 93 が
+            # ここに落ちており、「反応するときとしないときがある」の
+            # 構造的な土台になっていた（2026-10-15）。
+            _webhook_log.info(
+                "未知のコマンド sender=%s…%s", sender_id[:8], text[:20]
+            )
+            try:
+                await asyncio.to_thread(
+                    reply_line_message, reply_token,
+                    "すみません、そのコマンドは分かりませんでした。\n"
+                    "「ヘルプ」と送ると使えるコマンドの一覧が出ます。\n"
+                    "「メニュー」ならボタンで選べます。",
+                )
+            except Exception as e:
+                _webhook_log.error("未知コマンドの返信失敗: %s", e)
 
     # 常に200を返す（LINEの再送を防ぐ）
     return {"ok": True}
@@ -1458,6 +1703,34 @@ async def family_manual(request: Request):
         return RedirectResponse("/family/login", status_code=303)
     return templates.TemplateResponse(request, "family_manual.html", {})
 
+
+
+MANUAL_IMAGES_DIR = BASE.parent.parent / "data" / "manual_images"
+
+
+@app.get("/family/manual/image/{file_name}")
+async def serve_manual_image(request: Request, file_name: str):
+    """家族マニュアルの画面キャプチャを配信する。
+
+    **無認証で配信してはいけない。** 7枚とも実機の画面で、祖母の食事時刻・
+    達成項目・LINE通知の本文がそのまま写っている。
+    2026-10-15 まで /static/screenshots/ に置かれており、公開 ingress から
+    無認証で 200 を返していた（外部から14回取得されている）。同じ画像が
+    README 経由で public リポジトリにも入っていたためファイル名も既知だった。
+    """
+    if "/" in file_name or ".." in file_name or not file_name.endswith(".jpg"):
+        raise HTTPException(status_code=400)
+    # 認可は、この画像を使っている family_manual 自身と同じにする。
+    # 宅内 LAN を通す _check_tablet_access を混ぜると、画像だけがページより
+    # 緩くなる。ファイル名は公開 README に載っていたので既知で、宅内 WiFi に
+    # 入った第三者（来訪者・介護者）に列挙される。祖母のタブレットは家族
+    # マニュアルを開かないので、通す必要も無い。
+    if not _is_family_authenticated(request):
+        raise HTTPException(status_code=403)
+    fpath = MANUAL_IMAGES_DIR / file_name
+    if not fpath.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(fpath, media_type="image/jpeg")
 
 @app.get("/family/weekly-report", response_class=HTMLResponse)
 async def family_weekly_report(request: Request):
@@ -2275,6 +2548,14 @@ def _build_extra_sensor_status() -> list[dict]:
 
 @app.websocket("/ws/events")
 async def ws_events(websocket: WebSocket):
+    # **accept() の前に認可する。** このソケットは家族が祖母に送った
+    # メッセージ本文（family_prompt）をそのまま流す。2026-10-15 まで
+    # 無認証で 101 を返しており、公開 ingress から誰でも購読できた。
+    # WebSocket も SessionMiddleware を通るので、HTTP 側と同じ判定が使える。
+    # 祖母のタブレットは宅内/ローカルなので _check_tablet_access で通る。
+    if not _check_tablet_access(websocket) and not _is_family_authenticated(websocket):
+        await websocket.close(code=1008)
+        return
     await websocket.accept()
     q = subscribe()
     try:

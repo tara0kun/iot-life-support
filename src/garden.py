@@ -53,13 +53,18 @@ def save_daily_score(
     done_count: int,
     total_count: int = 7,
     details: dict | None = None,
+    timeout: float | None = None,
 ) -> None:
-    """1日分のスコアを保存（UPSERT）。"""
+    """1日分のスコアを保存（UPSERT）。
+
+    timeout: ロック待ちの上限（秒）。画面描画から呼ぶときは短くして、
+    書けなければ諦めさせる。待たせると祖母のタブレットが固まる。
+    """
     flower = _done_to_flower(done_count)
     date_str = target_date.isoformat()
     details_json = json.dumps(details, ensure_ascii=False) if details else None
 
-    with transaction() as conn:
+    with transaction(timeout) as conn:
         conn.execute(
             """INSERT INTO daily_scores(person_id, date, done_count, total_count, flower_type, details)
                VALUES(?, ?, ?, ?, ?, ?)

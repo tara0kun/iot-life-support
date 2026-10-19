@@ -7,14 +7,30 @@ pending_notifications:
 session_events:
   - 90日以上前は物理削除 (集約済セッションは meal_sessions.event_count に残るため統計への影響なし)
 
-events は prune_old_events.py が別途 3ヶ月 → 月次サマリ集計する仕組みを用意済 (scripts/prune_old_events.py)。
-このスクリプトは通知系のみ担当する。
+**このスクリプトは events も削除する。** bathroom_meter/reading を 7日 TTL で物理削除する
+(BATHROOM_READING_DAYS)。10秒毎に 1日 8,640 行入るため、放置すると DB の大半を占めるのが理由。
+入浴判定は直近分しか使わないので実害は無いが、過去の受信率を遡って調べる用途には使えなくなる。
+2026-10-11 03:00 の実行で 09-27〜10-04 の 19,915 行が消えた実例がある
+(cron_20261011.log.gz の実ログ値。DB 差分で数えると 09-28 以降の 15,295 行に見えるが、
+ 実際は 09-27 分も含まれる)。消えた行はバックアップ 8 世代に残っているが、そちらも 15 日保持。
+
+cron が週 1 回なのに TTL が 7 日なので、**実効保持期間は 7〜14 日で揺れる**。
+日次で回すか TTL を 14 日にするかのどちらかに揃えるべき (未対応)。
+
+なお scripts/prune_old_events.py (events を 3ヶ月で月次サマリ化する想定) は
+**cron にも systemd timer にも登録されておらず手動専用**で、その events_monthly_summary テーブルは
+DB に存在しない。一度も動いたことがないので、events の保持を担っているのは実質このスクリプトだけ。
 
 Usage:
     venv/bin/python scripts/cleanup_old_notifications.py                # 実行
     venv/bin/python scripts/cleanup_old_notifications.py --dry-run      # 影響件数のみ確認
 
-cron: 0 3 * * 0  (毎週日曜 03:00、DB バックアップ cron と衝突しない時間帯)
+cron: 30 3 * * 0  (毎週日曜 03:30)
+
+  **03:00 には置かないこと。** DB バックアップ cron が `0 3 * * *` で動いており、
+  生 DB の単純 cp (非アトミック) なので、下の chunk DELETE ループと重なると
+  壊れた控えができうる。2026-10-15 時点では 16 世代すべて integrity_check ok だが、
+  2026-10-11 03:00:03 に実際にロック競合が 1 件記録されている。
 """
 from __future__ import annotations
 

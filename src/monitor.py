@@ -18,9 +18,10 @@ from src.sensors.matter_plug import MatterPlugMonitor, MatterPlugConfig, PlugRea
 from src.sensors.contact_sensor import ContactSensorMonitor, ContactSensorConfig, ContactEvent
 from src.sensors.camera import CameraMonitor, CameraConfig, CameraFrame
 from src import event_bus
-from src.sessions import aggregate_sessions, sessions_today
+from src.sessions import aggregate_sessions, sessions_today, MEAL_LABELS
 from src.lock_manager import lock_device, should_warn_recent_meal
-from src.notifier import notify_meal_alert, notify_device_locked, send_line_message
+from src.notifier import (notify_meal_alert, notify_device_locked, send_line_message,
+                          mark_related_completed_silent, broadcast_line_message)
 from src.bath_monitor import BathMonitor
 from src.task_supervisor import supervise
 
@@ -213,10 +214,22 @@ async def _request_long_toilet_alert(duration_sec: float) -> None:
     from src.notifier import send_actionable_notification
     minutes = int(duration_sec / 60)
     ctx = _dt.now().strftime("%Y-%m-%d_%H%M_long_toilet")
+    # **この通知は「在室」ではなく「ドアが開いたままだった時間」を報せている。**
+    # 実装は toilet_door の close ハンドラからしか呼ばれず、
+    # 直前の open との差を測る。実データでは open→close の 58.6% が10秒未満の
+    # 通過で、在室しているのはドアが閉まっている間だった。つまり測っている
+    # 対象が逆であり、しかも close の瞬間＝本人が出てきた後にしか鳴らない。
+    #
+    # 倒れた人はドアを開けないので、この通知で転倒は検知できない。
+    # 文言で「転倒していないか確認してください」と書くのは、受け手に
+    # 実態と違う緊急性を伝えることになるので改めた。
+    # 転倒を実際に検知するにはトイレ内部の人感センサーが要る（Issue #20）。
     msg = (
-        f"⚠️ トイレに {minutes} 分以上滞在しています\n"
+        f"🚪 トイレのドアが {minutes} 分ほど開いたままでした\n"
         f"時刻: {_dt.now().strftime('%H:%M')}\n\n"
-        "祖母さんが転倒等で動けなくなっていないか、確認してあげてください。"
+        "※これはドアの開閉から分かることだけをお知らせしています。\n"
+        "中で倒れている場合はドアが閉まったままになるため、\n"
+        "今のセンサーでは検知できません。"
     )
     try:
         await asyncio.to_thread(
@@ -302,10 +315,7 @@ async def _request_session_confirmation(session_id: int) -> None:
         f"判定根拠: {basis_str}\n\n"
         "誰の食事ですか？"
     )
-    items = [
-        {"label": "祖母さん", "data": f"sess_confirm:{session_id}:1"},
-        {"label": "祖父さん", "data": f"sess_confirm:{session_id}:3"},
-        {"label": "母さん", "data": f"sess_confirm:{session_id}:2"},
+    items = _person_choice_items(f"sess_confirm:{session_id}") + [
         {"label": "他の家族", "data": f"sess_confirm:{session_id}:other"},
         {"label": "食事じゃない", "data": f"sess_confirm:{session_id}:reject"},
     ]
@@ -708,8 +718,46 @@ async def on_person_detected(frame: CameraFrame) -> None:
 # --- セッション集約 + ロック/通知 ---
 
 GRANDMA_ID = 1
+
+# Quick Reply は13項目まで。人物 + 「他の家族」 + 「食事じゃない」で収める。
+MAX_PERSON_CHOICES = 10
+
+
+def _person_choice_items(prefix: str) -> list[dict]:
+    """「誰の食事か」の選択肢を persons から作る。
+
+    **person_id を直書きしてはいけない。** 以前は 祖母=1 / 祖父=3 / 母=2 を
+    ボタンに埋め込んでいたが、本番の persons に id=2 が存在せず（実在するのは
+    0,1,3,4,5,6,7,8）、get_conn() は foreign_keys=ON なので「母さん」を押すと
+    毎回 FK 違反で失敗していた。同じ通知の他のボタンは通るため、家族からは
+    「ボタンによって反応したりしなかったりする」ように見えていた（2026-10-15 発覚）。
+
+    ラベルは persons.name をそのまま使う。コードに実名を書かずに済む。
+    """
+    from src.db import get_conn
+
+    try:
+        conn = get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT id, name FROM persons
+                    WHERE id != 0 AND name IS NOT NULL AND name != ''
+                    ORDER BY CASE role WHEN 'grandma' THEN 0 ELSE 1 END, id
+                    LIMIT ?""",
+                (MAX_PERSON_CHOICES,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("人物選択肢の取得に失敗: %s", e)
+        return []
+    return [{"label": f"{r['name']}さん"[:20], "data": f"{prefix}:{r['id']}"} for r in rows]
 RICE_COOKER_NODE_ID = 1
 MAX_MEALS_BEFORE_ALERT = 3
+
+# ロック確認を送った食事セッション id。プロセス内だけで足りる
+# （再起動時に取りこぼしても、聞き直しが1回増えるだけで害が無い）。
+_lock_asked_sessions: set[int] = set()
 
 PREV_SESSION_LOOKUP_MINUTES = 90  # 「前と同じ食事」ボタン提示の上限
 
@@ -917,14 +965,19 @@ async def session_aggregator(interval: int = 60) -> None:
 
             # 祖母の今日のセッション数を確認
             grandma_sessions = sessions_today(GRANDMA_ID)
-            current_count = len(grandma_sessions)
+            # 食べ過ぎアラートと炊飯器ロック確認の起点になる数字なので、
+            # お風呂など食事以外のセッションは数えない（入浴で炊飯器が
+            # ロックされかける問題があった）。
+            grandma_meals = [s for s in grandma_sessions
+                             if s.get("label") in MEAL_LABELS]
+            current_count = len(grandma_meals)
 
             # 前回チェック時からセッションが増えた場合のみ処理
             if prev_session_count is not None and current_count > prev_session_count:
                 new_count = current_count - prev_session_count
                 log.info("祖母の新規食事セッション: %d件 (本日計%d件)", new_count, current_count)
 
-                last = grandma_sessions[-1]
+                last = grandma_meals[-1]
                 last_time = last["started_at"]
                 if hasattr(last_time, "strftime"):
                     last_time_str = last_time.strftime("%H:%M")
@@ -936,17 +989,27 @@ async def session_aggregator(interval: int = 60) -> None:
                     log.warning("祖母の食事回数が%d回に到達 → LINE通知", current_count)
                     await asyncio.to_thread(notify_meal_alert, "祖母", current_count, last_time_str)
 
-                # Layer 2: 炊飯器ロックは家族確認後に実行（誤検知防止）
-                if current_count >= 2:
-                    warning = should_warn_recent_meal(GRANDMA_ID)
-                    if warning:
-                        log.info(
-                            "直近食事あり(%s分前) → ロック確認をLINEに送信",
-                            warning["minutes_ago"],
-                        )
-                        await _request_lock_confirmation(current_count, warning["minutes_ago"])
-
             prev_session_count = current_count
+
+            # Layer 2: 炊飯器ロックは家族確認後に実行（誤検知防止）
+            #
+            # **「カウントが増えたティック」の中に置いてはいけない。** カウントが増えるのは
+            # セッションが confirmed になった瞬間で、実測では食事開始から中央値 7.6 時間
+            # （143件中84件が90分超）。RECENT_MEAL_MINUTES=90 の窓はその時点でほぼ必ず
+            # 閉じており、should_warn_recent_meal() が None を返してロックが成立しない。
+            # 実際 30日間で「ロック確認をLINEに送信」は0件、lock_confirm の通知は
+            # 2026-08-09 を最後に途絶えていた。
+            # 毎ティック評価に変える代わりに、食事セッション単位で一度しか聞かない。
+            # ctx が分単位なので、ここを素で外に出すと毎分再送になる。
+            if current_count >= 2:
+                warning = should_warn_recent_meal(GRANDMA_ID)
+                if warning and warning["session_id"] not in _lock_asked_sessions:
+                    _lock_asked_sessions.add(warning["session_id"])
+                    log.info(
+                        "直近食事あり(%s分前, session=%s) → ロック確認をLINEに送信",
+                        warning["minutes_ago"], warning["session_id"],
+                    )
+                    await _request_lock_confirmation(current_count, warning["minutes_ago"])
 
         except Exception as e:
             log.warning("セッション集約/通知エラー: %s", e)
@@ -977,23 +1040,75 @@ async def main() -> None:
             source="bath_door", event_type="bath_end",
             person_id=GRANDMA_ID, value=duration_min,
         )
+        # **解決をシステム自身が観測したら、緊急通知を閉じる。**
+        # 浴室30分無反応のアラートを出したあと、本人が出てきたことを
+        # bath_end で検知しているのに、未応答の pending がそのまま残っていた。
+        # その結果 recheck_pending の再通知が、既に解決した事象について
+        # 鳴り続ける。実際に 2026-09-28 の夜、入浴終了の4分後に再通知が飛び、
+        # 家族が「誤検知」として閉じることになった。
+        # 家族には黙って閉じるのではなく「出てきた」ことを伝える。
+        # 緊急通知を受け取った側は心配しているので、解決も知らせる必要がある。
+        closed = await asyncio.to_thread(
+            mark_related_completed_silent,
+            "bath_emergency", datetime.now().strftime("%Y-%m-%d"),
+            "auto_resolved", "入浴の終了を検知したため自動で解決",
+        )
+        if closed:
+            log.info("[bath] 入浴終了を検知 → 未応答の浴室緊急通知 %d件を閉じた", closed)
+            try:
+                await asyncio.to_thread(
+                    broadcast_line_message,
+                    "✅ 浴室から出られました\n"
+                    f"入浴時間: {int(duration_min)}分\n\n"
+                    "先ほどの浴室の通知は解決しました。ご確認ありがとうございました。",
+                )
+            except Exception as e:
+                log.warning("浴室アラートの解決通知に失敗: %s", e)
 
     async def _on_bath_alert(elapsed_min: float):
+        # 文面を実際の測定対象に合わせる。
+        # 人感センサーは脱衣所にあり、浴槽の中は見ていない。長風呂では動きが
+        # 止まるのが普通なので、このアラートは実質「入浴が長い」を意味する。
+        # 実測でも窓内6件すべてが本人の長湯(57〜169分)で真の緊急は1件も無く、
+        # 全期間43件のうち29件を家族が誤検知として閉じている。
+        # 「浴室で動きがありません」と書くと浴槽内を見ているように読めてしまう。
         from .notifier import send_actionable_notification
         msg = (
-            f"🚨 緊急: 浴室で{int(elapsed_min)}分間動きがありません!\n"
-            f"すぐに確認してください。"
+            f"🛁 浴室に入ってから {int(elapsed_min)} 分、脱衣所の人感センサーが反応していません\n"
+            f"時刻: {datetime.now().strftime('%H:%M')}\n\n"
+            "長風呂でもこの通知は出ます。念のため様子を見てください。\n"
+            "※浴槽の中は今のセンサーでは見えていません。"
         )
         ctx = datetime.now().strftime("%Y-%m-%d_%H%M")
         await asyncio.to_thread(
             send_actionable_notification, "bath_emergency", ctx, msg
         )
 
+    async def _on_bath_alert_resolved():
+        """浴室アラート後にモーションが戻った → 未応答の緊急通知を閉じる。"""
+        closed = await asyncio.to_thread(
+            mark_related_completed_silent,
+            "bath_emergency", datetime.now().strftime("%Y-%m-%d"),
+            "auto_resolved", "浴室で動きを再確認したため自動で解決",
+        )
+        if not closed:
+            return
+        log.info("[bath] モーション再開 → 未応答の浴室緊急通知 %d件を閉じた", closed)
+        try:
+            await asyncio.to_thread(
+                broadcast_line_message,
+                "✅ 浴室で動きを確認しました\n\n"
+                "先ほどの浴室の通知は解決しました。ご確認ありがとうございました。",
+            )
+        except Exception as e:
+            log.warning("浴室アラートの解決通知に失敗: %s", e)
+
     _bath_monitor = BathMonitor(
         alert_minutes=30,
         on_bath_start=_on_bath_start,
         on_bath_end=_on_bath_end,
         on_alert=_on_bath_alert,
+        on_alert_resolved=_on_bath_alert_resolved,
     )
     log.info("お風呂監視を初期化 (アラート: 30分)")
 
@@ -1074,12 +1189,26 @@ async def main() -> None:
         )
         log.info("BathDetector 初期化（学習データ収集モード）")
 
+        _meter_batt_logged = {"last": None}
+
         async def _on_meter_reading(r: "MeterReading") -> None:
+            # 温度と電池も残す。以前は湿度しか記録しておらず、
+            # 受信が減ったときに「電池が弱っているのか、無線が詰まっているのか」を
+            # 後から切り分けられなかった。advertisement には電池残量が乗っている。
+            import json as _json
             await event_bus.record_event(
                 source="bathroom_meter",
                 event_type="reading",
                 value=float(r.humidity_pct),
+                raw_meta=_json.dumps(
+                    {"temp_c": r.temperature_c, "battery_pct": r.battery_pct},
+                    ensure_ascii=False,
+                ),
             )
+            # 電池残量が変わったときだけログに出す（10秒ごとに出すと埋まる）
+            if r.battery_pct is not None and r.battery_pct != _meter_batt_logged["last"]:
+                _meter_batt_logged["last"] = r.battery_pct
+                log.info("[bathroom_meter] 電池残量 %d%%", r.battery_pct)
             # bath_detector に湿度・温度を供給（候補検知時はLINE通知へ）
             try:
                 await _bath_detector.feed_humidity(

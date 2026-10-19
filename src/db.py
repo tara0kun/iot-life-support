@@ -242,16 +242,34 @@ CREATE INDEX IF NOT EXISTS idx_bath_cls_features
 """
 
 
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
+# SQLite のロック待ち上限。Python の既定は 5 秒で、これを超えると
+# "database is locked" で例外になる。このシステムは
+#   iot-monitor (イベント書込) / iot-web (タブレット描画で daily_scores 書込)
+#   / cron 4本 (health_check・recheck_pending・anomaly_check・retry_line_outbox)
+# が同じ DB を触り、journal_mode=delete では読み手が書き手をブロックする。
+# 実測で anomaly_check の check_inactivity が 7 秒 DB を掴む瞬間があり、
+# そこに /tablet の書込が当たると 5 秒で諦めて 500 を返していた
+# (2026-09-26 07:00〜09:10 に 10 分おきで発生。祖母のタブレットがエラー画面になる)。
+# 待てば必ず通る種類の競合なので、上限を伸ばして 500 を出さないようにする。
+BUSY_TIMEOUT_SECONDS = 30
+
+
+# 画面描画のように「待たされる方が困る」経路のための短いロック待ち。
+# 30秒待つと祖母のタブレットが30秒真っ白になる。書けなければ諦めて
+# 画面を出す方が正しい（スコアは次の描画で書き直される）。
+RENDER_TIMEOUT_SECONDS = 1.0
+
+
+def get_conn(timeout: float | None = None) -> sqlite3.Connection:
+    conn = sqlite3.connect(DB_PATH, timeout=timeout if timeout is not None else BUSY_TIMEOUT_SECONDS)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
 @contextmanager
-def transaction():
-    conn = get_conn()
+def transaction(timeout: float | None = None):
+    conn = get_conn(timeout)
     try:
         yield conn
         conn.commit()
@@ -270,8 +288,31 @@ def init_db() -> None:
         _seed_default_persons(conn)
         _migrate_rice_classifications_check(conn)
         _migrate_meal_sessions_confirmed(conn)
+        _migrate_device_state_unlock_due(conn)
     finally:
         conn.close()
+
+
+def _migrate_device_state_unlock_due(conn: sqlite3.Connection) -> None:
+    """device_state に unlock_due_at 列を追加（自動ロックの期限解除用）。
+
+    自動解除は lock_manager.auto_lock_after_meal の in-process sleep しか無く、
+    しかもその関数は呼び出し元ゼロの死にコードだった。結果 2026-08-30 18:52 の
+    自動ロックが 09-01 21:06 の家族による手動解除まで50時間14分続いた。
+    期限をDBに持たせて cron で解除すれば、再起動や停電をまたいでも生き残る。
+    """
+    try:
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(device_state)")]
+        if "unlock_due_at" not in cols:
+            conn.execute("ALTER TABLE device_state ADD COLUMN unlock_due_at TIMESTAMP")
+            conn.commit()
+            __import__('logging').getLogger("db").info(
+                "device_state に unlock_due_at カラムを追加"
+            )
+    except Exception as e:
+        __import__('logging').getLogger("db").warning(
+            "device_state マイグレーション失敗: %s", e
+        )
 
 
 def _migrate_meal_sessions_confirmed(conn: sqlite3.Connection) -> None:

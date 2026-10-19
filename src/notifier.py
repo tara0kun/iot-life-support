@@ -27,7 +27,9 @@ def _load_env() -> dict[str, str]:
     return values
 
 
-# LINE Messaging API の月200通制限対策。
+# LINE Messaging API の送信枠対策。2026-05-03 に実際に 429 を踏んだため 3c5c1af で導入した
+# （当時の枠は200通/月）。2026-09-25 実測ではプラン上限 5000通/月・消費 842通で枠は逼迫して
+# いないが、宛先を絞る方針自体は「家族を不必要に不安にさせない」ため維持している。
 # 重要度CRITICALのカテゴリだけ全家族にbroadcast、それ以外は admin（LINE_USER_ID=孫）のみ。
 CRITICAL_CATEGORIES: set[str] = {
     "bath_emergency",        # 浴室30分無反応（緊急）
@@ -37,6 +39,7 @@ CRITICAL_CATEGORIES: set[str] = {
     "meal_alert",            # 食べすぎアラート
     "device_locked",         # 自動ロック / 手動ロック
     "long_toilet_stay",      # トイレに長時間（5分以上）滞在
+    "bath_abnormal_temp",    # 浴室の異常温度（ヒートショック）
 }
 
 # 深夜帯（1〜5時）でも通知を許可するカテゴリ（トイレ・緊急のみ）
@@ -45,6 +48,7 @@ NIGHT_ALLOWED_CATEGORIES: set[str] = {
     "anomaly_inactivity",    # 緊急: センサー無反応
     "anomaly_night_rice",    # 深夜炊飯は本来通知すべき異常
     "long_toilet_stay",      # トイレ長時間滞在は深夜でも通知（転倒等のリスク）
+    "bath_abnormal_temp",    # 深夜の入浴こそヒートショックの危険が高い
 }
 
 NIGHT_QUIET_START_HOUR = 1   # 1:00〜
@@ -68,6 +72,21 @@ def _should_suppress_for_night(category: str) -> bool:
 
 def is_critical_category(category: str) -> bool:
     return category in CRITICAL_CATEGORIES
+
+
+def _admin_display_name() -> str:
+    """管理者（開発者本人）の表示名。.env の ADMIN_DISPLAY_NAME から読む。
+
+    未設定なら「管理者」。実名をコードに書くと public リポジトリに出てしまう。
+    """
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith("ADMIN_DISPLAY_NAME="):
+                v = line.split("=", 1)[1].strip()
+                if v:
+                    return v
+    return "管理者"
 
 
 def _admin_user_id() -> str:
@@ -296,6 +315,17 @@ def send_line_with_quick_reply(message: str, quick_items: list[dict], user_id: s
             return True
         log.warning("LINE Quick Reply失敗: %d %s", resp.status_code, resp.text[:200])
         return False
+    except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+        # **ネット断でも捨てない。** 以前はここが `except Exception: return False`
+        # だけで、平文の send_line_message だけが outbox に守られていた。
+        # 結果、最も命に関わる Quick Reply 付き通知（浴室30分無反応など）が
+        # ネット断のときに限って確実に消えていた（2026-05-21 の bath_emergency が実例。
+        # LINE も pending も残らず、ログ1行だけになった）。
+        # retry_line_outbox.py は messages をそのまま push するので、
+        # quickReply 込みの dict を積めば再送時もボタンが生きる。
+        log.error("LINE Quick Replyエラー (網経): %s → outboxへ", e)
+        _enqueue_outbox(uid, data["messages"])
+        return False
     except Exception as e:
         log.error("LINE Quick Replyエラー: %s", e)
         return False
@@ -414,8 +444,9 @@ def send_actionable_notification(category: str, context_key: str, message: str,
       - 全家族に「☑️ 対応済み」がbroadcastされる
       - recheck_pending.pyによる再通知が止まる
 
-    誰も応答しない場合は recheck_pending.py が30分間隔で最大2回再通知し、
-    最終的に「⏰ 応答なし」をbroadcastして諦める。
+    誰も応答しない場合、CRITICAL_CATEGORIES のみ recheck_pending.py が
+    15分間隔で最大2回まで再通知し、それでも無反応なら「⏰ 誰も応答しませんでした」を
+    broadcastして打ち切る。非CRITICALは再通知せず24時間で自動タイムアウトする。
 
     引数:
       category: 通知の種類識別子（例 "meal_alert", "anomaly_night_rice"）
@@ -449,12 +480,21 @@ def send_actionable_notification(category: str, context_key: str, message: str,
             sent = 1
         else:
             sent = 0
-    if sent > 0:
-        record_pending_notification(category, context_key, message, items)
+    # **送信可否に関わらず pending に記録する。** 以前は `if sent > 0:` だったため、
+    # ネット断で送信に失敗すると pending 行すら作られず、家族UIの未対応リストにも
+    # 再通知にも一切乗らなかった。届かなかった通知こそ記録に残す必要がある。
+    record_pending_notification(category, context_key, message, items,
+                                delivered=sent > 0)
+    if sent == 0:
+        log.warning(
+            "[notify] 送信先0件だが pending には記録した: category=%s ctx=%s",
+            category, context_key,
+        )
     return sent
 
 def record_pending_notification(notification_type: str, context_key: str,
-                                 message: str, quick_items: list[dict]) -> int | None:
+                                 message: str, quick_items: list[dict],
+                                 delivered: bool = True) -> int | None:
     """ブロードキャスト送信時にDBに記録。戻り値=記録ID。
 
     既存レコードがあれば更新（last_notified_at, notify_count++）。
@@ -480,12 +520,17 @@ def record_pending_notification(notification_type: str, context_key: str,
                     (message, _json.dumps(quick_items, ensure_ascii=False), existing["id"]),
                 )
                 return existing["id"]
+            # delivered=False（ネット断などで1通も出せなかった）なら notify_count=0。
+            # 既定の 1 のままだと「1回通知済み」に見えてしまい、実際には誰も
+            # 受け取っていないのに再通知の回数を1つ消費してしまう。
             cur = conn.execute(
                 """INSERT INTO pending_notifications
-                       (notification_type, context_key, message, quick_reply_json)
-                   VALUES(?, ?, ?, ?)""",
+                       (notification_type, context_key, message, quick_reply_json,
+                        notify_count)
+                   VALUES(?, ?, ?, ?, ?)""",
                 (notification_type, context_key, message,
-                 _json.dumps(quick_items, ensure_ascii=False)),
+                 _json.dumps(quick_items, ensure_ascii=False),
+                 1 if delivered else 0),
             )
             return cur.lastrowid
     except Exception as e:
@@ -501,6 +546,15 @@ def resolve_confirmer_name(line_user_id: str) -> str:
     """
     if not line_user_id:
         return "誰か"
+    # 家族UIからの対応は sender_id が固定文字列 'family_ui' で、
+    # family_line_users には無いため全部「誰か」になっていた（実測315件）。
+    if line_user_id == "family_ui":
+        return "家族の誰か（ダッシュボード）"
+    if line_user_id == _admin_user_id():
+        # **実名を直書きしない。** このリポジトリは public で、ここに書くと
+        # 開発者本人の名前がそのまま公開される（2026-10-15 まで直書きされていた）。
+        # 家族の LINE には実名が出たほうが分かりやすいので .env から読む。
+        return _admin_display_name()
     try:
         from .db import get_conn
         conn = get_conn()
@@ -546,6 +600,34 @@ def mark_related_completed_silent(notification_type: str, context_prefix: str,
         return 0
 
 
+def pending_state(notification_type: str, context_key: str) -> str:
+    """通知の状態を返す: "open" / "completed" / "missing"。
+
+    ボタンを押したときに、その通知がまだ生きているかを確認するため。
+    LINE のトーク履歴にはボタンが残り続けるので、何日前のものでも押せる。
+    炊飯器のロックのように**物理的な作用がある操作**は、押された時点で
+    対象がまだ有効かを見ないと、意図しないタイミングで電源が切れる。
+    """
+    from .db import get_conn
+
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                """SELECT completed_at FROM pending_notifications
+                    WHERE notification_type = ? AND context_key = ?""",
+                (notification_type, context_key),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("pending 状態の確認に失敗: %s", e)
+        return "open"  # 確認できないときは従来どおり通す（安全側に倒すと操作不能になる）
+    if row is None:
+        return "missing"
+    return "completed" if row["completed_at"] else "open"
+
+
 def mark_notification_completed(notification_type: str, context_key: str,
                                  completed_by: str, action_summary: str) -> bool:
     """未完了の通知を完了マーク + 全家族にブロードキャスト通知。
@@ -553,29 +635,36 @@ def mark_notification_completed(notification_type: str, context_key: str,
     対応者の名前を family_line_users から解決し、broadcastの先頭に表示する。
     既に完了済みなら何もしない（重複実行ガード）。
     """
-    from .db import get_conn, transaction
+    from .db import transaction
     confirmer = resolve_confirmer_name(completed_by)
     try:
         with transaction() as conn:
-            row = conn.execute(
-                "SELECT id, completed_at FROM pending_notifications WHERE notification_type = ? AND context_key = ?",
-                (notification_type, context_key),
-            ).fetchone()
-            if not row:
-                # pending未登録（古い通知 or テーブル新規導入前）でもブロードキャストはする
-                pass
-            elif row["completed_at"]:
-                # 既に他の家族が対応済み → 競合ガード
-                log.info("pending_notification は既に完了済み: %s/%s", notification_type, context_key)
+            # **1文で更新して rowcount を見る。** 以前は SELECT してから UPDATE
+            # していたため、2人が同時にボタンを押すと両方が「未完了」を読んで
+            # 両方成功し、完了 broadcast が2通出ていた。
+            cur = conn.execute(
+                """UPDATE pending_notifications
+                      SET completed_at = CURRENT_TIMESTAMP,
+                          completed_by = ?, completed_action = ?
+                    WHERE notification_type = ? AND context_key = ?
+                      AND completed_at IS NULL""",
+                (completed_by[:64], action_summary, notification_type, context_key),
+            )
+            if not cur.rowcount:
+                # **ここで broadcast してはいけない。** 以前は pending が
+                # 1行も無いときも「☑️ 対応しました」を家族全員に流していた。
+                # 古い通知のボタンや、存在しない context_key を送るだけで
+                # 偽の完了通知が作れる状態だった（2026-10-15 の監査で発覚）。
+                exists = conn.execute(
+                    """SELECT completed_by FROM pending_notifications
+                        WHERE notification_type = ? AND context_key = ?""",
+                    (notification_type, context_key),
+                ).fetchone()
+                if exists:
+                    log.info("既に完了済み: %s/%s", notification_type, context_key)
+                else:
+                    log.info("対象の通知が無い: %s/%s", notification_type, context_key)
                 return False
-            else:
-                conn.execute(
-                    """UPDATE pending_notifications
-                          SET completed_at = CURRENT_TIMESTAMP,
-                              completed_by = ?, completed_action = ?
-                        WHERE id = ?""",
-                    (completed_by[:64], action_summary, row["id"]),
-                )
 
         # 「誰が何を確認/対応したか」は家族間で共有すべき情報なので常に全員にbroadcast
         # （誰が対応中か把握できないと家族同士で重複対応するため）

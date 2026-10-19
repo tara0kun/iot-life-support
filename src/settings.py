@@ -24,7 +24,7 @@ SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
     "notify_url_change_enabled": ("1", "Cloudflare Tunnel URL変更通知"),
 
     # 異常検知しきい値
-    "anomaly_inactivity_hours": ("4", "センサー無反応で安否確認する時間（時間）"),
+    "anomaly_inactivity_hours": ("6", "センサー無反応で安否確認する時間（時間）"),
     "anomaly_night_rice_start_hour": ("2", "深夜炊飯器検知の開始時刻（時）"),
     "anomaly_night_rice_end_hour": ("5", "深夜炊飯器検知の終了時刻（時）"),
     "anomaly_fridge_open_minutes": ("30", "冷蔵庫開きっぱなし検知の分数"),

@@ -147,7 +147,8 @@ def build_report() -> str:
         "⭐ スタンプ達成",
         f"  平均 {stamp_avg:.1f}/{len(STAMP_LABELS)} · 週全体 {stamp_total_pct}%",
         "",
-        f"💊 お薬確認率: {med_pct}% ({med_taken}/{med_total}回)",
+        (f"💊 お薬確認率: {med_pct}% ({med_taken}/{med_total}回)" if med_total
+     else "💊 お薬確認率: 未設定（服薬スケジュールが登録されていません）"),
         f"🛁 お風呂日数: {bath}/{len(dates)}日",
         f"🔒 自動ロック発動: {lock_count}回",
     ])
@@ -164,6 +165,21 @@ def build_report() -> str:
         flagged = True
     if med_total and med_pct < 70:
         lines.append(f"  • お薬の服用率が{med_pct}%と低めです")
+        flagged = True
+    # 食事が「少ない」のではなく「記録されていない」ことを言い分ける。
+    # 蓋センサーの不調で検知が落ちていた期間、このレポートは
+    # 「スタンプ達成率が低め」としか伝えず、実態より良く見せていた。
+    zero_days = sum(1 for c in meals.values() if c == 0)
+    if meal_avg < 2.0 or zero_days >= 2:
+        lines.append(
+            f"  • 食事の記録が平均{meal_avg:.1f}回/日"
+            + (f"・記録ゼロの日が{zero_days}日" if zero_days else "")
+            + "しかありません。本人の食事ではなくセンサー側で"
+            "検知が落ちている可能性があります"
+        )
+        flagged = True
+    if med_total == 0:
+        lines.append("  • 服薬スケジュールが未登録のため、お薬の確認通知は動いていません")
         flagged = True
     if stamp_total_pct < 50:
         lines.append(f"  • スタンプ達成率が{stamp_total_pct}%と低めです")

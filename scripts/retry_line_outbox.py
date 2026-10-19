@@ -43,6 +43,14 @@ def _push(token: str, to: str, messages: list[dict]) -> tuple[bool, str]:
         return False, f"err: {e}"
 
 
+def _status_of(reason: str) -> int | None:
+    """`_push` が返す "HTTP 400: ..." から状態コードを取り出す。"""
+    import re
+
+    m = re.match(r"HTTP (\d{3})", reason or "")
+    return int(m.group(1)) if m else None
+
+
 def main() -> int:
     if not OUTBOX.exists():
         return 0
@@ -81,14 +89,42 @@ def main() -> int:
             dropped += 1
             continue
 
-        ok, reason = _push(token, entry["to"], entry["messages"])
+        # **1行の不備で main() を落としてはいけない。** 以前は entry["to"] を
+        # 素のキー参照で取っていたため、to が無い行（notifier 側の仕様変更や、
+        # 電源断で途中まで書かれた行）で KeyError になり main() が中断していた。
+        # ファイルの書き戻しに到達しないので、
+        #   - その行より後ろの通知が永久に送られない（浴室の緊急通知を含む）
+        #   - 手前の行は毎分 push され続ける（家族に同じ通知が毎分届く）
+        #   - retry_count も TTL も進まないので自然に止まらない
+        # という状態になっていた（2026-10-15 の監査で発覚）。
+        to = entry.get("to")
+        messages = entry.get("messages")
+        if not to or not messages:
+            log_broken = entry.get("queued_at", "?")
+            print(f"outbox: 不正な行を破棄 (queued_at={log_broken})")
+            dropped += 1
+            continue
+
+        # 4xx は何回送っても通らない。429 だけは時間をおけば通るので再送する。
+        try:
+            ok, reason = _push(token, to, messages)
+        except Exception as e:
+            ok, reason = False, f"送信例外: {e}"
+
         if ok:
             sent += 1
-        else:
-            entry["retry_count"] = entry.get("retry_count", 0) + 1
-            entry["last_error"] = reason
-            remaining.append(json.dumps(entry, ensure_ascii=False))
-            requeued += 1
+            continue
+
+        status = _status_of(reason)
+        if status is not None and 400 <= status < 500 and status != 429:
+            print(f"outbox: 恒久エラーのため破棄 (HTTP {status})")
+            dropped += 1
+            continue
+
+        entry["retry_count"] = entry.get("retry_count", 0) + 1
+        entry["last_error"] = reason
+        remaining.append(json.dumps(entry, ensure_ascii=False))
+        requeued += 1
 
     if remaining:
         OUTBOX.write_text("\n".join(remaining) + "\n")

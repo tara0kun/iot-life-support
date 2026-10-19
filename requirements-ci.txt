@@ -1,0 +1,30 @@
+# CI 専用の最小依存。
+#
+# requirements.txt は本番 Pi 用で 109 パッケージあり、dlib / python-kasa /
+# matter-server など実機にしか要らないものを含む。CI でそのまま入れると
+# ビルドに数十分かかるうえ、失敗しても本質的な情報が得られない。
+#
+# このファイルはクリーンな venv で 862 件すべて通ることを実測して決めた。
+# テストが落ちて「ここに無いモジュール」が原因なら、本当にテストに必要か
+# 確かめてから足すこと（src の import を遅延させる方が筋が良い場合がある）。
+#
+# opencv は src/web/app.py が camera_stream を経由して cv2 を引くため必要。
+# CI では headless で足りる。
+
+fastapi
+uvicorn
+starlette
+pydantic
+itsdangerous
+jinja2
+python-multipart
+httpx
+requests
+slowapi
+python-dotenv
+aiohttp
+opencv-python-headless
+numpy
+
+pytest>=9.0
+freezegun>=1.5

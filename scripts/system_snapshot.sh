@@ -23,7 +23,7 @@ sqlite3 /home/tara0/IoT/data/iot.db "PRAGMA wal_checkpoint(TRUNCATE);" >/dev/nul
 
 tar czf "$ARCHIVE" \
     /home/tara0/IoT/data/iot.db \
-    /home/tara0/IoT/data/faces/known \
+    /home/tara0/IoT/data/faces \
     /home/tara0/IoT/data/faces/encodings.json \
     /home/tara0/IoT/.env \
     /home/tara0/IoT/data/discovered_hub_ip.txt \
@@ -31,7 +31,10 @@ tar czf "$ARCHIVE" \
     /etc/systemd/system/iot-monitor.service \
     /etc/systemd/system/iot-web.service \
     /etc/systemd/system/iot-matter.service \
-    2>/dev/null
+    2>/dev/null || true   # 一部のパスが欠けても中断しない（set -e 対策）
+
+# .env と DB が丸ごと入る。所有者だけが読めるようにする。
+chmod 600 "$ARCHIVE"
 
 # 4週(28日)以上前のスナップショット削除
 find "$BACKUP_DIR" -name "system_*.tar.gz" -mtime +$((KEEP_WEEKS * 7)) -delete

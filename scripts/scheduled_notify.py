@@ -91,6 +91,20 @@ def check_bath():
         print("お風呂入浴済み → スキップ")
 
 
+def _has_medicine_schedule() -> bool:
+    """服薬スケジュールが1件でも有効になっているか。"""
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM medicine_schedule WHERE enabled = 1 LIMIT 1"
+        ).fetchone()
+        return row is not None
+    except Exception:
+        return False
+    finally:
+        conn.close()
+
+
 def daily_summary():
     """1日のまとめ通知（夜に実行）。"""
     if not get_bool("notify_summary_enabled"):
@@ -101,7 +115,12 @@ def daily_summary():
     now = datetime.now()
 
     # スタンプ項目
-    all_items = ["起床", "お薬", "朝食", "昼食", "お風呂", "夕食", "就寝"]
+    # お薬は medicine_schedule が設定されている場合のみ数える。
+    # 未設定だとシステムには服薬を知る手段が無いのに「お薬: まだ」を毎日出し続け、
+    # 祖母のスコア（お花の成長）を永久に押し下げていた。観測できないものは数えない。
+    all_items = ["起床", "朝食", "昼食", "お風呂", "夕食", "就寝"]
+    if _has_medicine_schedule():
+        all_items.insert(1, "お薬")
     done = [item for item in all_items if item in labels]
     not_done = [item for item in all_items if item not in labels]
     done_count = len(done)
