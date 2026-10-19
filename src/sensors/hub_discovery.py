@@ -8,8 +8,15 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from kasa import Credentials, Device, Discover
+# **kasa は遅延 import する。** 実機専用の依存で CI には入れていない。
+# ここでモジュール先頭から読むと、このモジュールを経由する
+# contact_sensor まで import できず、ハブに触らないテスト（状態機械の検査）が
+# CI で動かせなくなる。注釈は from __future__ import annotations のおかげで
+# 実行時に評価されない。
+if TYPE_CHECKING:
+    from kasa import Credentials, Device
 
 log = logging.getLogger("sensors.hub_discovery")
 
@@ -19,6 +26,8 @@ PROBE_TIMEOUT = 5
 
 
 async def _probe(ip: str, creds: Credentials) -> Device | None:
+    from kasa import Discover
+
     try:
         dev = await Discover.discover_single(ip, credentials=creds, timeout=PROBE_TIMEOUT)
         await dev.update()
@@ -52,6 +61,8 @@ async def resolve_hub(configured_ip: str, username: str, password: str) -> Devic
     Order: キャッシュ → .env設定 → ブロードキャスト探索。
     見つけたIPはキャッシュ更新。
     """
+    from kasa import Credentials, Discover
+
     creds = Credentials(username, password)
     tried: set[str] = set()
 

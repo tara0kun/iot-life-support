@@ -44,6 +44,27 @@ class ContactSensorMonitor:
         self._running = False
         self._last_state: dict[str, bool] = {}
 
+    async def _dispatch(self, event: ContactEvent, handler) -> None:
+        """イベントを1件渡す。失敗しても呼び出し側のループを壊さない。
+
+        **1台の失敗で他の子機を巻き込まない。** 以前はコールバックの例外が
+        run() の try まで飛んでいたため、(1) そのポーリング周回で残りの子機が
+        丸ごと読み飛ばされ、(2) ハブの再接続まで走っていた。
+
+        **そして失敗は黙らせない。** 書き込めなかったイベントは復元できないので、
+        ERROR で「何を失ったか」を残す。ロック競合そのものの根治は
+        journal_mode=WAL 側の話（Issue #16）。
+        """
+        if handler is None:
+            return
+        try:
+            await handler(event)
+        except Exception as e:
+            log.error(
+                "イベントの記録に失敗（この1件は失われる）: [%s] %s: %s",
+                event.alias, "OPEN" if event.is_open else "CLOSED", e,
+            )
+
     async def _connect_hub(self):
         # キャッシュ/設定IP/ブロードキャスト探索の順でH100を解決
         dev = await resolve_hub(self.cfg.hub_ip, self.cfg.username, self.cfg.password)
@@ -79,6 +100,14 @@ class ContactSensorMonitor:
                         if is_open is None:
                             continue
                         prev = self._last_state.get(dev_id)
+                        # **状態の更新をコールバックより先に行う。**
+                        # 逆順だと、コールバック（最終的に DB 書き込み）が
+                        # `database is locked` で落ちたときに _last_state が
+                        # 取り残され、続く逆方向の遷移まで「変化なし」と判定されて
+                        # 無言で消える。1回の書き込み失敗で2イベント失っていた
+                        # （2026-09-26 の実例: ハブ側に open/close があるのに
+                        #  DB にはどちらも無い）。Issue #22
+                        self._last_state[dev_id] = is_open
                         if prev is not None and prev != is_open:
                             event = ContactEvent(
                                 device_id=dev_id,
@@ -87,9 +116,7 @@ class ContactSensorMonitor:
                                 timestamp=datetime.now(),
                             )
                             log.info("[%s] %s", child.alias, "OPEN" if is_open else "CLOSED")
-                            if self._on_change:
-                                await self._on_change(event)
-                        self._last_state[dev_id] = is_open
+                            await self._dispatch(event, self._on_change)
 
                     elif motion is not None:
                         # T100モーション: motion_detected が False→True に立ち上がった瞬間に発火
@@ -97,6 +124,7 @@ class ContactSensorMonitor:
                         if detected is None:
                             continue
                         prev = self._last_state.get(dev_id, False)
+                        self._last_state[dev_id] = detected  # 接触側と同じ理由で先に更新
                         if detected and not prev:
                             event = ContactEvent(
                                 device_id=dev_id,
@@ -105,11 +133,7 @@ class ContactSensorMonitor:
                                 timestamp=datetime.now(),
                             )
                             log.info("[%s] MOTION", child.alias)
-                            if self._on_motion:
-                                await self._on_motion(event)
-                            elif self._on_change:
-                                await self._on_change(event)
-                        self._last_state[dev_id] = detected
+                            await self._dispatch(event, self._on_motion or self._on_change)
             except Exception as e:
                 log.warning("T110/T100取得失敗: %s (再接続)", e)
                 try:
