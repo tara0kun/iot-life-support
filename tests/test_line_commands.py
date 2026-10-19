@@ -295,8 +295,8 @@ COMMAND_TABLE: list[tuple[str, str]] = [
     ("ｈｅｌｐ", "help"),
     ("ＨＥＬＰ", "help"),
     ("何ができる?", "help"),
-    ("?", "unknown"),
-    ("？", "unknown"),
+    ("?", "help"),      # 素の疑問符はヘルプ（2026-10-19 に変更）
+    ("？", "help"),
     # --- メニュー -----------------------------------------------------------
     ("メニュー", "menu"),
     ("メニュー\n", "menu"),
@@ -972,3 +972,20 @@ def test_登録解除すると許可リストから外れて以後すべて無�
     run(lc.dispatch("登録解除", SENDER))
     still_allowed = SENDER in app_module._load_line_allowed_senders()
     assert still_allowed is False
+
+def test_素の疑問符はヘルプとして扱う():
+    """家族が最初に打つのは「？」。2026-10-19 21:48 に実際これを送って
+    「分かりませんでした」が返っていた。
+
+    部分一致にすると「登録一覧？」まで吸い込んで一覧が出なくなるので、
+    記号だけのときに限る。
+    """
+    for text in ("?", "？", "??", "？？", "!", "！"):
+        assert lc.match_command(text) == "help", text
+
+
+def test_疑問符つきの他コマンドはヘルプに吸われない():
+    """語尾の「？」で元のコマンドが壊れないこと（退行防止）。"""
+    assert lc.match_command("登録一覧？") == "list_registered"
+    assert lc.match_command("状況？") == "status"
+    assert lc.match_command("リンク？") == "link"

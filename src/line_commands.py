@@ -89,6 +89,12 @@ def match_command(text: str) -> str:
         return "status"
     if any(kw in t for kw in ("最後", "さっき", "直近", "前回", "食べた")):
         return "last_meal"
+    # **素の「?」はヘルプとして扱う。** 家族が最初に打つのがこれで、
+    # 2026-10-19 21:48 に実際「？」を送って「分かりませんでした」が返っていた。
+    # 部分一致にしない（「登録一覧？」まで吸い込むと一覧が出なくなる）。
+    # normalize_command_text の NFKC で全角「？」は半角「?」になる。
+    if re.fullmatch(r"[?!]+", t):
+        return "help"
     if any(kw in lower for kw in (
         "ヘルプ", "help", "コマンド", "使い方", "使いかた", "へるぷ", "何ができる",
     )):
