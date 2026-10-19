@@ -600,6 +600,34 @@ def mark_related_completed_silent(notification_type: str, context_prefix: str,
         return 0
 
 
+def pending_state(notification_type: str, context_key: str) -> str:
+    """通知の状態を返す: "open" / "completed" / "missing"。
+
+    ボタンを押したときに、その通知がまだ生きているかを確認するため。
+    LINE のトーク履歴にはボタンが残り続けるので、何日前のものでも押せる。
+    炊飯器のロックのように**物理的な作用がある操作**は、押された時点で
+    対象がまだ有効かを見ないと、意図しないタイミングで電源が切れる。
+    """
+    from .db import get_conn
+
+    try:
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                """SELECT completed_at FROM pending_notifications
+                    WHERE notification_type = ? AND context_key = ?""",
+                (notification_type, context_key),
+            ).fetchone()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.warning("pending 状態の確認に失敗: %s", e)
+        return "open"  # 確認できないときは従来どおり通す（安全側に倒すと操作不能になる）
+    if row is None:
+        return "missing"
+    return "completed" if row["completed_at"] else "open"
+
+
 def mark_notification_completed(notification_type: str, context_key: str,
                                  completed_by: str, action_summary: str) -> bool:
     """未完了の通知を完了マーク + 全家族にブロードキャスト通知。
@@ -607,29 +635,36 @@ def mark_notification_completed(notification_type: str, context_key: str,
     対応者の名前を family_line_users から解決し、broadcastの先頭に表示する。
     既に完了済みなら何もしない（重複実行ガード）。
     """
-    from .db import get_conn, transaction
+    from .db import transaction
     confirmer = resolve_confirmer_name(completed_by)
     try:
         with transaction() as conn:
-            row = conn.execute(
-                "SELECT id, completed_at FROM pending_notifications WHERE notification_type = ? AND context_key = ?",
-                (notification_type, context_key),
-            ).fetchone()
-            if not row:
-                # pending未登録（古い通知 or テーブル新規導入前）でもブロードキャストはする
-                pass
-            elif row["completed_at"]:
-                # 既に他の家族が対応済み → 競合ガード
-                log.info("pending_notification は既に完了済み: %s/%s", notification_type, context_key)
+            # **1文で更新して rowcount を見る。** 以前は SELECT してから UPDATE
+            # していたため、2人が同時にボタンを押すと両方が「未完了」を読んで
+            # 両方成功し、完了 broadcast が2通出ていた。
+            cur = conn.execute(
+                """UPDATE pending_notifications
+                      SET completed_at = CURRENT_TIMESTAMP,
+                          completed_by = ?, completed_action = ?
+                    WHERE notification_type = ? AND context_key = ?
+                      AND completed_at IS NULL""",
+                (completed_by[:64], action_summary, notification_type, context_key),
+            )
+            if not cur.rowcount:
+                # **ここで broadcast してはいけない。** 以前は pending が
+                # 1行も無いときも「☑️ 対応しました」を家族全員に流していた。
+                # 古い通知のボタンや、存在しない context_key を送るだけで
+                # 偽の完了通知が作れる状態だった（2026-10-15 の監査で発覚）。
+                exists = conn.execute(
+                    """SELECT completed_by FROM pending_notifications
+                        WHERE notification_type = ? AND context_key = ?""",
+                    (notification_type, context_key),
+                ).fetchone()
+                if exists:
+                    log.info("既に完了済み: %s/%s", notification_type, context_key)
+                else:
+                    log.info("対象の通知が無い: %s/%s", notification_type, context_key)
                 return False
-            else:
-                conn.execute(
-                    """UPDATE pending_notifications
-                          SET completed_at = CURRENT_TIMESTAMP,
-                              completed_by = ?, completed_action = ?
-                        WHERE id = ?""",
-                    (completed_by[:64], action_summary, row["id"]),
-                )
 
         # 「誰が何を確認/対応したか」は家族間で共有すべき情報なので常に全員にbroadcast
         # （誰が対応中か把握できないと家族同士で重複対応するため）

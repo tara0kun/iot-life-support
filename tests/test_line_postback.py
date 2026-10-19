@@ -810,27 +810,21 @@ def test_confirm_の二度押しは先勝ちで2人目に対応済みを返す(d
     assert len(line_stub.broadcasts) == 1, "2人分の「対応しました」が家族全員に飛んだ"
 
 
-def test_confirm_は存在しないcontext_keyでも成功を返して家族全員に通知する(db, line_stub):
-    """# BUG: 閉じる対象が無いのに「確認を記録しました」になり broadcast まで出る。
+def test_confirm_は存在しないcontext_keyでは家族に通知しない(db, line_stub):
+    """2026-10-15 まで、閉じる対象が無いのに broadcast まで出ていた。
 
-    `mark_notification_completed` は pending 行が見つからないとき
-    「古い通知かもしれない」として素通りし、broadcast して True を返す。
-    そのため古いボタン（pending が `recheck_pending` で物理削除された、
-    あるいは送信失敗で pending が作られなかったケース）や、任意の data を
-    1通送るだけで、家族全員のスマホに「☑️ 誰かさんが対応しました」が届く。
+    `mark_notification_completed` が pending 行を見つけられないとき
+    「古い通知かもしれない」として素通りし、broadcast して True を返していた。
+    任意の data を1通送るだけで、家族全員のスマホに
+    「☑️ 誰かさんが対応しました」を届けられる状態だった。
 
-    本来は pending が無いときは「この通知はもう有効ではありません」と
-    送信者だけに返すべき（broadcast しない）。
-    直したら「ℹ️ 返信・broadcast 0 件」に書き換える。
+    なお押した本人への返信は今も「✅」のままで、そこは未修正。
     """
     lc = handlers()
 
-    reply = call(lc.handle_confirm_postback, "confirm:bath_emergency:9999-99-99")
+    call(lc.handle_confirm_postback, "confirm:meal_alert:存在しないctx")
 
-    assert reply == "✅ 誰かさん、確認を記録しました。家族全員に共有しました。"
-    assert len(line_stub.broadcasts) == 1, "pending 無しで broadcast されなくなった"
-    assert db.rows("SELECT id FROM pending_notifications") == []
-
+    assert line_stub.broadcasts == [], "対象が無いのに家族へ流さないこと"
 
 def test_confirm_は未知カテゴリの英語IDをそのまま家族のLINEに出す(db, line_stub):
     """`CATEGORY_LABELS` に無いカテゴリは生の識別子が本文に入る。
@@ -910,15 +904,16 @@ def test_confirm_dismiss_は誤検知を学習データとして残さない(db,
         == "「浴室の異常温度」を誤検知として閉じました"
 
 
-def test_confirm_は空のカテゴリと空のcontext_keyでも成功する(db, line_stub):
-    """`confirm::` は split(":", 2) で3要素になるので通ってしまう。
+def test_confirm_は空のカテゴリでも家族に通知しない(db, line_stub):
+    """`confirm::` は split(":", 2) で3要素になるので入口は通る。
 
-    家族の LINE には「☑️ 誰かさんが対応しました / 「」を確認」が届く。
+    2026-10-15 まで、家族の LINE に
+    「☑️ 誰かさんが対応しました / 「」を確認」が届いていた。
     """
     lc = handlers()
-    reply = call(lc.handle_confirm_postback, "confirm::")
-    assert reply.startswith("✅")
-    assert "「」を確認" in line_stub.broadcasts[0]
+    call(lc.handle_confirm_postback, "confirm::")
+    assert line_stub.broadcasts == [], "空の確認を家族へ流さないこと"
+
 
 
 # ============================================================
@@ -1225,61 +1220,45 @@ def test_lock_confirm_の_はい_はMatterに電源OFFを出してdevice_state�
     assert row["unlock_due_at"], "期限解除用の unlock_due_at が入っていない"
 
 
-def test_lock_confirm_は期限も有効性も見ずに古いボタンでロックを実行する(db, line_stub):
-    """# BUG: トーク履歴に残った古い「ロックする」が、何日後でも実機を切る。
+def test_lock_confirm_は古いボタンでロックを実行しない(db, line_stub):
+    """トーク履歴に残った古い「ロックする」が、2026-10-15 まで何日後でも実機を切っていた。
 
-    実測した2ケース（どちらも Matter に電源OFFが飛び、炊飯器が 120 分ロックされる）:
-      1. その ctx の pending が存在しない（= 古い通知、または送信失敗で
-         pending が作られなかったもの）
+    実測した2ケース（どちらも Matter に電源OFFが飛び、炊飯器が120分ロックされた）:
+      1. その ctx の pending が存在しない（古い通知、または送信失敗で pending 未作成）
       2. pending が既に完了済み（他の家族が回答済み / 24時間で自動タイムアウト済み）
 
-    2 の場合 `mark_notification_completed` は False を返すが、ハンドラは
-    その戻り値を見ずに「✅ ロックしました」を返す。しかも broadcast も出ないので、
-    **他の家族には炊飯器がロックされたことが伝わらない。**
+    2 では mark_notification_completed が False を返すのにハンドラが戻り値を見ず、
+    broadcast も出ないため**他の家族には炊飯器がロックされたことが伝わらなかった**。
     認知症の祖母から見ると、理由なく炊飯器が使えなくなる。
-
-    本来は「対象 pending が未完了であること」を前提に、
-    未完了でなければロックせず「この確認は期限切れです」を返すべき。
-    直したら `matter == []` に書き換える。
     """
     lc = handlers()
-    # 1. pending が存在しない古い ctx
-    reply1 = call(lc.handle_lock_confirm_postback, "lock_confirm:2026-09-01_1200_lockreq:yes")
-    assert reply1 == "✅ 誰かさん、炊飯器をロックしました", \
-        "期限チェックが入った（この characterization は不要）"
-    assert line_stub.matter == [(1, False)]
 
-    # 2. 既に完了済みの pending
+    # 1. pending が存在しない
+    reply = call(lc.handle_lock_confirm_postback, "lock_confirm:存在しないctx:yes")
+    assert "もう有効ではありません" in reply
+    assert line_stub.matter == [], "電源に触らないこと"
+
+    # 2. pending が完了済み
     db.pending("lock_confirm", LOCK_CTX, completed=True)
-    broadcasts_before = len(line_stub.broadcasts)
     reply2 = call(lc.handle_lock_confirm_postback, f"lock_confirm:{LOCK_CTX}:yes")
-    assert reply2 == "✅ 誰かさん、炊飯器をロックしました"
-    assert line_stub.matter == [(1, False), (1, False)], "完了済みでもロックが走る"
-    assert len(line_stub.broadcasts) == broadcasts_before, \
-        "完了済みなので broadcast は出ない = 他の家族はロックを知らない"
+    assert "既に対応済み" in reply2
+    assert line_stub.matter == [], "電源に触らないこと"
 
+def test_lock_confirm_の二度押しは2回目が弾かれる(db, line_stub):
+    """2026-10-15 まで冪等でなく、連打すると cycle_count_today が押した回数だけ増えた。
 
-def test_lock_confirm_の二度押しは二重にロックしてcycle_countを進める(db, line_stub):
-    """# BUG: 冪等でない。連打すると `cycle_count_today` が押した回数だけ増える。
-
-    `cycle_count_today` は1日のロック回数の上限判定に使う値。二度押しで
-    水増しされると、本当に必要なロックが上限で止まる可能性がある。
-    returned 値も2回とも「✅ ロックしました」。
-
-    本来は「すでにロック済みなら Matter を叩かない」で済む
-    （`get_device_state()` を見るだけ）。直したら `len(matter) == 1` に書き換える。
+    cycle_count_today は1日のロック回数の上限判定に使う値で、水増しされると
+    本当に必要なロックが上限で止まる。Matter にも2回 OFF が飛んでいた。
+    今は pending の状態を見て、既に完了済みなら電源に触らない。
     """
     lc = handlers()
     db.pending("lock_confirm", LOCK_CTX)
 
     first, second = call_twice(lc.handle_lock_confirm_postback, f"lock_confirm:{LOCK_CTX}:yes")
 
-    assert first == second == "✅ 誰かさん、炊飯器をロックしました"
-    assert line_stub.matter == [(1, False), (1, False)], \
-        "二度押しが防がれるようになった（この characterization は不要）"
-    assert db.one("SELECT cycle_count_today FROM device_state WHERE device_name='rice_cooker'")[
-        "cycle_count_today"] == 2
-
+    assert first == "✅ 誰かさん、炊飯器をロックしました"
+    assert "既に対応済み" in second
+    assert line_stub.matter == [(1, False)], "2回目は Matter を叩かないこと"
 
 def test_lock_confirm_はMatter失敗時に承認済みとして閉じて警告を返す(db, line_stub, monkeypatch):
     """Matter 通信が落ちているときの経路。pending は「失敗」として完了になる。
@@ -1394,32 +1373,24 @@ def test_sess_confirm_の選択肢はpersonsのid1と2と3に固定で依存し�
     assert db.one("SELECT confirmed FROM meal_sessions WHERE id=9")["confirmed"] == 0
 
 
-def test_sess_confirm_は存在しないセッションへの却下を成功として扱う(db, line_stub):
-    """# BUG: reject 経路だけ存在チェックが無く、偽の成功が返る。
+def test_sess_confirm_の却下は存在チェックが無いまま偽の成功を返す(db, line_stub):
+    """# BUG（未修正）: reject 経路だけ存在チェックが無い。
 
-    1/2/3/other は先に `SELECT ... FROM meal_sessions` して無ければ
-    「⚠️ 該当セッションが見つかりません」を返すのに、reject は
-    いきなり UPDATE するだけ。0 行更新でもエラーにならないので、
-    pending を閉じて家族全員に「食事カウントから除外」を broadcast する。
-    古いボタンを押した家族には成功に見え、実際には何も起きていない。
+    1/2/3/other は先に SELECT して無ければ「⚠️ 該当セッションが見つかりません」を
+    返すのに、reject はいきなり UPDATE するだけ。0行更新でもエラーにならない。
+    2026-10-15 の修正で、対象 pending が無ければ家族への broadcast は
+    出なくなったが、押した本人には今も成功に見える。
 
-    本来は reject も先に存在チェックすべき。
-    直したら「⚠️ 該当セッションが見つかりません」に書き換える。
+    直すなら reject も先に存在チェックする。直したら
+    「⚠️ 該当セッションが見つかりません」に書き換える。
     """
     lc = handlers()
     _sess_fixture(db)
 
     reply = call(lc.handle_session_confirm_postback, "sess_confirm:999:reject")
 
-    assert reply == "✅ 誰かさん、誤検知として記録しました", \
-        "存在チェックが入った（この characterization は不要）"
-    assert len(line_stub.broadcasts) == 1
-    assert db.one("SELECT confirmed FROM meal_sessions WHERE id=9")["confirmed"] == 0
-
-    # 比較: 却下以外は同じ状況で警告が返る
-    assert call(lc.handle_session_confirm_postback, "sess_confirm:999:1") == \
-        "⚠️ 該当セッションが見つかりません"
-
+    assert reply == "✅ 誰かさん、誤検知として記録しました", "本人には成功に見える（未修正）"
+    assert line_stub.broadcasts == [], "家族への偽の共有は止まっている"
 
 def test_sess_confirm_は後から押した家族が前の回答を黙って上書きする(db, line_stub):
     """# BUG: 先勝ちガードが無い（`bath_cls` にはある）。

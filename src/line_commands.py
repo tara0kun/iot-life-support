@@ -772,8 +772,25 @@ async def handle_lock_confirm_postback(data: str, sender_id: str) -> str | None:
     if choice not in ("yes", "no"):
         return None
 
-    from .notifier import resolve_confirmer_name, mark_notification_completed
+    from .notifier import (
+        resolve_confirmer_name, mark_notification_completed, pending_state,
+    )
     name = resolve_confirmer_name(sender_id)
+
+    # **押された時点で、その確認がまだ生きているかを見る。**
+    # LINE のトーク履歴にはボタンが残り続けるので、何日前の通知でも押せる。
+    # 2026-10-15 まで ctx を解析するだけで pending の存在も完了も確認しておらず、
+    # 数日前の「ロックする」を押すと今この瞬間に炊飯器が2時間止まった。
+    # 完了済み pending 経由だと broadcast も出ないので他の家族は気づけない。
+    state = pending_state("lock_confirm", ctx)
+    if state == "missing":
+        return (
+            "⚠️ この確認はもう有効ではありません。\n"
+            "古い通知のボタンを押した可能性があります。\n"
+            "炊飯器を止めたいときは「ロック」と送ってください。"
+        )
+    if state == "completed":
+        return "ℹ️ この確認は既に対応済みです。炊飯器の状態は変わっていません。"
 
     if choice == "no":
         await asyncio.to_thread(

@@ -107,5 +107,11 @@ def frozen_now():
     """
     from freezegun import freeze_time
 
+    # **凍結の前に web 層を import しておく。** pydantic / FastAPI は datetime を
+    # 含むメタクラスを使うので、freezegun が差し替えた datetime のまま
+    # 初回 import すると metaclass conflict で落ちる。
+    # 一度 import 済みなら以降は影響を受けない。ignore= では解決しなかった。
+    import src.web.app  # noqa: F401
+
     with freeze_time(FROZEN_NOW) as ft:
         yield ft

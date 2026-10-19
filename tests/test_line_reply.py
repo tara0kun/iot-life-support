@@ -33,6 +33,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+from datetime import datetime
 import json
 import logging
 import sqlite3
@@ -599,7 +600,16 @@ def retry_box(tmp_path, monkeypatch):
 
 
 def _entry(to: str = ADMIN, *, text: str = "退避された通知",
-           queued_at: str = "2026-10-15T10:00:00", retry_count: int = 0) -> str:
+           queued_at: str | None = None, retry_count: int = 0) -> str:
+    """outbox の1行を作る。
+
+    **queued_at を固定日付にしてはいけない。** retry_line_outbox は
+    MAX_AGE_HOURS=24 の TTL を持つので、固定日付のままだと翌日以降
+    「期限切れで破棄」の経路に入り、再送の挙動を検証できなくなる。
+    実際に 2026-10-19 の実行で2件が落ちた（entry が書かれた 10-15 から4日経過）。
+    """
+    if queued_at is None:
+        queued_at = datetime.now().replace(microsecond=0).isoformat()
     return json.dumps({
         "queued_at": queued_at, "to": to, "retry_count": retry_count,
         "messages": [{"type": "text", "text": text}],
@@ -636,7 +646,7 @@ def test_toキーが無い行で再送が永久に止まり手前の行が毎分
     本来: 行単位で try/except し、不正な行は dropped として捨てる。
     直したら「1通目と3通目が送られ、ファイルが消える」に書き換える。
     """
-    bad = json.dumps({"queued_at": "2026-10-15T10:00:00",
+    bad = json.dumps({"queued_at": datetime.now().replace(microsecond=0).isoformat(),
                       "messages": [{"type": "text", "text": "宛先なし"}]})
     retry_box.box.write_text("\n".join([
         _entry(ADMIN, text="1通目"), bad, _entry(FAMILY_A, text="3通目"),
@@ -690,9 +700,11 @@ def test_再送中に積まれた行は書き戻しで消える(retry_box):
 
 def test_TTL超過の行は破棄される(retry_box):
     """24時間以上古い行は諦めて捨てる（無限増加の防止）。"""
+    from datetime import timedelta
+    old_ts = (datetime.now() - timedelta(hours=48)).replace(microsecond=0).isoformat()
     retry_box.box.write_text("\n".join([
-        _entry(ADMIN, text="古い", queued_at="2026-10-10T10:00:00"),
-        _entry(FAMILY_A, text="新しい", queued_at="2026-10-15T10:00:00"),
+        _entry(ADMIN, text="古い", queued_at=old_ts),   # TTL 24時間を超過
+        _entry(FAMILY_A, text="新しい"),                 # 今
     ]) + "\n")
     retry_outbox.main()
     assert retry_box.texts == ["新しい"]
@@ -1002,20 +1014,21 @@ def test_postback処理が例外を出したら警告文が返る(webhook, line_
     assert line_api.texts == ["⚠️ 処理に失敗しました"]
 
 
-def test_対応済みの共有が1人にも届かなくても共有したと返信する(webhook, line_api):
-    """「家族全員に共有しました」が嘘になる経路。
+def test_対象の通知が無いボタンは偽の共有通知を出さない(webhook, line_api):
+    """古い通知のボタンを押したときの挙動。
 
-    `handle_confirm_postback` は `mark_notification_completed` の戻り値だけを見る。
-    この関数は broadcast の成功数を見ないので、全員への push が全滅していても
-    True を返す。押した本人だけが「共有された」と思い込む。
+    2026-10-15 まで、対象の pending が1行も無くても
+    「☑️ 対応しました」が家族全員に broadcast され、押した本人には
+    「家族全員に共有しました」と返っていた。存在しない context_key を
+    送るだけで偽の完了通知を作れる状態だった。
 
-    pending 行が無い場合も（古い通知のボタン）同じく成功扱いになる。
-
-    本来: broadcast の成功数を戻り値に含め、0 なら「共有できませんでした」と返す。
+    ただし broadcast の成功数を戻り値に含めていない点（全員の push が
+    失敗しても「共有しました」と返る）は未修正のまま残っている。
     """
     line_api.fail_for = {ADMIN, FAMILY_A, FAMILY_B}   # 全員の push が 400
-    webhook(_postback_body("confirm:meal_alert:2026-10-15_1"))
+    webhook(_postback_body("confirm:meal_alert:存在しないctx"))
 
-    assert any("家族全員に共有しました" in t for t in line_api.texts)
-    assert line_api.pushed_to == [], "broadcast は1通も届いていない"
-    assert [c["api"] for c in line_api.calls].count("push") == 2, "全員に試みてはいる"
+    assert not any("家族全員に共有しました" in t for t in line_api.texts), \
+        "対象が無いのに共有したと言わないこと"
+    assert line_api.attempted_apis.count("push") == 0, \
+        "broadcast そのものを試みないこと"

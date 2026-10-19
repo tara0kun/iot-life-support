@@ -487,31 +487,25 @@ def test_保温ボタンは当日の無関係な炊飯器通知も一括で閉�
         "別カテゴリは閉じない"
 
 
-def test_消えたイベントの古いボタンでも対応済み通知が飛び未回答通知が閉じる(st):
-    """トーク履歴を遡って古い「保温」ボタンを押したときの実測。
+def test_消えたイベントの古いボタンは偽の対応済み通知を出さない(st):
+    """トーク履歴を遡って古い「保温」ボタンを押したときの挙動。
 
-    event_id が既に存在しなくてもハンドラは止まらず、
-      - 学習データ（rice_classifications）は作られない
-      - なのに「☑️ ○○さんが対応しました」が全家族に broadcast される
-      - 当日の本物の未回答 rice_action 通知が巻き込まれて閉じる
-    という状態になる。「反応するときとしないときがある」の中で
+    2026-10-15 まで、対象の pending が1行も無くても
+    「☑️ ○○さんが対応しました」が全家族に broadcast されていた。
+    存在しない context_key を送るだけで偽の完了通知を作れる状態で、
+    しかも当日の本物の未回答通知には何の影響も無い（別の context_key なので）。
     「押したのに何も直っていない」側の説明になりうる。
-
-    本来: 対象イベントが無ければ「この通知は古いので操作できません」と返して
-    何も書かない。
     """
     live = make_pending(st, "rice_action", "event_777")
 
-    reply = run(st.lc.handle_rice_action_postback(
-        "rice_action:99999:keep_warm", SENDER_A))
+    run(st.lc.handle_rice_action_postback("rice_action:99999:keep_warm", SENDER_A))
 
-    assert "保温" in reply
     assert st.db.scalar("SELECT COUNT(*) FROM rice_classifications") == 0, \
         "学習データは残らない（power_w が取れないため）"
-    assert len(st.broadcasts) == 1 and "対応しました" in st.broadcasts[0]
-    assert st.db.scalar(
-        "SELECT completed_at IS NOT NULL FROM pending_notifications WHERE id = ?", live) == 1, \
-        "本物の未回答通知が、存在しないイベントのボタンで閉じられた"
+    assert st.broadcasts == [], "対象が無いのに完了通知を流さないこと"
+    # 注: rice_action は mark_related_completed_silent を context_key の LIKE で
+    # 呼ぶ経路も持っており、そちらは当日の rice_action をまとめて閉じる。
+    # 偽の broadcast は止まったが、巻き込みの方は未修正（別途要対応）。
 
 
 def test_未知のactionはCHECK制約で学習に残らないのに判定保留と返る(st):
@@ -787,6 +781,7 @@ def test_登録解除は自分の行だけを消す(st):
 #   テキスト「ロック解除」→ 4桁コード返信 → unlock_device (node_id = 1 の直書き)
 def test_lock_confirmのyesで実際にMatterへOFFが出てDBがロック済みになる(st):
     """家族が「ロックする」を押したときの正常系。電源 OFF と device_state を固定する。"""
+    make_pending(st, "lock_confirm", "2026-10-15_1200")  # ボタンが有効であること
     reply = run(st.lc.handle_lock_confirm_postback("lock_confirm:2026-10-15_1200:yes", SENDER_A))
 
     assert "炊飯器をロックしました" in reply
@@ -799,6 +794,7 @@ def test_lock_confirmのyesで実際にMatterへOFFが出てDBがロック済み
 
 def test_lock_confirmのnoはMatterもDBも触らない(st):
     """「ロックしない」を押したときに副作用が無いことの確認。"""
+    make_pending(st, "lock_confirm", "2026-10-15_1200")  # ボタンが有効であること
     reply = run(st.lc.handle_lock_confirm_postback("lock_confirm:2026-10-15_1200:no", SENDER_A))
 
     assert "スキップ" in reply
@@ -812,6 +808,7 @@ def test_Matterが失敗したときDBはロック済みにならない(st):
     `lock_device` は `_matter_set_power` が True を返したときだけ
     device_state を更新する。失敗時は行が作られるだけ（is_locked=0）。
     """
+    make_pending(st, "lock_confirm", "2026-10-15_1200")  # ボタンが有効であること
     st.flags["matter_ok"] = False
 
     reply = run(st.lc.handle_lock_confirm_postback("lock_confirm:2026-10-15_1200:yes", SENDER_A))
@@ -839,6 +836,7 @@ def test_Matter成功後にDB書込が失敗すると電源だけ切れて復旧
     本来: Matter 成功後の DB 書き込みが失敗したら、その場で電源を戻す
     （補償）か、先に「ロック予定」を DB に書いてから電源を切る。
     """
+    make_pending(st, "lock_confirm", "2026-10-15_1200")  # ボタンが有効であること
     import src.lock_manager as lock_manager
     real_ensure = lock_manager._ensure_device
     state = {"fail": False}
@@ -1509,3 +1507,29 @@ def test_家族ダッシュボードからも同じ破壊的操作に到達で�
     assert st.db.one("SELECT id FROM meal_sessions WHERE id = ?", sid) is None
     assert st.db.scalar(
         "SELECT completed_by FROM pending_notifications WHERE id = ?", notif) == "family_ui"
+
+
+def test_古いlock_confirmのボタンは炊飯器を動かさない(st):
+    """LINE のトーク履歴にはボタンが残り続けるので、何日前のものでも押せる。
+
+    2026-10-15 まで ctx を解析するだけで pending の存在も完了も確認しておらず、
+    数日前の「ロックする」を押すと**今この瞬間に**炊飯器が2時間止まった。
+    完了済み pending 経由だと broadcast も出ないので、他の家族は気づけない。
+    """
+    reply = run(st.lc.handle_lock_confirm_postback("lock_confirm:存在しないctx:yes", SENDER_A))
+
+    assert "もう有効ではありません" in reply
+    assert st.matter == [], "電源に触らないこと"
+    assert st.db.one("SELECT * FROM device_state WHERE device_name = 'rice_cooker'") is None
+
+
+def test_完了済みのlock_confirmを押しても二重に実行されない(st):
+    """2人が同じボタンを押した場合と、同じ人が連打した場合の両方を塞ぐ。"""
+    make_pending(st, "lock_confirm", "2026-10-15_1300")
+    first = run(st.lc.handle_lock_confirm_postback("lock_confirm:2026-10-15_1300:yes", SENDER_A))
+    assert "ロックしました" in first
+    matter_after_first = list(st.matter)
+
+    second = run(st.lc.handle_lock_confirm_postback("lock_confirm:2026-10-15_1300:yes", SENDER_A))
+    assert "既に対応済み" in second
+    assert st.matter == matter_after_first, "2回目は電源に触らないこと"
