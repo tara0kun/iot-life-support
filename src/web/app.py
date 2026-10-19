@@ -1617,7 +1617,28 @@ async def line_webhook(request: Request):
         text = msg.get("text", "")
 
         # コマンドディスパッチ（リンク以外すべて）
-        reply = await dispatch(text, sender_id)
+        #
+        # **1件の例外で後続のイベントを巻き添えにしない。** LINE は1回の
+        # webhook に複数イベントを載せてくる。ここが素のままだと、DB ロック
+        # 競合や Matter のタイムアウトが1件起きただけで webhook 全体が 500 に
+        # なり、同じバッチで送られた他の家族のコマンドまで黙って消えていた。
+        # postback 側は最初から握って continue している（2026-10-15 に発覚）。
+        try:
+            reply = await dispatch(text, sender_id)
+        except Exception as e:
+            _webhook_log.error(
+                "コマンド処理エラー sender=%s…%s: %s", sender_id[:8], text[:20], e
+            )
+            try:
+                await asyncio.to_thread(
+                    reply_line_message, reply_token,
+                    "すみません、処理中にエラーが起きました。\n"
+                    "少し時間をおいてから、もう一度お試しください。",
+                )
+            except Exception as e2:
+                _webhook_log.error("エラー返信も失敗: %s", e2)
+            continue
+
         if reply is None and _is_url_request(text):
             reply = _build_url_reply()
 

@@ -459,41 +459,35 @@ def test_1つのwebhookに入った複数イベントは全部処理される(in
     assert _reply_tokens(ingress) == ["t1", "t2", "t3"]
 
 
-def test_現状_messageイベントで例外が出ると後続イベントが丸ごと捨てられる(ingress, monkeypatch):
-    """**postback 経路には try/except があるのに、message 経路には無い。**
+def test_messageイベントの例外は後続イベントを巻き添えにしない(ingress, monkeypatch):
+    """1回の webhook には複数イベントが載る。
 
-    `reply = await dispatch(text, sender_id)` が素のまま呼ばれているので、
-    dispatch 内の未捕捉例外（DB ロック・Matter タイムアウト・`get_conn` 失敗など）が
-    そのまま webhook 全体を 500 にする。同じバッチの後続イベントは
-    dispatch に渡らないまま消え、LINE はバッチ全体を再送する
-    → 先頭のイベントだけ二重処理される。
-
-    本来どうあるべきか: イベント1件ごとに try/except し、失敗しても
-    `⚠️ 処理に失敗しました` を返して次のイベントへ進む（postback 側と同じ形）。
-    直したら: このテストを「200 で、3件目も dispatch に渡る」に書き換える。
+    2026-10-15 まで message 経路に try/except が無く、DB ロック競合や Matter の
+    タイムアウトが1件起きただけで webhook 全体が 500 になり、同じバッチで
+    送られた他の家族のコマンドまで黙って消えていた（postback 側は最初から
+    握って continue している）。送った本人にも何も返らなかった。
     """
     import src.line_commands as line_commands
 
-    seen: list[str] = []
+    orig = line_commands.dispatch
 
-    async def flaky(text, sender_id):
-        seen.append(text)
-        if text == "こわれる":
-            raise RuntimeError("test: dispatch failure")
-        return f"返信:{text}"
+    async def boom(text, sender):
+        if text == "爆発":
+            raise RuntimeError("DBロック競合を模擬")
+        return await orig(text, sender)
 
-    monkeypatch.setattr(line_commands, "dispatch", flaky)
+    monkeypatch.setattr(line_commands, "dispatch", boom)
+
     resp = _post(
         ingress,
-        _text_event("1件目", token="t1", event_id="E1"),
-        _text_event("こわれる", token="t2", event_id="E2"),
-        _text_event("3件目", token="t3", event_id="E3"),
-        allow_500=True,
+        _text_event("状況", token="t1", event_id="E1"),
+        _text_event("爆発", token="t2", event_id="E2"),
+        _text_event("ヘルプ", token="t3", event_id="E3"),
     )
-    assert resp.status_code == 500
-    assert seen == ["1件目", "こわれる"], "3件目が dispatch に渡っていない"
-    assert _reply_tokens(ingress) == ["t1"]
 
+    assert resp.status_code == 200, "1件の例外で webhook 全体を落とさないこと"
+    assert len(ingress.calls) == 3, "3件とも返信が出ること（2件目はエラー案内）"
+    assert any("エラーが起きました" in str(c) for c in ingress.calls)
 
 def test_postbackイベントの例外は後続イベントを止めない(ingress, monkeypatch):
     """対比。postback は `except Exception` で拾って `⚠️ 処理に失敗しました` を返し、
