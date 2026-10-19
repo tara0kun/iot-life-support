@@ -32,14 +32,32 @@ from src.notifier import (notify_meal_alert, notify_device_locked, send_line_mes
 from src.bath_monitor import BathMonitor
 from src.task_supervisor import supervise
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(Path(__file__).resolve().parent.parent / "logs" / "monitor.log"),
-        logging.StreamHandler(),
-    ],
-)
+def _setup_monitor_logging() -> None:
+    """monitor プロセスのログを logs/monitor.log に残す。
+
+    **テスト実行中は本番ログに書かない。** tests/ は本番 Pi 上で走るため、
+    import しただけで FileHandler が張られると、テストの架空イベントが
+    logs/monitor.log に混ざる。web.log で実際に起きた事故と同じ構造
+    （2026-10-15、30行混入して障害調査中のログを読み間違えた）。
+
+    logs/ が無い環境（CI はこのディレクトリを持たない）でも落とさない。
+    """
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if "pytest" not in sys.modules:
+        log_path = Path(__file__).resolve().parent.parent / "logs" / "monitor.log"
+        try:
+            log_path.parent.mkdir(exist_ok=True)
+            handlers.insert(0, logging.FileHandler(log_path))
+        except OSError:
+            pass  # ログが書けないことで監視を止めない
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
+    )
+
+
+_setup_monitor_logging()
 log = logging.getLogger("monitor")
 
 
