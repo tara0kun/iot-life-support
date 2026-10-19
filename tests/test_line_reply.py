@@ -631,20 +631,17 @@ def test_壊れたJSON行は捨てられ残りは再送される(retry_box):
     assert not retry_box.box.exists()
 
 
-def test_toキーが無い行で再送が永久に止まり手前の行が毎分再送される(retry_box):
-    """**outbox の最大の穴。** JSON としては読めるが `to` が無い行で KeyError。
+def test_toキーが無い行は破棄され後続の送信を止めない(retry_box):
+    """**outbox の最大の穴だった。** JSON としては読めるが `to` が無い行。
 
-    `entry["to"]` に素のキー参照を使っているため main() が落ち、
-    ファイルの書き戻し（`write_text`）に到達しない。その結果:
-      - その行より後ろの通知は**永久に送られない**
-      - 手前の行は毎分 push され続ける（＝家族に同じ通知が毎分届く）
-      - retry_count も TTL も進まないので、自然に止まらない
+    2026-10-15 まで `entry["to"]` を素のキー参照で取っていたため KeyError で
+    main() が落ち、ファイルの書き戻しに到達しなかった。その結果:
+      - その行より後ろの通知が**永久に送られない**（浴室の緊急通知を含む）
+      - 手前の行は毎分 push され続ける（家族に同じ通知が毎分届く）
+      - retry_count も TTL も進まないので自然に止まらない
 
     `to` が無い行は、notifier 側の仕様変更やファイル破損（電源断で途中まで
     書かれた行）で現実に発生しうる。
-
-    本来: 行単位で try/except し、不正な行は dropped として捨てる。
-    直したら「1通目と3通目が送られ、ファイルが消える」に書き換える。
     """
     bad = json.dumps({"queued_at": datetime.now().replace(microsecond=0).isoformat(),
                       "messages": [{"type": "text", "text": "宛先なし"}]})
@@ -652,15 +649,10 @@ def test_toキーが無い行で再送が永久に止まり手前の行が毎分
         _entry(ADMIN, text="1通目"), bad, _entry(FAMILY_A, text="3通目"),
     ]) + "\n")
 
-    for _ in range(3):   # cron 3回ぶん
-        with pytest.raises(KeyError):
-            retry_outbox.main()
+    retry_outbox.main()
 
-    assert retry_box.texts == ["1通目", "1通目", "1通目"], "毎分の重複が止まっている（改善）"
-    assert len(retry_box.box.read_text().splitlines()) == 3, "書き戻しが起きている（改善）"
-    assert all(json.loads(l).get("retry_count", 0) == 0
-               for l in retry_box.box.read_text().splitlines() if l.strip())
-
+    assert sorted(retry_box.texts) == ["1通目", "3通目"], "不正な行を飛ばして両方送ること"
+    assert _read_outbox(retry_box.box) == [], "全部処理されてファイルが消えること"
 
 def test_同じ内容の行は重複排除されず全部送られる(retry_box):
     """同一メッセージが3行積まれていれば3通届く。
@@ -718,36 +710,38 @@ def test_再送回数の上限を超えた行は破棄される(retry_box):
     assert not retry_box.box.exists()
 
 
-def test_恒久的な400も50回ぶん再送し続ける(retry_box):
-    """400（宛先が不正・本文が長すぎ）は何回送っても通らないのに同じ扱い。
+def test_429だけ再送し4xxは破棄する(retry_box):
+    """429（レート制限）は時間をおけば通るが、他の 4xx は何回送っても通らない。
 
-    毎分1回、50分ぶん無駄に叩き続ける。送信枠と429のリスクを増やすだけ。
+    2026-10-15 まで区別せず、恒久エラーも毎分1回・50分ぶん叩き続けていた。
+    送信枠を無駄に消費し、429 のリスクを自分で上げていた。
+    """
+    # 400 は即破棄
+    retry_box.force_status = 400
+    retry_box.box.write_text(_entry(ADMIN, text="宛先が不正") + "\n")
+    retry_outbox.main()
+    assert _read_outbox(retry_box.box) == [], "恒久エラーは溜めない"
 
-    本来: 4xx（429 以外）は即破棄し、429/5xx だけ再送する。
+    # 429 は残して再送する
+    retry_box.force_status = 429
+    retry_box.box.write_text(_entry(ADMIN, text="レート制限") + "\n")
+    retry_outbox.main()
+    left = _read_outbox(retry_box.box)
+    assert len(left) == 1 and left[0]["retry_count"] == 1, "429 は再送対象として残す"
+
+def test_恒久エラーになる行は再送し続けずに破棄される(retry_box):
+    """長すぎる本文（LINE は 5000 文字超を 400 で拒否）は何回送っても通らない。
+
+    2026-10-15 まで 400 も 429 も同じ扱いで、毎分1回・50分ぶん無駄に叩き続け、
+    送信枠と 429 のリスクを増やしていた。今は 4xx（429 以外）を即破棄する。
+    本文の切り詰めは入れていないので、長い通知は届かないまま（別途要対応）。
     """
     retry_box.force_status = 400
-    retry_box.box.write_text(_entry(ADMIN) + "\n")
-    retry_outbox.main()
-
-    left = _read_outbox(retry_box.box)
-    assert len(left) == 1
-    assert left[0]["retry_count"] == 1
-    assert "HTTP 400" in left[0]["last_error"]
-
-
-def test_5000文字超の巨大な行も切られずに投げ直される(retry_box):
-    """長すぎる本文はどこでも切り詰められない。
-
-    LINE は 5000 文字超を 400 で拒否するので、この行は 50 回失敗して消えるだけ。
-    家族には最初から最後まで何も届かない。
-    """
     retry_box.box.write_text(_entry(ADMIN, text="あ" * 6000) + "\n")
     retry_outbox.main()
 
     assert retry_box.deliveries == []
-    left = _read_outbox(retry_box.box)
-    assert len(left[0]["messages"][0]["text"]) == 6000, "どこかで切り詰めている（改善）"
-
+    assert _read_outbox(retry_box.box) == [], "恒久エラーは溜めずに捨てること"
 
 def test_トークン未設定なら何も送らずに終わる(retry_box, monkeypatch):
     """トークンが読めないときに空の Bearer で叩かないこと。"""
