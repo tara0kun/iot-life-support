@@ -45,6 +45,12 @@ CREATE INDEX IF NOT EXISTS idx_events_person_time
     ON events(person_id, started_at);
 CREATE INDEX IF NOT EXISTS idx_events_time
     ON events(started_at);
+-- 「あるセンサーの、ある期間」はこのシステムで最も多いクエリ形。
+-- health_check の死活判定、anomaly_check の各検知、セッション集約、
+-- 家族UIの描画がいずれもこの形で引く。
+-- 実測（452,497行）: 25ms → 3ms、DB は +18MB。
+CREATE INDEX IF NOT EXISTS idx_events_source_started
+    ON events(source, started_at);
 
 CREATE TABLE IF NOT EXISTS meal_sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -295,8 +301,34 @@ def transaction(timeout: float | None = None):
         conn.close()
 
 
+def _ensure_wal(conn: sqlite3.Connection) -> None:
+    """journal_mode を WAL にする。
+
+    **delete モードでは読み手が書き手をブロックする。** iot-monitor /
+    iot-web / cron 4本が同じ DB を触る構成では競合が避けられず、実際に
+    祖母のタブレットが `database is locked` で 500 を返した
+    （2026-09-26、10分おきに再発）。BUSY_TIMEOUT_SECONDS=30 は
+    「待てば通る」ようにする暫定策で、競合自体は残っていた。
+
+    journal_mode は DB ファイルに永続化されるので一度効けば全プロセスに効く。
+    ここで毎回設定するのは、古いバックアップから復元した DB が
+    delete モードで戻ってきても自動で直るようにするため。
+
+    切り替えには一瞬だけ排他ロックが必要なので、取れなければ諦める。
+    次の起動でまた試すし、delete のままでも動作はする。
+    """
+    log = __import__('logging').getLogger("db")
+    try:
+        mode = conn.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+        if str(mode).lower() != "wal":
+            log.warning("journal_mode を WAL にできなかった（現在: %s）", mode)
+    except sqlite3.Error as e:
+        log.warning("journal_mode の設定に失敗（delete のまま続行）: %s", e)
+
+
 def init_db() -> None:
     conn = get_conn()
+    _ensure_wal(conn)
     try:
         conn.executescript(SCHEMA)
         conn.commit()

@@ -33,6 +33,9 @@ print('OK')
 RESULT=$?
 
 if [ $RESULT -eq 0 ]; then
+    # バックアップには祖母の生活記録がそのまま入る。他ユーザーから読めないようにする
+    # （従来 cron 側で chmod していたので、cp を置き換えるときに落とさないこと）。
+    chmod 600 "$DEST"
     SIZE=$(du -h "$DEST" | cut -f1)
     echo "backup OK: $DEST ($SIZE)"
 else
