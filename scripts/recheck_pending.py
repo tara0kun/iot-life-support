@@ -174,7 +174,7 @@ def _close_if_premise_gone(category: str, created_jst) -> bool:
 
     bath_emergency / device_locked / meal_alert は既に別経路で閉じている
     （monitor.py の _on_bath_end / _on_bath_alert_resolved、
-      line_commands.py の handle_confirm_postback）。ここで扱うのは残り4つ。
+      line_commands.py の handle_confirm_postback）。ここで扱うのは残り5つ。
 
     注意: events.started_at は JST、pending_notifications.created_at は UTC。
     呼び出し側で JST に直したものを受け取る。
@@ -202,6 +202,18 @@ def _close_if_premise_gone(category: str, created_jst) -> bool:
             ).fetchone()
             if row:
                 reason = "冷蔵庫が閉まったため自動で解決"
+
+        elif category == "anomaly_rice_lid_stuck":
+            # 蓋が閉まれば（＝固着が解ければ）前提は消える。close 遷移が
+            # 記録された時点で open 遷移も再び拾えるようになる。
+            row = conn.execute(
+                """SELECT 1 FROM events
+                    WHERE source='rice_cooker_lid' AND event_type='close'
+                      AND started_at > ? LIMIT 1""",
+                (since,),
+            ).fetchone()
+            if row:
+                reason = "炊飯器の蓋が閉まったため自動で解決"
 
         elif category == "anomaly_night_rice":
             row = conn.execute(

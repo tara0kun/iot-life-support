@@ -514,6 +514,7 @@ CATEGORY_LABELS = {
     "anomaly_inactivity": "安否確認アラート",
     "anomaly_night_rice": "深夜炊飯器アラート",
     "anomaly_fridge_open": "冷蔵庫開放アラート",
+    "anomaly_rice_lid_stuck": "炊飯器の蓋の開きっぱなし",
     "medicine_reminder": "お薬リマインダー",
     "bath_reminder": "お風呂リマインダー",
     "tablet_unverified": "タブレットボタン未確認",
