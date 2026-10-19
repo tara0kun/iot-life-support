@@ -1112,6 +1112,11 @@ async def main() -> None:
     )
     log.info("お風呂監視を初期化 (アラート: 30分)")
 
+    # **再起動をまたいで見守りを継続する。** ドア閉のイベントは既に過ぎているので、
+    # ここで復元しないと、落ちた時点で入浴中だった回は見守りが消えたままになる。
+    if await _bath_monitor.restore():
+        log.warning("入浴中にプロセスが落ちていたため、見守りを再開した")
+
     # P110M 電力監視 (Matter経由)
     plug = MatterPlugMonitor(
         cfg=MatterPlugConfig(

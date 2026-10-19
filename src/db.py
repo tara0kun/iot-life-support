@@ -216,6 +216,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_notif_context
 CREATE INDEX IF NOT EXISTS idx_pending_notif_pending
     ON pending_notifications(completed_at, last_notified_at);
 
+CREATE TABLE IF NOT EXISTS bath_monitor_state (
+    -- 入浴見守りの進行状態。**プロセスが落ちても見守りを継続するために永続化する。**
+    -- 以前は BathMonitor のインスタンス変数だけに持っていたので、iot-monitor の
+    -- 再起動や Pi の再起動で入浴中の見守りが無言で消えていた。ドア閉のイベントは
+    -- 既に過ぎているため、復帰後に自力で監視を再開する手段が無かった。
+    -- 2026-10-19 11:42 の記録なし再起動が実例（Issue #27 / #30）。
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    in_bath INTEGER NOT NULL DEFAULT 0,
+    bath_start TIMESTAMP,
+    last_motion TIMESTAMP,
+    alert_sent INTEGER NOT NULL DEFAULT 0,
+    confirmed INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS bath_classifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     detected_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

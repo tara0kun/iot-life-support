@@ -28,6 +28,73 @@ ALERT_MINUTES = 30
 # この時間内にモーションが来なければ「入浴じゃなかった」としてキャンセル。
 CONFIRM_MOTION_WINDOW_SECONDS = 5 * 60
 
+# 再起動から復帰したとき、これより古い入浴は引き継がない。
+# ドア閉から長時間経っていれば、本人はとっくに出ていてドア開を取りこぼしたか、
+# センサー側が固着している。古い状態を復元すると「誰もいない浴室」を
+# 見張り続け、いずれ誤アラートを出す。
+MAX_RESUME_HOURS = 3
+
+
+def _save_state(in_bath: bool, bath_start: datetime | None,
+                last_motion: datetime | None, alert_sent: bool,
+                confirmed: bool) -> None:
+    """見守りの進行状態を DB に書く。**失敗しても監視は続ける。**
+
+    ここで例外を上げるとセンサーの取り込みループごと巻き込むので、
+    握りつぶしてログだけ残す。永続化は保険であって本体ではない。
+    """
+    try:
+        from .db import transaction
+        with transaction() as conn:
+            conn.execute(
+                """INSERT INTO bath_monitor_state
+                       (id, in_bath, bath_start, last_motion, alert_sent, confirmed, updated_at)
+                   VALUES (1, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(id) DO UPDATE SET
+                       in_bath=excluded.in_bath,
+                       bath_start=excluded.bath_start,
+                       last_motion=excluded.last_motion,
+                       alert_sent=excluded.alert_sent,
+                       confirmed=excluded.confirmed,
+                       updated_at=CURRENT_TIMESTAMP""",
+                (
+                    int(in_bath),
+                    bath_start.isoformat() if bath_start else None,
+                    last_motion.isoformat() if last_motion else None,
+                    int(alert_sent),
+                    int(confirmed),
+                ),
+            )
+    except Exception as e:
+        log.warning("入浴見守り状態の保存に失敗: %s", e)
+
+
+def _load_state() -> dict | None:
+    """保存された進行状態を読む。無ければ None。"""
+    try:
+        from .db import get_conn
+        conn = get_conn()
+        try:
+            row = conn.execute(
+                "SELECT in_bath, bath_start, last_motion, alert_sent, confirmed "
+                "FROM bath_monitor_state WHERE id = 1"
+            ).fetchone()
+        finally:
+            conn.close()
+        return dict(row) if row else None
+    except Exception as e:
+        log.warning("入浴見守り状態の読み出しに失敗: %s", e)
+        return None
+
+
+def _parse(value) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+
 
 class BathMonitor:
     def __init__(
@@ -63,6 +130,7 @@ class BathMonitor:
         self._alert_sent = False
         self._confirmed = False
         log.info("入浴 (暫定) 開始: %d分以内モーション待機", CONFIRM_MOTION_WINDOW_SECONDS // 60)
+        self._persist()
         # on_bath_start は Phase1 通過 (モーション初検知) まで呼ばない
         self._monitor_task = asyncio.create_task(self._watch_timer())
 
@@ -81,6 +149,7 @@ class BathMonitor:
         if self._monitor_task:
             self._monitor_task.cancel()
             self._monitor_task = None
+        self._persist()
         if was_confirmed:
             log.info("入浴終了 (%.1f分)", duration_min)
             if self._on_bath_end:
@@ -113,19 +182,27 @@ class BathMonitor:
         if not self._confirmed:
             self._confirmed = True
             log.info("入浴確定: Phase1 内でモーション検知")
+            self._persist()
             if self._on_bath_start:
                 await self._on_bath_start()
         else:
             log.debug("浴室モーション検知 (生存確認)")
+            self._persist()
 
-    async def _watch_timer(self) -> None:
+    async def _watch_timer(self, phase1_remaining: float = CONFIRM_MOTION_WINDOW_SECONDS) -> None:
         """Phase1: モーション猶予時間内に確定しなければキャンセル。
         Phase2: 通常の ALERT_MINUTES 経過モーションなしアラート監視。
+
+        phase1_remaining: Phase1 の残り秒数。再起動から復帰したときは
+        既に経過した分を差し引いた値が渡る（0以下なら Phase1 は終了扱い）。
         """
         try:
-            # Phase1: 確定待ち (5分)
-            phase1_end = False
-            for _ in range(CONFIRM_MOTION_WINDOW_SECONDS // 10):
+            # Phase1: 確定待ち (既定5分、復帰時は残り時間)
+            # 未確定のまま残り時間が尽きていれば、ループを回さず下のキャンセルへ落ちる
+            phase1_end = self._confirmed
+            for _ in range(max(0, int(phase1_remaining // 10))):
+                if phase1_end:
+                    break
                 await asyncio.sleep(10)
                 if not self._in_bath:
                     return  # ドア開でキャンセル済
@@ -140,6 +217,7 @@ class BathMonitor:
                 self._in_bath = False
                 self._bath_start = None
                 self._confirmed = False
+                self._persist()
                 return
 
             # Phase2: 通常の 30分アラート監視
@@ -153,10 +231,51 @@ class BathMonitor:
                 if elapsed >= self.alert_minutes and not self._alert_sent:
                     self._alert_sent = True
                     log.warning("浴室アラート: %.0f分間動きなし!", elapsed)
+                    self._persist()
                     if self._on_alert:
                         await self._on_alert(elapsed)
         except asyncio.CancelledError:
             pass
+
+    def _persist(self) -> None:
+        _save_state(self._in_bath, self._bath_start, self._last_motion,
+                    self._alert_sent, self._confirmed)
+
+    async def restore(self) -> bool:
+        """保存された進行状態から見守りを再開する。再開したら True。
+
+        **これが無いと、入浴中にプロセスが落ちた回は見守りが消える。**
+        ドア閉のイベントは過ぎているので、復帰後に自力で監視を始める
+        きっかけが他に無い。
+        """
+        state = _load_state()
+        if not state or not state["in_bath"]:
+            return False
+
+        bath_start = _parse(state["bath_start"])
+        if bath_start is None:
+            _save_state(False, None, None, False, False)
+            return False
+
+        elapsed = (datetime.now() - bath_start).total_seconds()
+        if elapsed > MAX_RESUME_HOURS * 3600:
+            log.info("保存された入浴が古すぎるため引き継がない (%.1f時間前)", elapsed / 3600)
+            _save_state(False, None, None, False, False)
+            return False
+
+        self._in_bath = True
+        self._bath_start = bath_start
+        self._last_motion = _parse(state["last_motion"])
+        self._alert_sent = bool(state["alert_sent"])
+        self._confirmed = bool(state["confirmed"])
+
+        phase1_remaining = CONFIRM_MOTION_WINDOW_SECONDS - elapsed
+        log.warning(
+            "入浴見守りを復元: 経過%.0f分 確定=%s アラート済=%s",
+            elapsed / 60, self._confirmed, self._alert_sent,
+        )
+        self._monitor_task = asyncio.create_task(self._watch_timer(phase1_remaining))
+        return True
 
     @property
     def is_in_bath(self) -> bool:
