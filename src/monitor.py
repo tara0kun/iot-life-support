@@ -25,7 +25,8 @@ if TYPE_CHECKING:
     from src.sensors.contact_sensor import ContactEvent
 from src.sensors.camera import CameraMonitor, CameraConfig, CameraFrame
 from src import event_bus
-from src.sessions import aggregate_sessions, sessions_today, MEAL_LABELS
+from src.sessions import (aggregate_sessions, sessions_today, MEAL_LABELS,
+                          is_meal_label, meal_label_sql)
 from src.lock_manager import lock_device, should_warn_recent_meal
 from src.notifier import (notify_meal_alert, notify_device_locked, send_line_message,
                           mark_related_completed_silent, broadcast_line_message)
@@ -813,16 +814,17 @@ def _find_previous_meal_session(conn, before_time: datetime, exclude_session_id:
     自動統合（60分）で漏れた60〜90分前の食事セッションを「前と同じ食事」候補として返す。
     """
     cutoff = before_time - timedelta(minutes=PREV_SESSION_LOOKUP_MINUTES)
+    meal_cond, meal_params = meal_label_sql()
     row = conn.execute(
-        """SELECT id, person_id, started_at, label
+        f"""SELECT id, person_id, started_at, label
              FROM meal_sessions
             WHERE id != ?
               AND ended_at < ?
               AND ended_at >= ?
-              AND label IN ('朝食','昼食','夕食','間食','夜食','おやつ')
+              AND {meal_cond}
             ORDER BY ended_at DESC
             LIMIT 1""",
-        (exclude_session_id, before_time, cutoff),
+        (exclude_session_id, before_time, cutoff, *meal_params),
     ).fetchone()
     return dict(row) if row else None
 
@@ -1014,7 +1016,7 @@ async def session_aggregator(interval: int = 60) -> None:
             # お風呂など食事以外のセッションは数えない（入浴で炊飯器が
             # ロックされかける問題があった）。
             grandma_meals = [s for s in grandma_sessions
-                             if s.get("label") in MEAL_LABELS]
+                             if is_meal_label(s.get("label"))]
             current_count = len(grandma_meals)
 
             # 前回チェック時からセッションが増えた場合のみ処理

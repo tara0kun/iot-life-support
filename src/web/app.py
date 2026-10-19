@@ -30,7 +30,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from ..db import get_conn, init_db, transaction, RENDER_TIMEOUT_SECONDS
 from ..event_bus import get_events_today, get_recent_events, get_events_by_date, subscribe, unsubscribe
-from ..sessions import sessions_today, last_session
+from ..sessions import sessions_today, last_session, is_meal_label, meal_label_sql
 from ..garden import save_daily_score, get_garden_data, FLOWER_TYPES, _date_to_color
 from ..lock_manager import get_device_state, lock_device, unlock_device
 from .camera_stream import get_streamer
@@ -173,10 +173,9 @@ async def tablet_view(request: Request):
     now = datetime.now()
 
     # 食事セッションのみの最後を取得（「最後に食べたのは」表示用）
-    meal_labels = {"朝食", "昼食", "夕食", "間食", "おやつ"}
     last_meal = None
     for s in reversed(sessions):
-        if s.get("label") in meal_labels:
+        if is_meal_label(s.get("label")):
             last_meal = s
             break
 
@@ -267,8 +266,7 @@ def _build_alerts(now: datetime, sessions: list, stamps: list, done_labels: list
     """祖母タブレット向けのさりげない注意喚起を生成。"""
     alerts = []
     h = now.hour
-    meal_labels = {"朝食", "昼食", "夕食", "間食"}
-    meal_sessions = [s for s in sessions if s.get("label") in meal_labels]
+    meal_sessions = [s for s in sessions if is_meal_label(s.get("label"))]
     meal_count = len(meal_sessions)
 
     # 直近の食事から90分以内 → 「さっき たべたよ」（短期間の繰り返し防止）
@@ -984,7 +982,6 @@ async def api_tablet_record(request: Request):
 MEAL_PHOTOS_DIR = BASE.parent.parent / "data" / "meal_photos"
 MEAL_PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
 MEAL_PHOTO_PROMPT_WINDOW_MIN = 60   # 食事検知後この分数内なら写真撮影プロンプトを出す
-MEAL_LABELS_FOR_PHOTO = {"朝食", "昼食", "夕食", "間食", "おやつ"}
 
 
 def _current_tunnel_base_url() -> str:
@@ -1001,7 +998,7 @@ async def api_meal_photo_prompt(request: Request):
     if not _is_local(request) and not _check_tablet_access(request):
         raise HTTPException(status_code=403)
     cutoff = (datetime.now() - timedelta(minutes=MEAL_PHOTO_PROMPT_WINDOW_MIN)).strftime("%Y-%m-%d %H:%M:%S")
-    placeholders = ",".join("?" * len(MEAL_LABELS_FOR_PHOTO))
+    meal_cond, meal_params = meal_label_sql("m.label")
     conn = get_conn()
     try:
         row = conn.execute(
@@ -1011,10 +1008,10 @@ async def api_meal_photo_prompt(request: Request):
                   FROM meal_sessions m
                  WHERE m.person_id = 1
                    AND m.started_at >= ?
-                   AND m.label IN ({placeholders})
+                   AND {meal_cond}
                  ORDER BY m.started_at DESC
                  LIMIT 1""",
-            (cutoff, *MEAL_LABELS_FOR_PHOTO),
+            (cutoff, *meal_params),
         ).fetchone()
     finally:
         conn.close()
@@ -1331,8 +1328,11 @@ async def api_quick_record(request: Request):
                 (person_id, now, now, f"外食({meal_kind})"),
             )
 
-    # 通常の食事（朝食/昼食/夕食/間食）: 家族が手動で記録（センサ見逃し時など）
-    if activity in {"朝食", "昼食", "夕食", "間食"}:
+    # 通常の食事: 家族が手動で記録（センサ見逃し時など）。
+    # 上の「外食」は別ラベルを組み立てるので elif で抜ける（両方走ると二重登録）。
+    # 集合を直書きしていた頃は「おやつ」がどのブロックにも当たらず、
+    # イベントだけ記録されてセッションが作られていなかった。
+    elif is_meal_label(activity):
         with transaction() as conn:
             conn.execute(
                 # 家族/タブレットの手動入力そのものが確認行為なので confirmed=1。
@@ -1846,19 +1846,19 @@ async def family_weekly_report(request: Request):
     date_strs = [(start_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(days)]
 
     grandma_id = 1
-    meal_labels = {"朝食", "昼食", "夕食", "間食", "おやつ"}
     stamp_labels = ["起床", "お薬", "朝食", "昼食", "お風呂", "夕食", "就寝"]
 
     conn = get_conn()
     try:
         ph = ",".join("?" * len(date_strs))
+        meal_cond, meal_params = meal_label_sql()
         # 食事
         meal_rows = conn.execute(
             f"""SELECT DATE(started_at) as d, label, started_at FROM meal_sessions
                 WHERE person_id = ? AND DATE(started_at) IN ({ph})
-                AND label IN ('朝食','昼食','夕食','間食','おやつ')
+                AND {meal_cond}
                 ORDER BY started_at""",
-            (grandma_id, *date_strs),
+            (grandma_id, *date_strs, *meal_params),
         ).fetchall()
         # スタンプ
         stamp_rows = conn.execute(
