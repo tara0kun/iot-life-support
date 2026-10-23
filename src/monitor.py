@@ -627,6 +627,53 @@ async def on_contact_change(event: ContactEvent) -> None:
                 await _request_long_toilet_alert(duration_sec)
 
 
+# 低電池を知らせたのは誰か（alias と日付）。同じ電池で毎時間鳴らさない。
+# プロセス再起動で消えるが、再起動は稀なので1回鳴り直すだけ。
+# むしろ思い出させてくれるので、ファイルに持つほどではないと判断した。
+_battery_notified: set[tuple[str, str]] = set()
+
+# 電池交換の案内。センサーごとに「止まると何が止まるか」を書く。
+# **ただの「電池が少ない」では動いてもらえない。** 何が危ないかを伝える。
+BATTERY_IMPACT = {
+    "脱衣所": "入浴の記録と、浴室で動きがないときの緊急通知が止まります",
+    "炊飯器": "食事の記録が止まります",
+    "トイレ": "トイレの長時間滞在の通知が止まります",
+    "冷蔵庫": "冷蔵庫の開けっぱなし通知が止まります",
+    "風呂": "入浴の記録が止まります",
+}
+
+
+async def on_sensor_battery_low(status) -> None:
+    """センサーの電池が少なくなったら admin に知らせる。
+
+    **センサーが黙る前に気づくための経路。** これが無いと、電池切れは
+    health_check が無反応を検知するまで（30〜48時間）分からない。
+    脱衣所のモーションセンサーは入浴の確定と緊急通知の両方を担うので、
+    黙ってから気づくのでは遅い。
+    """
+    key = (status.alias, datetime.now().strftime("%Y-%m-%d"))
+    if key in _battery_notified:
+        return
+    _battery_notified.add(key)
+
+    impact = BATTERY_IMPACT.get(status.alias, "このセンサーの記録が止まります")
+    msg = (
+        f"🔋 センサーの電池が少なくなっています\n\n"
+        f"場所: {status.alias}\n"
+        f"このまま切れると{impact}。\n\n"
+        f"CR2032 の交換をお願いします。"
+    )
+    try:
+        from src.notifier import send_actionable_notification
+
+        await asyncio.to_thread(
+            send_actionable_notification, "sensor_battery_low",
+            f"{datetime.now():%Y-%m-%d}_{status.alias}", msg,
+        )
+    except Exception as e:
+        log.error("低電池通知の送信に失敗: %s", e)
+
+
 async def on_motion_detected(event: ContactEvent) -> None:
     """T100モーションセンサー: 脱衣所など各設置場所の動き検知。"""
     from datetime import datetime as _dt
@@ -1339,6 +1386,7 @@ async def main() -> None:
             ),
             on_change=on_contact_change,
             on_motion=on_motion_detected,
+            on_battery_low=on_sensor_battery_low,
         )
         tasks.append(asyncio.create_task(supervise("contact_sensor", contact.run)))
         log.info("T110/T100センサー監視を開始 (supervised)")
