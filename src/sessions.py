@@ -69,6 +69,11 @@ MEAL_LABELS = {"朝食", "昼食", "夕食", "間食", "夜食", "おやつ"}
 MEAL_LABELS_FOR_MERGE = MEAL_LABELS
 MERGE_WINDOW_MINUTES = 60
 
+# 入浴として記録する最短時間。これより短いものはドアの「通過」であって入浴ではない。
+# 実測（2026-10-23、直近60日129件）: 0.0分が38件(29%)、1分未満が57件(44%)。
+# 入浴・湯はり・清掃のいずれも1分未満では成立しないので、ここで切る。
+BATH_MIN_DURATION_SECONDS = 60
+
 # 家族UIが外食を記録すると「外食(間食)」の形で書かれる（app.py の手動記録）。
 # コードのコメントは「食事カウントに含まれる」と書いていたが、どの定義にも
 # 一致せず実際には数えられていなかった。
@@ -421,6 +426,16 @@ def aggregate_sessions(lookback_hours: int = 24) -> list[int]:
                 if _is_bath_session(cluster):
                     started = cluster[0].started_at
                     ended = max((c.ended_at or c.started_at) for c in cluster)
+                    # **短すぎるものは入浴ではない。** ドアを閉めて数秒で開ける
+                    # 「通過」が入浴として記録されていた。2026-10-23 の実測では
+                    # 直近60日の129件のうち 0.0分が38件(29%)、1分未満が57件(44%)。
+                    # 入浴・湯はり・清掃のいずれも1分未満では成立しない。
+                    if (ended - started).total_seconds() < BATH_MIN_DURATION_SECONDS:
+                        log.debug(
+                            "入浴として短すぎるのでセッションにしない: %s (%.0f秒)",
+                            started, (ended - started).total_seconds(),
+                        )
+                        continue
                     label = "お風呂"
                 else:
                     # 食事関連イベントの時刻を基準にする（カメラのみの検知は除外）
