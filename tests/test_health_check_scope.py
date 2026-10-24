@@ -75,3 +75,20 @@ def test_夜間は判定不能を返す():
     src = inspect.getsource(hc.check_recent_events)
     assert "return None" in src, "夜間の判定不能パスが無い"
     assert re.search(r"7\s*<=\s*now\.hour\s*<\s*22", src), "日中の判定条件が見当たらない"
+
+def test_入れない判断の設定を異常扱いしない():
+    """意図した設定について恒久的に ❌ を出さない（Issue #12）。
+
+    外部死活監視は 2026-10-24 の判断で入れないことにした。False を返し
+    続けると、意図どおりの状態が永久に異常として表示される。常に ❌ だと
+    本物の異常が状態変化として目立たなくなる。
+    """
+    ok, detail = hc.check_heartbeat_config()[:2]
+    # .env に URL が入っていれば True、無ければ None（⏸）。False にはしない
+    assert ok is not False, f"未設定を異常扱いしている: {detail}"
+
+
+def test_死活監視を入れたら正常に戻る():
+    """気が変わって設定したときに ✅ になる経路が残っていること。"""
+    src = inspect.getsource(hc.check_heartbeat_config)
+    assert "return True" in src, "設定済みを ✅ にする分岐が消えている"

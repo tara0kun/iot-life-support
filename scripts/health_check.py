@@ -313,7 +313,7 @@ def check_recent_events() -> tuple[bool | None, str, str]:
     return True, "", ""
 
 
-def check_heartbeat_config() -> tuple[bool, str]:
+def check_heartbeat_config() -> tuple[bool | None, str]:
     """外部死活監視 (healthchecks.io) が設定済みか。
 
     **Pi 自身が止まったら、Pi の上で動く監視は全部一緒に止まる。**
@@ -333,10 +333,20 @@ def check_heartbeat_config() -> tuple[bool, str]:
             if url:
                 return True, ""
             break
-    return False, (
-        "外部死活監視が未設定 (.env の HEARTBEAT_URL が空)。"
-        "Pi が丸ごと止まると誰も気づけません。"
-        "設定手順: HANDOFF.md 「外部死活監視」節"
+    # **未設定は「異常」ではなく「判定不能」として扱う。** 2026-10-24 の判断で
+    # 外部死活監視は入れないことにした（Issue #12）。根拠は実測で、家族からの
+    # LINE 応答が14日中14日あり、半日以上の無応答が続けば家族側が先に気づく
+    # 経路が機能していること。
+    #
+    # False を返し続けると、意図した設定について恒久的に ❌ が出る。常に ❌ だと
+    # 本物の異常が状態変化として目立たなくなる（tablet_report で同じことが
+    # 起きていた）。None は「状態を更新も通知もしない」を意味するので、
+    # 行としては ⏸ で見えつつ、警告としては鳴らない。
+    #
+    # 気が変わって .env に URL を入れれば、上の分岐で ✅ に戻る。
+    return None, (
+        "外部死活監視は未設定（2026-10-24 の判断で入れない方針。Issue #12）。"
+        "入れるなら .env の HEARTBEAT_URL。手順は HANDOFF.md 「外部死活監視」節"
     )
 
 
