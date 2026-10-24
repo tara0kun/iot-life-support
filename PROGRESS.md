@@ -12,7 +12,7 @@ DBロック 0件・SIGKILL 0件（WAL 化と graceful shutdown の効果）。
 10/23 分は6分前に `global_oom` があり OOM が引き金と確認済み。
 
 **ブランチ**: 本番 Pi は `dev` で稼働。開発は `dev`、リリース済みの状態が `main`。
-`future` は実験用ではなく**実質 Android キオスクAPK 専用**（`android/` と `build-apk.yml` はここにしかない）。
+`future` は実質 Android キオスクAPK 専用。ただし `android/main.py` と `buildozer.spec` は `main` にもある。`future` にしか無いのは `.github/workflows/build-apk.yml` と `android/README.md` / `android/filters.xml` の3つ（2026-04-27 以降停止）。
 
 **未コミット変更**: なし
 

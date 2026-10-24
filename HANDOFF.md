@@ -10,7 +10,7 @@
 - **ステータス**: 健全性チェックは ✅7 / ⏸1 / ❌0。テスト 960 件・CI グリーン。
   ただし**5日で3回、記録を残さない再起動が起きている**（うち1回は OOM が引き金と確認）
 - **ブランチ**: 本番 Pi は `dev` で稼働。開発は `dev`、リリース済みの状態が `main`。
-  `future` は実質 Android キオスクAPK 専用（`android/` と `build-apk.yml` はここにしかない、2026-04-27 以降停止）
+  `future` は実質 Android キオスクAPK 専用。ただし `android/main.py` と `buildozer.spec` は `main` にもある。`future` にしか無いのは `.github/workflows/build-apk.yml` と `android/README.md` / `android/filters.xml` の3つ（2026-04-27 以降停止）
 - **ネットワーク**: WiFi + Tailscale Funnel で固定URL公開。外部に開いているポートは 22 / 443 / 8000 のみ
   （5580 matter-server と 111 rpcbind は 2026-10-21 に閉じた）
 - **LINE通知**: マスタースイッチ ON。コマンドは正常応答（「？」も 2026-10-19 に対応）
