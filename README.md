@@ -214,7 +214,7 @@ crontab -e
 |---|---|---|---|
 | **`main`** | 🏷 リリース済みの状態 | 安定 | `dev` からPRマージのみ。直接コミット禁止 |
 | **`dev`** | 🏠 **祖母宅ラズパイが実際に動かしているブランチ** / 開発もここ | 中（動作検証中） | 普段の作業はここ。新機能・修正をコミット |
-| **`future`** | 📱 実質 Android キオスクAPK 専用（`android/` と `build-apk.yml` はここにしかない） | 停止中 | 2026-04-27 以降更新なし |
+| **`future`** | 📱 Android キオスクAPK 用。`future` にしか無いのは `build-apk.yml` と `android/README.md` / `android/filters.xml`（`main.py` と `buildozer.spec` は `main` にもある） | 停止中 | 2026-04-27 以降更新なし |
 
 ### 流れ
 
