@@ -7,9 +7,19 @@ Wants=network-online.target
 Type=simple
 User=tara0
 WorkingDirectory=/home/tara0/IoT
-ExecStart=/home/tara0/IoT/venv/bin/matter-server --storage-path /home/tara0/IoT/data/matter --port 5580 --bluetooth-adapter 0
+# **--listen-address を付けないと 0.0.0.0 で待ち受ける。** matter-server の
+# WebSocket は無認証で、標準のハンドシェイクだけで 101 を返す。つまり同じ
+# Wi-Fi にいる誰でも炊飯器プラグ(P110M)を操作できる状態だった（2026-10-21 実測）。
+# アプリ側は ws://localhost:5580/ws に繋ぐので、localhost 限定で動く。
+ExecStart=/home/tara0/IoT/venv/bin/matter-server --storage-path /home/tara0/IoT/data/matter --port 5580 --listen-address 127.0.0.1 --bluetooth-adapter 0
 Restart=on-failure
 RestartSec=10
+
+# メモリ上限。これが無いと OOM 時にカーネルが無関係なプロセスを選び、
+# Pi ごと落ちることがある。常用 38MB（Issue #21）。
+MemoryAccounting=yes
+MemoryHigh=256M
+MemoryMax=512M
 
 [Install]
 WantedBy=multi-user.target

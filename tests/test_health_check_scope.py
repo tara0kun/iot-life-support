@@ -1,0 +1,119 @@
+"""健全性チェックが「何を異常とみなすか」を固定する。
+
+**壊れた窓を放置しない。** 2026-10-24 時点で、`sensor-activity` は
+`tablet_report` だけを理由に恒久的に ❌ になっていた（最終記録 2026-07-13、
+102日間ゼロ）。常に ❌ だと、本物のセンサーが死んだときに状態変化として
+目立たなくなる。
+
+ボタンが押されないのは**利用状況**であって健全性の問題ではない。端末自体は
+生きている（/tablet が1日約290回読まれている）。分類違いだったので外した。
+
+逆に、物理センサーをここから落とすと死活監視が穴だらけになる。
+どちらの向きの間違いも、このファイルで止める。
+"""
+from __future__ import annotations
+
+import inspect
+import re
+
+import scripts.health_check as hc
+
+
+def _watched() -> dict[str, int]:
+    """check_recent_events 内の watched リストをソースから読む。
+
+    関数内のローカル変数なので import では取れない。ソースを読んで
+    (source, 許容時間) を抜き出す。
+    """
+    src = inspect.getsource(hc.check_recent_events)
+    body = src.split("watched = [", 1)[1].split("]", 1)[0]
+    out: dict[str, int] = {}
+    for m in re.finditer(r'\(\s*"([a-z_]+)"\s*,\s*(\d+)\s*,', body):
+        out[m.group(1)] = int(m.group(2))
+    return out
+
+
+def test_タブレットの利用状況を異常扱いしない():
+    """これを戻すと sensor-activity が恒久的に ❌ になる。"""
+    assert "tablet_report" not in _watched()
+
+
+def test_物理センサーは全部監視されている():
+    """ここから落ちると、そのセンサーが死んでも誰も気づけない。"""
+    watched = _watched()
+    for source in (
+        "camera", "bathroom_meter", "fridge", "bath_door",
+        "bath_motion", "toilet_door", "rice_cooker_lid", "rice_cooker",
+    ):
+        assert source in watched, f"{source} が監視対象から外れている"
+
+
+def test_しきい値がセンサーの性質に合っている():
+    """常時反応するものと、使ったときだけ反応するものを混ぜない。
+
+    まとめて MAX で見ていた頃は、カメラが動いている限り残りが何日
+    死んでいても ✅ を返していた（2026-09-04〜09-15 の11日間が実例）。
+    """
+    w = _watched()
+    # 常時反応する系は短く
+    assert w["camera"] <= 3
+    assert w["bathroom_meter"] <= 3
+    # 使ったときだけ反応する系はそれより長く
+    for source in ("fridge", "bath_door", "bath_motion", "toilet_door"):
+        assert w[source] > w["camera"], source
+    # 1日1〜2回のものはさらに長く
+    for source in ("rice_cooker_lid", "rice_cooker"):
+        assert w[source] >= w["fridge"], source
+
+
+def test_夜間は判定不能を返す():
+    """夜間に ✅ を返すと、翌朝に嘘の「復旧しました」が飛ぶ。
+
+    以前それで「センサーが壊れたまま毎晩22時に復旧通知」が送られていた。
+    None は「状態を更新も通知もしない」を意味する。
+    """
+    src = inspect.getsource(hc.check_recent_events)
+    assert "return None" in src, "夜間の判定不能パスが無い"
+    assert re.search(r"7\s*<=\s*now\.hour\s*<\s*22", src), "日中の判定条件が見当たらない"
+
+def test_入れない判断の設定を異常扱いしない(tmp_path, monkeypatch):
+    """意図した設定について恒久的に ❌ を出さない（Issue #12）。
+
+    外部死活監視は 2026-10-24 の判断で入れないことにした。False を返し
+    続けると、意図どおりの状態が永久に異常として表示される。常に ❌ だと
+    本物の異常が状態変化として目立たなくなる。
+
+    ホストの .env に依存させない。CI には .env が無く、そこは別の分岐
+    （.env そのものが無い）なので、見たい条件を自分で作る。
+    """
+    (tmp_path / ".env").write_text("HEARTBEAT_URL=\nLINE_USER_ID=dummy\n", encoding="utf-8")
+    monkeypatch.setattr(hc, "ROOT", tmp_path)
+
+    ok, detail = hc.check_heartbeat_config()[:2]
+
+    assert ok is None, f"未設定を異常扱いしている: ok={ok} detail={detail}"
+    assert "Issue #12" in detail, "判断の経緯が書かれていない"
+
+
+def test_死活監視を入れたら正常に戻る(tmp_path, monkeypatch):
+    """気が変わって設定したときに ✅ になること。"""
+    (tmp_path / ".env").write_text(
+        "HEARTBEAT_URL=https://example.invalid/ping/dummy\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(hc, "ROOT", tmp_path)
+
+    ok, _ = hc.check_heartbeat_config()[:2]
+
+    assert ok is True
+
+
+def test_envそのものが無いのは異常のまま(tmp_path, monkeypatch):
+    """**これは別の問題。** .env が無ければシステム全体が動かないので、
+    「入れない判断」とは区別して異常として扱う。
+    """
+    monkeypatch.setattr(hc, "ROOT", tmp_path)   # .env を置かない
+
+    ok, detail = hc.check_heartbeat_config()[:2]
+
+    assert ok is False
+    assert ".env" in detail

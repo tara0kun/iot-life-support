@@ -798,24 +798,85 @@ def test_間違ったパスワードはセッションを作らない(web):
         assert c.get("/api/events").status_code == 401
 
 
-def test_家族ログインにブルートフォース制限がある(web, monkeypatch):
-    """家族UIのパスワードは4桁PIN。公開インターネットに出ているので、
-    制限が無いと総当たりで数分で破れる。
+def test_ログイン失敗が重なるほど応答を遅らせる(web):
+    """総当たりの抑止は**漸進的な遅延**で行う（Issue #26 / #24）。
 
-    `@limiter.limit("5/15minute")` が外れると落ちる。
+    完全なロックアウトにしない理由: 第三者がわざと失敗させるだけで家族が
+    入れなくなる。入浴の緊急通知が来たときに対応できないのは、総当たりより
+    重い事故になる。家族の打ち間違い数回は邪魔せず、回数が増えるほど遅くする。
     """
-    monkeypatch.setattr(web.module.limiter, "enabled", True)
-    web.module.limiter.reset()
-    try:
-        with _make_client(web) as c:
-            codes = [
-                c.post("/family/login", data={"password": "0000"}).status_code
-                for _ in range(7)
-            ]
-        assert 429 not in codes[:5], f"正当なやり直しまで止めている: {codes}"
-        assert 429 in codes[5:], f"総当たりが止まっていない: {codes}"
-    finally:
-        web.module.limiter.reset()
+    delay = web.module._login_delay_seconds
+    free = web.module.LOGIN_FREE_ATTEMPTS
+
+    # 打ち間違いの範囲は即時
+    assert [delay(n) for n in range(free)] == [0.0] * free
+
+    # それ以降は倍々で増える
+    assert delay(free) == 1.0
+    assert delay(free + 1) == 2.0
+    assert delay(free + 2) == 4.0
+
+    # 上限で頭打ち（無限に伸ばすと接続を占有してしまう）
+    assert delay(free + 50) == float(web.module.LOGIN_MAX_DELAY_SECONDS)
+
+
+def test_ログイン失敗はIPが変わっても積み上がる(web, monkeypatch):
+    """**IP 単位では数えない。** IPv6 の /64 ローテーションで回避できるため。
+
+    逆にキャリアNAT配下では他人の失敗で家族が締め出されるので、
+    IP 制限そのものは補助に下げてある。
+    """
+    monkeypatch.setattr(web.module.limiter, "enabled", False)
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(web.module.asyncio, "sleep", no_sleep)
+
+    with _make_client(web) as c:
+        for _ in range(5):
+            c.post("/family/login", data={"password": "wrong-password"})
+
+    # 送信元が違っても、同じアカウントへの失敗として数える
+    assert web.module._recent_login_failures() == 5
+
+
+def test_ログイン成功で失敗カウンタが戻る(web, monkeypatch):
+    """家族が正しく入れたら、そこまでの失敗は無かったことにする。
+
+    戻さないと、打ち間違いの履歴がいつまでも遅延として残る。
+    """
+    monkeypatch.setattr(web.module.limiter, "enabled", False)
+
+    async def no_sleep(_s):
+        return None
+
+    monkeypatch.setattr(web.module.asyncio, "sleep", no_sleep)
+
+    with _make_client(web) as c:
+        for _ in range(4):
+            c.post("/family/login", data={"password": "wrong-password"})
+        assert web.module._recent_login_failures() == 4
+
+        r = c.post("/family/login", data={"password": FAMILY_PASSWORD})
+        assert r.status_code in (200, 303)
+
+    assert web.module._recent_login_failures() == 0
+
+
+def test_IP単位の制限は残っているが緩い(web):
+    """単一IPからの連打への保険は残す。ただし家族を締め出さない緩さにする。"""
+    import re
+    from pathlib import Path
+
+    src = (Path(__file__).resolve().parent.parent / "src" / "web" / "app.py").read_text(
+        encoding="utf-8"
+    )
+    m = re.search(r'@limiter\.limit\("(\d+)/(\d+)minute"\)', src)
+    assert m, "ログインの IP レート制限が消えている"
+    assert int(m.group(1)) >= 10, (
+        f"厳しすぎる（NAT配下の家族が巻き込まれる）: {m.group(0)}"
+    )
 
 
 # ============================================================

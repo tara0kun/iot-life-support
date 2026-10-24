@@ -28,6 +28,9 @@ SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
     "anomaly_night_rice_start_hour": ("2", "深夜炊飯器検知の開始時刻（時）"),
     "anomaly_night_rice_end_hour": ("5", "深夜炊飯器検知の終了時刻（時）"),
     "anomaly_fridge_open_minutes": ("30", "冷蔵庫開きっぱなし検知の分数"),
+    # 蓋が open のまま固着すると open 遷移が二度と来ず、食事検知が無言で止まる。
+    # 実測では33.8日中28.7日(85%)が open 固着で、最長9日間気づけなかった。
+    "anomaly_rice_lid_open_hours": ("3", "炊飯器の蓋が開いたままで異常とみなす時間（時間）"),
 
     # 食事ロック
     "meal_lock_window_minutes": ("90", "ロック発動: 直近食事から何分以内なら再食事行動でロックするか"),

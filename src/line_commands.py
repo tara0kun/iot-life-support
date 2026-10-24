@@ -25,7 +25,8 @@ UNLOCK_CODE_TTL_SECONDS = 300
 LOCKOUT_THRESHOLD = 3
 LOCKOUT_DURATION_SECONDS = 900
 
-MEAL_LABELS = {"朝食", "昼食", "夕食", "間食", "おやつ"}
+# 食事ラベルは src/sessions.py の正準定義を使う（独自に書かない）。
+from src.sessions import MEAL_LABELS, is_meal_label  # noqa: E402
 STAMP_LABELS = {"起床", "お薬", "朝食", "昼食", "お風呂", "夕食", "就寝"}
 
 
@@ -88,6 +89,12 @@ def match_command(text: str) -> str:
         return "status"
     if any(kw in t for kw in ("最後", "さっき", "直近", "前回", "食べた")):
         return "last_meal"
+    # **素の「?」はヘルプとして扱う。** 家族が最初に打つのがこれで、
+    # 2026-10-19 21:48 に実際「？」を送って「分かりませんでした」が返っていた。
+    # 部分一致にしない（「登録一覧？」まで吸い込むと一覧が出なくなる）。
+    # normalize_command_text の NFKC で全角「？」は半角「?」になる。
+    if re.fullmatch(r"[?!]+", t):
+        return "help"
     if any(kw in lower for kw in (
         "ヘルプ", "help", "コマンド", "使い方", "使いかた", "へるぷ", "何ができる",
     )):
@@ -106,7 +113,7 @@ def match_command(text: str) -> str:
 
 def _last_meal_info(grandma_id: int = 1) -> tuple[str, int] | None:
     sessions = sessions_today(grandma_id)
-    meals = [s for s in sessions if s.get("label") in MEAL_LABELS]
+    meals = [s for s in sessions if is_meal_label(s.get("label"))]
     if not meals:
         return None
     last = meals[-1]
@@ -195,7 +202,7 @@ def _recent_witness_reports(limit: int = 3) -> list[str]:
 def handle_status() -> str:
     grandma_id = 1
     sessions = sessions_today(grandma_id)
-    meal_count = sum(1 for s in sessions if s.get("label") in MEAL_LABELS)
+    meal_count = sum(1 for s in sessions if is_meal_label(s.get("label")))
     done_labels = {s.get("label") for s in sessions}
     stamp_done = len(STAMP_LABELS & done_labels)
 
@@ -514,6 +521,9 @@ CATEGORY_LABELS = {
     "anomaly_inactivity": "安否確認アラート",
     "anomaly_night_rice": "深夜炊飯器アラート",
     "anomaly_fridge_open": "冷蔵庫開放アラート",
+    "anomaly_rice_lid_stuck": "炊飯器の蓋の開きっぱなし",
+    "sensor_battery_low": "センサーの電池切れ間近",
+    "memory_guard_restart": "見守りプロセスの自動再起動",
     "medicine_reminder": "お薬リマインダー",
     "bath_reminder": "お風呂リマインダー",
     "tablet_unverified": "タブレットボタン未確認",
@@ -1084,7 +1094,7 @@ async def handle_attribute_postback(data: str, sender_id: str) -> str | None:
             from .lock_manager import lock_device, should_warn_recent_meal, RECENT_MEAL_MINUTES
             from .notifier import notify_meal_alert
             grandma_sessions = sessions_today(1)
-            meal_sessions = [s for s in grandma_sessions if s.get("label") in MEAL_LABELS]
+            meal_sessions = [s for s in grandma_sessions if is_meal_label(s.get("label"))]
             if len(meal_sessions) >= 2:
                 # 直近90分以内に2回以上の食事 → ロック
                 state = get_device_state("rice_cooker")

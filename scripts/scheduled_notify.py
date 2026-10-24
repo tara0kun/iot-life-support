@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.db import init_db, get_conn
-from src.sessions import sessions_today
+from src.sessions import sessions_today, is_meal_label
 from src.notifier import send_line_message, send_actionable_notification
 from src.garden import save_daily_score, FLOWER_TYPES
 from src.settings import get_bool
@@ -134,8 +134,7 @@ def daily_summary():
     save_daily_score(GRANDMA_ID, now.date(), done_count, total, {"done": done})
 
     # 食事回数
-    meal_labels = {"朝食", "昼食", "夕食", "間食"}
-    meal_count = len([l for l in labels if l in meal_labels])
+    meal_count = len([l for l in labels if is_meal_label(l)])
 
     msg = f"📋 きょうのまとめ（{now.strftime('%m/%d %A')}）\n\n"
     msg += f"🌸 スコア: {done_count}/{total}  {flower['emoji']} {flower['label']}\n\n"

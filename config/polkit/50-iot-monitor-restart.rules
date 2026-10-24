@@ -1,0 +1,27 @@
+// scripts/memory_guard.py が iot-monitor を再起動できるようにする。
+//
+// **これが無いと memory_guard は無力。** cron は tara0 権限で走るので
+// systemctl restart が "Interactive authentication required" で失敗する
+// （2026-10-24 に実測して確認した）。
+//
+// この Pi（Raspberry Pi 5）はファームウェアが cgroup_disable=memory を注入し、
+// memory コントローラが無効なため unit の MemoryMax が強制されない。
+// 2026-10-23 にシステム全体の OOM が起き、6分後に Pi が再起動した。
+// cgroup が使えない代わりに RSS を見て再起動する、という作りにしている（Issue #21）。
+//
+// **許可は iot-monitor.service だけに絞る。** 全ユニットを許すと、
+// このルール1枚で tara0 が任意のサービスを操作できてしまう。
+polkit.addRule(function (action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (subject.user !== "tara0") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    if (action.lookup("unit") !== "iot-monitor.service") {
+        return polkit.Result.NOT_HANDLED;
+    }
+    // restart / stop / start のみ。enable/disable や mask は対象外
+    // （それらは別の action.id なので、上の判定で既に弾かれている）
+    return polkit.Result.YES;
+});

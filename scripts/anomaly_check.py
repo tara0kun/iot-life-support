@@ -4,6 +4,7 @@
   A. 深夜炊飯器稼働 (2:00-5:00 に rice_cooker power_on イベント)
   B. センサー無反応タイマー (日中 4時間以上どのセンサーも反応なし)
   C. 冷蔵庫開きっぱなし (fridge door open → close なしで30分経過)
+  D. 炊飯器の蓋の開きっぱなし / センサー固着 (rice_cooker_lid が open のまま3時間経過)
 
 crontab 例（10分おき）:
   */10 * * * *  cd ~/IoT && venv/bin/python scripts/anomaly_check.py
@@ -232,11 +233,76 @@ def check_fridge_open():
     print(f"冷蔵庫アラート送信（{gap.total_seconds()/60:.0f}分経過）")
 
 
+def check_rice_lid_stuck():
+    """炊飯器の蓋が open のまま固着していないかチェックする。
+
+    **これが無いと食事検知が無言で止まる。** 蓋センサーは閉めても `open` の
+    まま貼り付くことがあり、その間は `open` 遷移が発生しない。monitor 側の
+    分類は `event_type='open'` の遷移を必要とするため、24時間経つと
+    「蓋センサー未稼働」と判断して問い合わせ自体を抑制してしまう。
+
+    2026-10-19 の実測: 直近33.8日のうち28.7日(85%)が `open` 固着。最長は
+    218.8時間(約9日)連続で、その間ずっと食事検知が止まっていたのに誰も
+    気づけなかった。固着区間24件のうち15件では、蓋が `open` のまま炊飯器の
+    電源イベントが出ている（蓋が本当に開いていれば炊飯できないので、
+    センサー側の貼り付きで確定）。
+
+    物理的に本当に開けっぱなしの場合も、それ自体が知らせるべき状態なので
+    どちらでも通知して良い。閉め直す動作でセンサーの状態もリセットされる。
+    """
+    if not get_bool("notify_anomaly_enabled"):
+        print("異常検知OFF → スキップ")
+        return
+    threshold_h = get_int("anomaly_rice_lid_open_hours", 3)
+    if _already_notified_today("rice_lid_stuck"):
+        print("今日は通知済み → スキップ")
+        return
+
+    now = datetime.now()
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            """SELECT started_at, event_type FROM events
+               WHERE source = 'rice_cooker_lid'
+               ORDER BY started_at DESC LIMIT 1"""
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if not row or row["event_type"] != "open":
+        print("蓋は開いていない → 正常")
+        return
+
+    opened_at = row["started_at"]
+    if isinstance(opened_at, str):
+        try:
+            opened_at = datetime.fromisoformat(opened_at.replace("T", " "))
+        except ValueError:
+            return
+
+    gap = now - opened_at
+    if gap < timedelta(hours=threshold_h):
+        print(f"蓋開放 {gap.total_seconds()/3600:.1f}時間 → 正常範囲")
+        return
+
+    msg = (
+        "🍚 炊飯器の蓋が開いたままです\n\n"
+        f"{opened_at.strftime('%m/%d %H:%M')} から {gap.total_seconds()/3600:.0f}時間経過\n\n"
+        "蓋が閉まっていれば、センサーの反応が戻っていない可能性があります。\n"
+        "一度開けて閉め直すと復帰します。\n\n"
+        "この状態が続くと食事の記録が止まります。"
+    )
+    today = now.strftime("%Y-%m-%d")
+    send_actionable_notification("anomaly_rice_lid_stuck", today, msg)
+    _mark_notified("rice_lid_stuck")
+    print(f"蓋固着アラート送信（{gap.total_seconds()/3600:.1f}時間経過）")
+
+
 def main():
     parser = argparse.ArgumentParser(description="異常検知")
     parser.add_argument(
         "--type",
-        choices=["all", "inactivity", "night_rice", "fridge"],
+        choices=["all", "inactivity", "night_rice", "fridge", "rice_lid"],
         default="all",
     )
     args = parser.parse_args()
@@ -248,6 +314,8 @@ def main():
         check_night_rice()
     if args.type in ("all", "fridge"):
         check_fridge_open()
+    if args.type in ("all", "rice_lid"):
+        check_rice_lid_stuck()
 
 
 if __name__ == "__main__":

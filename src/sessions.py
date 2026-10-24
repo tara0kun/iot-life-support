@@ -58,16 +58,65 @@ class EventRow:
 
 
 UNASSIGNED_PERSON_ID = 0  # 未確定セッションの person_id
-# 食事を表すラベル。新しいコードはこれを import すること。
-# ⚠️ **まだ正準ではない。** 同等の集合が他に8箇所あり、中身が3通りに割れている
-# （src/line_commands.py:28, src/web/app.py:154/237/869/1157/1513,
-#   scripts/weekly_report.py:20, scripts/scheduled_notify.py:137）。
-# 「夜食」を含むのはここだけ、「おやつ」を含まないものも2箇所ある。
-# 統合は挙動が変わる箇所（日次サマリの食事回数、タブレットの「さっき食べましたよ」）を
-# 個別に検証してから行うこと。家族UIの「外食(◯食)」形式もどれにも一致しない。
+# 食事を表すラベルの**正準定義**。食事かどうかを判定したいコードは、
+# 独自に集合を書かずにここを import すること（2026-10-19 に統合）。
+#
+# 統合前は同等の集合が5ファイル9箇所にあり、中身が3通りに割れていた。
+# 「夜食」を含むのはここだけ、「おやつ」を含まないものも2箇所あった。
+# 統合時に実データで影響を測った結果: 全991セッション中、定義の違いで
+# 増えるのは「夜食」6件だけ。「おやつ」「外食」は実データ0件だった。
 MEAL_LABELS = {"朝食", "昼食", "夕食", "間食", "夜食", "おやつ"}
 MEAL_LABELS_FOR_MERGE = MEAL_LABELS
 MERGE_WINDOW_MINUTES = 60
+
+# 入浴として記録する最短時間。これより短いものはドアの「通過」であって入浴ではない。
+# 実測（2026-10-23、直近60日129件）: 0.0分が38件(29%)、1分未満が57件(44%)。
+# 入浴・湯はり・清掃のいずれも1分未満では成立しないので、ここで切る。
+BATH_MIN_DURATION_SECONDS = 60
+
+# 家族UIが外食を記録すると「外食(間食)」の形で書かれる（app.py の手動記録）。
+# コードのコメントは「食事カウントに含まれる」と書いていたが、どの定義にも
+# 一致せず実際には数えられていなかった。
+EATING_OUT_LABEL = "外食"
+EATING_OUT_PREFIX = EATING_OUT_LABEL + "("
+
+# 破棄済みセッションの印。ラベル末尾に付く。食事としては数えない。
+DISCARDED_MARK = "["
+
+
+def is_meal_label(label: str | None) -> bool:
+    """このラベルを食事として数えるか。
+
+    SQL ではなく Python 側で絞るときはこれを使う。
+    SQL で絞る場合は meal_label_sql() を使うこと（同じ判定になる）。
+    """
+    if not label:
+        return False
+    if DISCARDED_MARK in label:
+        return False  # 「夕食 [モンスタークラスター/廃棄]」など
+    if label in MEAL_LABELS:
+        return True
+    # 「外食(間食)」「外食（夕食）」「外食」のいずれも食事として数える。
+    # 括弧は半角で書かれるが、全角で入っても落とさないように前方一致で見る。
+    return label.startswith(EATING_OUT_LABEL)
+
+
+def meal_label_sql(column: str = "label") -> tuple[str, list[str]]:
+    """食事ラベルに一致する SQL 条件と、その引数を返す。
+
+    使い方:
+        cond, params = meal_label_sql("s.label")
+        conn.execute(f"SELECT ... WHERE {cond} AND ...", (*params, ...))
+
+    MEAL_LABELS は set なので、引数の順序を固定するために sorted() する。
+    """
+    ph = ",".join("?" * len(MEAL_LABELS))
+    return (
+        f"({column} IN ({ph}) OR {column} LIKE ?)",
+        # is_meal_label() と同じ前方一致にする。EATING_OUT_PREFIX（括弧まで）で
+        # 絞ると、全角括弧や括弧なしの「外食」を SQL 側だけ取りこぼす。
+        [*sorted(MEAL_LABELS), EATING_OUT_LABEL + "%"],
+    )
 
 
 def _load_unassigned_events(conn, since: datetime) -> list[EventRow]:
@@ -240,13 +289,13 @@ def _merge_close_meal_sessions(conn, lookback_hours: int = 6) -> int:
     戻り値: 統合した数（吸収された側のセッション数）。
     """
     since = datetime.now() - timedelta(hours=lookback_hours)
-    placeholders = ",".join("?" * len(MEAL_LABELS_FOR_MERGE))
+    meal_cond, meal_params = meal_label_sql()
     rows = conn.execute(
         f"""SELECT id, person_id, started_at, ended_at, event_count, label
               FROM meal_sessions
-             WHERE started_at >= ? AND label IN ({placeholders})
+             WHERE started_at >= ? AND {meal_cond}
              ORDER BY person_id, started_at""",
-        (since, *MEAL_LABELS_FOR_MERGE),
+        (since, *meal_params),
     ).fetchall()
     by_person: dict[int, list[dict]] = {}
     for r in rows:
@@ -377,6 +426,16 @@ def aggregate_sessions(lookback_hours: int = 24) -> list[int]:
                 if _is_bath_session(cluster):
                     started = cluster[0].started_at
                     ended = max((c.ended_at or c.started_at) for c in cluster)
+                    # **短すぎるものは入浴ではない。** ドアを閉めて数秒で開ける
+                    # 「通過」が入浴として記録されていた。2026-10-23 の実測では
+                    # 直近60日の129件のうち 0.0分が38件(29%)、1分未満が57件(44%)。
+                    # 入浴・湯はり・清掃のいずれも1分未満では成立しない。
+                    if (ended - started).total_seconds() < BATH_MIN_DURATION_SECONDS:
+                        log.debug(
+                            "入浴として短すぎるのでセッションにしない: %s (%.0f秒)",
+                            started, (ended - started).total_seconds(),
+                        )
+                        continue
                     label = "お風呂"
                 else:
                     # 食事関連イベントの時刻を基準にする（カメラのみの検知は除外）
@@ -474,7 +533,7 @@ def last_meal_session(person_id: int) -> dict | None:
     『直近に食事した』と誤認していた。monitor 側の食事カウントを食事ラベル限定に
     したのに、ロックを実際に発火させる側が無条件のままでは筋が通らない。
     """
-    placeholders = ",".join("?" * len(MEAL_LABELS))
+    meal_cond, meal_params = meal_label_sql()
     conn = get_conn()
     try:
         row = conn.execute(
@@ -482,9 +541,9 @@ def last_meal_session(person_id: int) -> dict | None:
                   FROM meal_sessions
                  WHERE confirmed = 1
                    AND person_id = ?
-                   AND label IN ({placeholders})
+                   AND {meal_cond}
                  ORDER BY started_at DESC LIMIT 1""",
-            (person_id, *MEAL_LABELS),
+            (person_id, *meal_params),
         ).fetchone()
         if row:
             d = dict(row)

@@ -17,7 +17,8 @@ from src.notifier import send_line_message
 from src.settings import get_bool
 
 GRANDMA_ID = 1
-MEAL_LABELS = {"朝食", "昼食", "夕食", "間食", "おやつ"}
+# 食事ラベルは src/sessions.py の正準定義を使う（独自に書かない）。
+from src.sessions import MEAL_LABELS, meal_label_sql  # noqa: E402
 STAMP_LABELS = ["起床", "お薬", "朝食", "昼食", "お風呂", "夕食", "就寝"]
 
 
@@ -30,14 +31,14 @@ def _meals_per_day(conn, dates: list[str]) -> dict[str, int]:
     result: dict[str, int] = {d: 0 for d in dates}
     placeholders = ",".join("?" * len(dates))
     # meal_sessions から食事セッションをカウント
-    meal_list = ",".join(f"'{m}'" for m in MEAL_LABELS)
+    meal_cond, meal_params = meal_label_sql()
     rows = conn.execute(
         f"""SELECT DATE(started_at) as d, COUNT(*) as cnt FROM meal_sessions
             WHERE person_id = ?
             AND DATE(started_at) IN ({placeholders})
-            AND label IN ({meal_list})
+            AND {meal_cond}
             GROUP BY DATE(started_at)""",
-        (GRANDMA_ID, *dates),
+        (GRANDMA_ID, *dates, *meal_params),
     ).fetchall()
     for r in rows:
         result[r["d"]] = r["cnt"]

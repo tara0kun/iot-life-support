@@ -11,28 +11,54 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.sensors.matter_plug import MatterPlugMonitor, MatterPlugConfig, PlugReading
-from src.sensors.contact_sensor import ContactSensorMonitor, ContactSensorConfig, ContactEvent
+# **contact_sensor は遅延 import する。** python-kasa を引くが、これは実機にしか
+# 要らない依存で CI には入れていない。ここで読むと、ハードウェアに触らない
+# テスト（カメラのコールバックなど）まで kasa が無いと import できなくなる。
+# 実体は起動時の組み立て箇所で読む。ContactEvent は注釈専用
+# （from __future__ import annotations があるので実行時には評価されない）。
+if TYPE_CHECKING:
+    from src.sensors.contact_sensor import ContactEvent
 from src.sensors.camera import CameraMonitor, CameraConfig, CameraFrame
 from src import event_bus
-from src.sessions import aggregate_sessions, sessions_today, MEAL_LABELS
+from src.sessions import (aggregate_sessions, sessions_today, MEAL_LABELS,
+                          is_meal_label, meal_label_sql)
 from src.lock_manager import lock_device, should_warn_recent_meal
 from src.notifier import (notify_meal_alert, notify_device_locked, send_line_message,
                           mark_related_completed_silent, broadcast_line_message)
 from src.bath_monitor import BathMonitor
 from src.task_supervisor import supervise
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.FileHandler(Path(__file__).resolve().parent.parent / "logs" / "monitor.log"),
-        logging.StreamHandler(),
-    ],
-)
+def _setup_monitor_logging() -> None:
+    """monitor プロセスのログを logs/monitor.log に残す。
+
+    **テスト実行中は本番ログに書かない。** tests/ は本番 Pi 上で走るため、
+    import しただけで FileHandler が張られると、テストの架空イベントが
+    logs/monitor.log に混ざる。web.log で実際に起きた事故と同じ構造
+    （2026-10-15、30行混入して障害調査中のログを読み間違えた）。
+
+    logs/ が無い環境（CI はこのディレクトリを持たない）でも落とさない。
+    """
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if "pytest" not in sys.modules:
+        log_path = Path(__file__).resolve().parent.parent / "logs" / "monitor.log"
+        try:
+            log_path.parent.mkdir(exist_ok=True)
+            handlers.insert(0, logging.FileHandler(log_path))
+        except OSError:
+            pass  # ログが書けないことで監視を止めない
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        handlers=handlers,
+    )
+
+
+_setup_monitor_logging()
 log = logging.getLogger("monitor")
 
 
@@ -601,6 +627,53 @@ async def on_contact_change(event: ContactEvent) -> None:
                 await _request_long_toilet_alert(duration_sec)
 
 
+# 低電池を知らせたのは誰か（alias と日付）。同じ電池で毎時間鳴らさない。
+# プロセス再起動で消えるが、再起動は稀なので1回鳴り直すだけ。
+# むしろ思い出させてくれるので、ファイルに持つほどではないと判断した。
+_battery_notified: set[tuple[str, str]] = set()
+
+# 電池交換の案内。センサーごとに「止まると何が止まるか」を書く。
+# **ただの「電池が少ない」では動いてもらえない。** 何が危ないかを伝える。
+BATTERY_IMPACT = {
+    "脱衣所": "入浴の記録と、浴室で動きがないときの緊急通知が止まります",
+    "炊飯器": "食事の記録が止まります",
+    "トイレ": "トイレの長時間滞在の通知が止まります",
+    "冷蔵庫": "冷蔵庫の開けっぱなし通知が止まります",
+    "風呂": "入浴の記録が止まります",
+}
+
+
+async def on_sensor_battery_low(status) -> None:
+    """センサーの電池が少なくなったら admin に知らせる。
+
+    **センサーが黙る前に気づくための経路。** これが無いと、電池切れは
+    health_check が無反応を検知するまで（30〜48時間）分からない。
+    脱衣所のモーションセンサーは入浴の確定と緊急通知の両方を担うので、
+    黙ってから気づくのでは遅い。
+    """
+    key = (status.alias, datetime.now().strftime("%Y-%m-%d"))
+    if key in _battery_notified:
+        return
+    _battery_notified.add(key)
+
+    impact = BATTERY_IMPACT.get(status.alias, "このセンサーの記録が止まります")
+    msg = (
+        f"🔋 センサーの電池が少なくなっています\n\n"
+        f"場所: {status.alias}\n"
+        f"このまま切れると{impact}。\n\n"
+        f"CR2032 の交換をお願いします。"
+    )
+    try:
+        from src.notifier import send_actionable_notification
+
+        await asyncio.to_thread(
+            send_actionable_notification, "sensor_battery_low",
+            f"{datetime.now():%Y-%m-%d}_{status.alias}", msg,
+        )
+    except Exception as e:
+        log.error("低電池通知の送信に失敗: %s", e)
+
+
 async def on_motion_detected(event: ContactEvent) -> None:
     """T100モーションセンサー: 脱衣所など各設置場所の動き検知。"""
     from datetime import datetime as _dt
@@ -620,6 +693,12 @@ async def on_motion_detected(event: ContactEvent) -> None:
 
 
 _last_person_detection = 0.0
+
+# 顔識別できなかった検知を events に残す間隔。健康診断
+# (health_check.py) が camera の死活を2時間で見ているので、
+# それより十分短くしつつ、ノイズの保存量を抑える値。
+UNIDENTIFIED_CAMERA_INTERVAL_SEC = 600
+_last_unidentified_detection = 0.0
 
 # 直近にカメラで識別された人物（センサー帰属ヒントとして使う）
 # (timestamp_unix, person_id, name) のリスト
@@ -681,21 +760,20 @@ async def on_person_detected(frame: CameraFrame) -> None:
 
     顔識別ができた場合 → person_id 付きで camera/person_detected を記録、
     active_person ログにも追加。
-    顔識別できなかった場合 → person_id=None で記録（従来挙動）。
+    顔識別できなかった場合 → 死活確認のために間引いて記録する。
     """
     import time
-    global _last_person_detection
+    global _last_person_detection, _last_unidentified_detection
     now = time.time()
-    if now - _last_person_detection < 30:
-        return
-    _last_person_detection = now
 
-    # 顔識別あり → 識別された人物ごとにイベント記録
     identified = frame.identified_persons or []
     matched_persons = [r for r in identified
                        if r.get("person_id") and r.get("confidence", 0) >= 0.6]
 
     if matched_persons:
+        if now - _last_person_detection < 30:
+            return
+        _last_person_detection = now
         for r in matched_persons:
             pid = r["person_id"]
             await event_bus.record_event(
@@ -706,13 +784,28 @@ async def on_person_detected(frame: CameraFrame) -> None:
                 confidence=float(r.get("confidence", 0)),
             )
             _record_camera_identification(pid, r.get("name", "?"))
-    else:
-        # 顔識別なし or 信頼度低 → person_id=None で記録（従来挙動）
-        await event_bus.record_event(
-            source="camera",
-            event_type="person_detected",
-            value=float(frame.face_count),
-        )
+        return
+
+    # **顔識別できなかった検知は間引く。**
+    # Haar / HOG は赤外の夜間映像で誤検知が多く、人がいない深夜3時でも
+    # 毎時97件発火していた。実測では camera の76%が person_id なしで、
+    # これだけで全イベントの42%を占めていた。
+    #
+    # 消費者はいない: セッション集約(sessions.py)・安否判定
+    # (anomaly_check._last_sensor_activity)・家族UIの表示は、いずれも
+    # camera を明示的に除外している。
+    #
+    # それでも捨て切らないのは health_check がカメラの死活を
+    # 「2時間以内に camera イベントがあるか」で見ているため。
+    # 10分おきに1件だけ残せば死活は判定でき、量は95%減る。
+    if now - _last_unidentified_detection < UNIDENTIFIED_CAMERA_INTERVAL_SEC:
+        return
+    _last_unidentified_detection = now
+    await event_bus.record_event(
+        source="camera",
+        event_type="person_detected",
+        value=float(frame.face_count),
+    )
 
 
 # --- セッション集約 + ロック/通知 ---
@@ -768,16 +861,17 @@ def _find_previous_meal_session(conn, before_time: datetime, exclude_session_id:
     自動統合（60分）で漏れた60〜90分前の食事セッションを「前と同じ食事」候補として返す。
     """
     cutoff = before_time - timedelta(minutes=PREV_SESSION_LOOKUP_MINUTES)
+    meal_cond, meal_params = meal_label_sql()
     row = conn.execute(
-        """SELECT id, person_id, started_at, label
+        f"""SELECT id, person_id, started_at, label
              FROM meal_sessions
             WHERE id != ?
               AND ended_at < ?
               AND ended_at >= ?
-              AND label IN ('朝食','昼食','夕食','間食','夜食','おやつ')
+              AND {meal_cond}
             ORDER BY ended_at DESC
             LIMIT 1""",
-        (exclude_session_id, before_time, cutoff),
+        (exclude_session_id, before_time, cutoff, *meal_params),
     ).fetchone()
     return dict(row) if row else None
 
@@ -969,7 +1063,7 @@ async def session_aggregator(interval: int = 60) -> None:
             # お風呂など食事以外のセッションは数えない（入浴で炊飯器が
             # ロックされかける問題があった）。
             grandma_meals = [s for s in grandma_sessions
-                             if s.get("label") in MEAL_LABELS]
+                             if is_meal_label(s.get("label"))]
             current_count = len(grandma_meals)
 
             # 前回チェック時からセッションが増えた場合のみ処理
@@ -1111,6 +1205,11 @@ async def main() -> None:
         on_alert_resolved=_on_bath_alert_resolved,
     )
     log.info("お風呂監視を初期化 (アラート: 30分)")
+
+    # **再起動をまたいで見守りを継続する。** ドア閉のイベントは既に過ぎているので、
+    # ここで復元しないと、落ちた時点で入浴中だった回は見守りが消えたままになる。
+    if await _bath_monitor.restore():
+        log.warning("入浴中にプロセスが落ちていたため、見守りを再開した")
 
     # P110M 電力監視 (Matter経由)
     plug = MatterPlugMonitor(
@@ -1276,6 +1375,8 @@ async def main() -> None:
     # T110 開閉センサー (H100ハブ経由)
     hub_ip = env.get("HUB_IP", "")
     if tapo_user and tapo_pass:
+        from src.sensors.contact_sensor import ContactSensorMonitor, ContactSensorConfig
+
         contact = ContactSensorMonitor(
             cfg=ContactSensorConfig(
                 hub_ip=hub_ip,
@@ -1285,6 +1386,7 @@ async def main() -> None:
             ),
             on_change=on_contact_change,
             on_motion=on_motion_detected,
+            on_battery_low=on_sensor_battery_low,
         )
         tasks.append(asyncio.create_task(supervise("contact_sensor", contact.run)))
         log.info("T110/T100センサー監視を開始 (supervised)")

@@ -243,10 +243,19 @@ def check_recent_events() -> tuple[bool | None, str, str]:
         ("toilet_door", 30, "トイレドア"),
         ("rice_cooker_lid", 40, "炊飯器の蓋"),
         ("rice_cooker", 40, "炊飯器の電力"),
-        # 祖母がタブレットを触ったかどうか。check_web の ✅ は health_check 自身の
-        # 5分プローブを測っているだけで、本人の利用は一切見ていなかった。
-        # その結果 2026-07-13 を最後に 94 日間ゼロでも誰も気づけなかった。
-        ("tablet_report", 48, "祖母タブレット"),
+        # **tablet_report はここに入れない。** 2026-10-24 の判断。
+        #
+        # 以前は「祖母がタブレットを触ったか」を48時間で見ていた。しかし
+        # ボタンが押されないのは**利用状況**であって、健全性の問題ではない。
+        # 端末自体は生きている（/tablet が1日約290回読まれている）。
+        #
+        # 入れていた結果、tablet_report だけを理由に sensor-activity が
+        # 恒久的に ❌ になっていた（最終記録 2026-07-13、102日間ゼロ）。
+        # 常に ❌ だと、本物のセンサーが死んだときに状態変化として目立たない。
+        # 壊れた窓を放置すると、本当の警告が読まれなくなる。
+        #
+        # 利用が再開して、かつ途絶えたことを検知したいなら、ここではなく
+        # 利用状況のレポート側で扱うこと。ここは「センサーが生きているか」だけを見る。
     ]
     try:
         conn = get_conn()
@@ -304,7 +313,7 @@ def check_recent_events() -> tuple[bool | None, str, str]:
     return True, "", ""
 
 
-def check_heartbeat_config() -> tuple[bool, str]:
+def check_heartbeat_config() -> tuple[bool | None, str]:
     """外部死活監視 (healthchecks.io) が設定済みか。
 
     **Pi 自身が止まったら、Pi の上で動く監視は全部一緒に止まる。**
@@ -324,10 +333,20 @@ def check_heartbeat_config() -> tuple[bool, str]:
             if url:
                 return True, ""
             break
-    return False, (
-        "外部死活監視が未設定 (.env の HEARTBEAT_URL が空)。"
-        "Pi が丸ごと止まると誰も気づけません。"
-        "設定手順: HANDOFF.md 「外部死活監視」節"
+    # **未設定は「異常」ではなく「判定不能」として扱う。** 2026-10-24 の判断で
+    # 外部死活監視は入れないことにした（Issue #12）。根拠は実測で、家族からの
+    # LINE 応答が14日中14日あり、半日以上の無応答が続けば家族側が先に気づく
+    # 経路が機能していること。
+    #
+    # False を返し続けると、意図した設定について恒久的に ❌ が出る。常に ❌ だと
+    # 本物の異常が状態変化として目立たなくなる（tablet_report で同じことが
+    # 起きていた）。None は「状態を更新も通知もしない」を意味するので、
+    # 行としては ⏸ で見えつつ、警告としては鳴らない。
+    #
+    # 気が変わって .env に URL を入れれば、上の分岐で ✅ に戻る。
+    return None, (
+        "外部死活監視は未設定（2026-10-24 の判断で入れない方針。Issue #12）。"
+        "入れるなら .env の HEARTBEAT_URL。手順は HANDOFF.md 「外部死活監視」節"
     )
 
 
