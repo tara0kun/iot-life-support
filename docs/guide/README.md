@@ -19,6 +19,7 @@
 | [family-setup.md](family-setup.md) | 新メンバー | 自分の LINE と家族画面のセットアップ |
 | [line-operation.md](line-operation.md) | 家族 | LINE 操作の詳細ガイド |
 | [family-reference.md](family-reference.md) | 家族 | 機能リファレンス（センサー意味、通知の種類） |
+| ⚠️ [care-rules.md](care-rules.md) | **家族全員** | **運用で守ること**（本人への接し方・伝えないこと） |
 | [troubleshooting.md](troubleshooting.md) | 全員 | トラブル時のFAQ |
 
 ## こんな時はこのガイド
