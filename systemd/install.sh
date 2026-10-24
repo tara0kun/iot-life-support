@@ -40,6 +40,18 @@ install_host_config() {
         echo "  NetworkManager が無いので Wi-Fi 設定はスキップ"
     fi
 
+    # memory_guard が iot-monitor を再起動できるようにする。
+    # **これが無いと memory_guard は無力。** cron は tara0 権限で走るので
+    # systemctl restart が "Interactive authentication required" で失敗する
+    # （2026-10-24 に実測で確認）。許可は iot-monitor.service だけに絞っている。
+    if [ -d /etc/polkit-1/rules.d ]; then
+        cp "$ROOT/config/polkit/50-iot-monitor-restart.rules" /etc/polkit-1/rules.d/
+        echo "  Installed 50-iot-monitor-restart.rules"
+        systemctl reload polkit 2>/dev/null || systemctl restart polkit
+    else
+        echo "  polkit が無いので memory_guard の権限設定はスキップ"
+    fi
+
     # SSH の生存確認。切れた接続を掴み続けないようにする。
     if [ -d /etc/ssh/sshd_config.d ]; then
         cp "$ROOT/config/ssh/60-keepalive.conf" /etc/ssh/sshd_config.d/
@@ -69,6 +81,22 @@ verify() {
     done
     sshd -T 2>/dev/null | grep -E '^(clientaliveinterval|clientalivecountmax|tcpkeepalive)' \
         | sed 's/^/  /'
+
+    # **memory_guard が実際に再起動できるかを確かめる。** 権限が付いていなければ
+    # guard は黙って無力になるので、設定値ではなく動作で確認する。
+    echo "  memory_guard の権限:"
+    before=$(systemctl show iot-monitor -p ActiveEnterTimestamp --value)
+    if sudo -u tara0 systemctl restart iot-monitor 2>/dev/null; then
+        sleep 5
+        after=$(systemctl show iot-monitor -p ActiveEnterTimestamp --value)
+        if [ "$before" != "$after" ]; then
+            echo "    OK: tara0 権限で iot-monitor を再起動できた"
+        else
+            echo "    ⚠️ コマンドは通ったが再起動されていない"
+        fi
+    else
+        echo "    ⚠️ tara0 権限で再起動できない。memory_guard は動作しない"
+    fi
 }
 
 case "$MODE" in

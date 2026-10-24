@@ -84,3 +84,42 @@ def test_installスクリプトはサービスとホスト設定を分けて実�
     text = INSTALL.read_text(encoding="utf-8")
     assert "--services-only" in text
     assert "--host-only" in text
+
+# --- memory_guard の権限（Issue #21） -----------------------------------
+POLKIT_RULE = ROOT / "config" / "polkit" / "50-iot-monitor-restart.rules"
+
+
+def test_polkitルールが存在する():
+    """**これが無いと memory_guard は無力。** cron は tara0 権限で走るので
+    systemctl restart が "Interactive authentication required" で失敗する
+    （2026-10-24 に実測で確認した）。
+    """
+    assert POLKIT_RULE.exists()
+
+
+def test_polkitルールが対象を絞っている():
+    """全ユニットを許すと、このルール1枚で任意のサービスを操作できてしまう。"""
+    text = POLKIT_RULE.read_text(encoding="utf-8")
+    assert 'action.lookup("unit") !== "iot-monitor.service"' in text
+    assert 'subject.user !== "tara0"' in text
+    assert 'action.id !== "org.freedesktop.systemd1.manage-units"' in text
+
+
+def test_polkitルールの括弧が閉じている():
+    """polkit の JS エンジンは構文エラーのルールを黙って読み飛ばす。"""
+    text = POLKIT_RULE.read_text(encoding="utf-8")
+    for a, b in (("{", "}"), ("(", ")")):
+        assert text.count(a) == text.count(b), f"{a}{b} の対応が崩れている"
+
+
+def test_installがpolkitルールも入れる():
+    text = INSTALL.read_text(encoding="utf-8")
+    assert "50-iot-monitor-restart.rules" in text
+
+
+def test_installが権限を動作で確認する():
+    """設定値ではなく、実際に再起動できるかを確かめること。
+    権限が無ければ guard は黙って無力になる。
+    """
+    text = INSTALL.read_text(encoding="utf-8")
+    assert "sudo -u tara0 systemctl restart iot-monitor" in text
