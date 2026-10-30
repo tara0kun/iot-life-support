@@ -76,12 +76,11 @@ def test_夜間は判定不能を返す():
     assert "return None" in src, "夜間の判定不能パスが無い"
     assert re.search(r"7\s*<=\s*now\.hour\s*<\s*22", src), "日中の判定条件が見当たらない"
 
-def test_入れない判断の設定を異常扱いしない(tmp_path, monkeypatch):
-    """意図した設定について恒久的に ❌ を出さない（Issue #12）。
+def test_死活監視が空なら設定漏れとして異常(tmp_path, monkeypatch):
+    """入れると決めた後は、空の HEARTBEAT_URL は設定漏れ（Issue #12、2026-10-30）。
 
-    外部死活監視は 2026-10-24 の判断で入れないことにした。False を返し
-    続けると、意図どおりの状態が永久に異常として表示される。常に ❌ だと
-    本物の異常が状態変化として目立たなくなる。
+    一度「入れない」と判断していた間は ⏸（None）にしていた。入れた今は、
+    .env を作り直したときの書き忘れを ❌ で拾う。
 
     ホストの .env に依存させない。CI には .env が無く、そこは別の分岐
     （.env そのものが無い）なので、見たい条件を自分で作る。
@@ -91,8 +90,25 @@ def test_入れない判断の設定を異常扱いしない(tmp_path, monkeypat
 
     ok, detail = hc.check_heartbeat_config()[:2]
 
-    assert ok is None, f"未設定を異常扱いしている: ok={ok} detail={detail}"
+    assert ok is False, f"空の設定を見逃している: ok={ok} detail={detail}"
     assert "Issue #12" in detail, "判断の経緯が書かれていない"
+
+
+def test_同じキーが複数あれば最後の行で判定する(tmp_path, monkeypatch):
+    """heartbeat.sh は .env を bash で読むので最後の行が効く。判定もそれに合わせる。
+
+    空の行の後ろに URL を追記した .env で、実際には ping が飛んでいるのに
+    「未設定」と出ないこと。
+    """
+    (tmp_path / ".env").write_text(
+        "HEARTBEAT_URL=\nLINE_USER_ID=dummy\nHEARTBEAT_URL=https://example.invalid/ping/dummy\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(hc, "ROOT", tmp_path)
+
+    ok, _ = hc.check_heartbeat_config()[:2]
+
+    assert ok is True
 
 
 def test_死活監視を入れたら正常に戻る(tmp_path, monkeypatch):

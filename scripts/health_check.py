@@ -313,7 +313,7 @@ def check_recent_events() -> tuple[bool | None, str, str]:
     return True, "", ""
 
 
-def check_heartbeat_config() -> tuple[bool | None, str]:
+def check_heartbeat_config() -> tuple[bool, str]:
     """外部死活監視 (healthchecks.io) が設定済みか。
 
     **Pi 自身が止まったら、Pi の上で動く監視は全部一緒に止まる。**
@@ -327,26 +327,21 @@ def check_heartbeat_config() -> tuple[bool | None, str]:
     env_path = ROOT / ".env"
     if not env_path.exists():
         return False, ".env が無い"
+    # heartbeat.sh は .env を bash で読み込むので、同じキーが複数あれば最後の行が効く。
+    # 先頭の行だけ見ると、空の行の後ろに URL を追記したときに「未設定」と誤判定する
+    url = ""
     for line in env_path.read_text().splitlines():
         if line.startswith("HEARTBEAT_URL="):
             url = line.split("=", 1)[1].strip()
-            if url:
-                return True, ""
-            break
-    # **未設定は「異常」ではなく「判定不能」として扱う。** 2026-10-24 の判断で
-    # 外部死活監視は入れないことにした（Issue #12）。根拠は実測で、家族からの
-    # LINE 応答が14日中14日あり、半日以上の無応答が続けば家族側が先に気づく
-    # 経路が機能していること。
-    #
-    # False を返し続けると、意図した設定について恒久的に ❌ が出る。常に ❌ だと
-    # 本物の異常が状態変化として目立たなくなる（tablet_report で同じことが
-    # 起きていた）。None は「状態を更新も通知もしない」を意味するので、
-    # 行としては ⏸ で見えつつ、警告としては鳴らない。
-    #
-    # 気が変わって .env に URL を入れれば、上の分岐で ✅ に戻る。
-    return None, (
-        "外部死活監視は未設定（2026-10-24 の判断で入れない方針。Issue #12）。"
-        "入れるなら .env の HEARTBEAT_URL。手順は HANDOFF.md 「外部死活監視」節"
+    if url:
+        return True, ""
+    # **空は設定漏れとして ❌ にする。** 2026-10-30 に外部死活監視を入れると決めた
+    # （Issue #12 を reopen、通知が届くことを確認済み）。SD カードからの復旧などで
+    # .env を作り直したときに書き忘れると、Pi 全体の停止にまた気づけなくなる。
+    # 一度「入れない」と判断していた間は、意図した状態で ❌ が出続けないよう ⏸ にしていた。
+    return False, (
+        "HEARTBEAT_URL が空。外部死活監視が止まっている（Issue #12）。"
+        "手順は HANDOFF.md 「外部死活監視」節"
     )
 
 
