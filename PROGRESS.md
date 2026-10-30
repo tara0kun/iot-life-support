@@ -974,7 +974,6 @@ GW投入後、運用が安定してから着手する候補。優先度と見積
 /home/tara0/IoT/
 ├── PROGRESS.md              ← このファイル
 ├── GW_SETUP.md              ← GW設置手順書（4/20作成）
-├── handoff_prompt.md        ← 初期仕様書
 ├── proposal.pptx            ← 家族会議プレゼン
 ├── plan.docx                ← 企画書
 ├── .env / .env.example      ← 認証情報・IP設定
