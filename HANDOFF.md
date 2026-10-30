@@ -267,7 +267,7 @@ CONFIRMED 87 / REFUTED 4 / NOT_A_BUG 3 / DUPLICATE 1。詳細は `data/private/a
 - 顔登録: 祖母・家族D のみ。祖父・家族A・家族B・家族C・家族E は person 登録あるが encoding 未紐付（必要なら帰省時に登録）
 - **pending_notifications 502件中 413件が 30日以上前** = 掃除されず累積。実害は小さいが今後 archive_pending_notifications 移動 cron を検討
 - **未対応 TODO**: 電源物理接続の固定 (物理作業) / sshd root ログイン可否見直し
-- **✅ 解決済**: 外部死活監視 (`scripts/heartbeat.sh` + healthchecks.io、7/10) / task supervisor (7/15)
+- **✅ 解決済**: task supervisor (7/15) / 外部死活監視 (`scripts/heartbeat.sh` + healthchecks.io)。仕組みは 7/10 に入ったが `HEARTBEAT_URL` が空のままで、10/30 まで一度も動いていなかった。10/30 に有効化し、通知が届くことを確認した（Issue #12）
 - **浴室アラート案A の効果監視**: 7/19-7/26 に「誤検知/検知漏れ」を確認、必要なら A' (モーション複数回要件) 導入検討 (`data/private/improvement-roadmap.md` 3.6 節)
 
 ### 🌐 祖母宅ネットワーク構成 (6/19 判明)
